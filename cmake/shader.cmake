@@ -41,11 +41,12 @@ function(add_slang_shader_target TARGET)
             COMMAND ${SLANGC_EXECUTABLE} 
                 ${SHADER_SOURCE} 
                 -target spirv 
-                -profile spirv_1_4 
-                -emit-spirv-directly 
-                -fvk-use-entrypoint-name 
-                -entry vertMain -entry fragMain
-                -o ${SHADER_NAME}.spv
+                -profile spirv_1_4           # 🔴 指定SPIR-V 1.4版本
+                -emit-spirv-directly          # 🔴 直接生成SPIR-V
+                -fvk-use-entrypoint-name      # 🔴 使用入口点名称
+                -entry vertMain               # 🔴 指定vertex入口点
+                -entry fragMain                # 🔴 指定fragment入口点
+                -o ${SPV_OUTPUT}
             WORKING_DIRECTORY ${SHADERS_OUTPUT_DIR}
             DEPENDS ${SHADER_SOURCE}
             COMMENT "Compiling ${SHADER_NAME} shader to SPIR-V"

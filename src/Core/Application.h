@@ -10,6 +10,7 @@ struct Application {
 
 	bool running;
 
+	Application() : renderer(platform) {}
 	void init() {
 		platform.initWindow();
 		renderer.initVulkan();
