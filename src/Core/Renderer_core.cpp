@@ -451,11 +451,48 @@ bool Renderer::createGraphicsPipeline() {
 
 bool Renderer::createSyncObjects()
 {
-	presentCompleteSemaphore = vk::raii::Semaphore(device, vk::SemaphoreCreateInfo());
-	renderFinishedSemaphore = vk::raii::Semaphore(device, vk::SemaphoreCreateInfo());
-	drawFence = vk::raii::Fence(device, { .flags = vk::FenceCreateFlagBits::eSignaled });
+	try {
+		// Resize semaphores and fences vectors
+		presentCompleteSemaphores.clear();
+		renderFinishedSemaphores.clear();
+		inFlightFences.clear();
 
-	return true;
+		// Semaphores per swapchain image (indexed by imageIndex from acquireNextImage)
+		// The presentation engine holds semaphores until the image is re-acquired, so we need
+		// one semaphore per swapchain image to avoid reuse conflicts. See Vulkan spec:
+		// https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html
+		const auto semaphoreCount = static_cast<uint32_t>(swapChainImages.size());
+		presentCompleteSemaphores.reserve(semaphoreCount);
+		renderFinishedSemaphores.reserve(semaphoreCount);
+
+		// Fences per frame-in-flight for CPU-GPU synchronization (indexed by currentFrame)
+		inFlightFences.reserve(MAX_FRAMES_IN_FLIGHT);
+
+		// Create semaphore info
+		vk::SemaphoreCreateInfo semaphoreInfo{};
+
+		// Create semaphores per swapchain image (indexed by imageIndex for presentation sync)
+		for (uint32_t i = 0; i < semaphoreCount; i++) {
+			presentCompleteSemaphores.emplace_back(device, semaphoreInfo);
+			renderFinishedSemaphores.emplace_back(device, semaphoreInfo);
+		}
+
+		// Create fences per frame-in-flight (indexed by currentFrame for CPU-GPU pacing)
+		vk::FenceCreateInfo fenceInfo{
+		  .flags = vk::FenceCreateFlagBits::eSignaled
+		};
+		for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+			inFlightFences.emplace_back(device, fenceInfo);
+		}
+
+		// Ensure uploads timeline semaphore exists (created early in createLogicalDevice)
+		// No action needed here unless reinitializing after swapchain recreation.
+		return true;
+	}
+	catch (const std::exception& e) {
+		std::cerr << "Failed to create sync objects: " << e.what() << std::endl;
+		return false;
+	}
 }
 
 bool Renderer::checkValidationLayerSupport() const {

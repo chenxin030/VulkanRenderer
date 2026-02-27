@@ -50,38 +50,32 @@ bool Renderer::createCommandPool() {
         return false;
     }
 }
-bool Renderer::createCommandBuffers()
-{
-    vk::CommandBufferAllocateInfo allocInfo{ .commandPool = commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1 };
-    commandBuffer = std::move(vk::raii::CommandBuffers(device, allocInfo).front());
-    return true;
+bool Renderer::createCommandBuffers() {
+    try {
+        // Resize command buffers vector
+        commandBuffers.clear();
+        commandBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
+
+        // Create command buffer allocation info
+        vk::CommandBufferAllocateInfo allocInfo{
+          .commandPool = *commandPool,
+          .level = vk::CommandBufferLevel::ePrimary,
+          .commandBufferCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)
+        };
+
+        // Allocate command buffers
+        commandBuffers = vk::raii::CommandBuffers(device, allocInfo);
+
+        return true;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Failed to create command buffers: " << e.what() << std::endl;
+        return false;
+    }
 }
-//bool Renderer::createCommandBuffers() {
-//    try {
-//        // Resize command buffers vector
-//        commandBuffers.clear();
-//        commandBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
-//
-//        // Create command buffer allocation info
-//        vk::CommandBufferAllocateInfo allocInfo{
-//          .commandPool = *commandPool,
-//          .level = vk::CommandBufferLevel::ePrimary,
-//          .commandBufferCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)
-//        };
-//
-//        // Allocate command buffers
-//        commandBuffers = vk::raii::CommandBuffers(device, allocInfo);
-//
-//        return true;
-//    }
-//    catch (const std::exception& e) {
-//        std::cerr << "Failed to create command buffers: " << e.what() << std::endl;
-//        return false;
-//    }
-//}
 void Renderer::recordCommandBuffer(uint32_t imageIndex)
 {
-	commandBuffer.begin({});
+	auto& commandBuffer = commandBuffers[currentFrame];
 	// Before starting rendering, transition the swapchain image to COLOR_ATTACHMENT_OPTIMAL
 	transition_image_layout(
 		imageIndex,
@@ -153,5 +147,5 @@ void Renderer::transition_image_layout(
 		.dependencyFlags = {},
 		.imageMemoryBarrierCount = 1,
 		.pImageMemoryBarriers = &barrier };
-	commandBuffer.pipelineBarrier2(dependency_info);
+	commandBuffers[currentFrame].pipelineBarrier2(dependency_info);
 }

@@ -36,6 +36,10 @@ struct Renderer {
 
 	Renderer(Platform& _platform);
 
+	const uint32_t MAX_FRAMES_IN_FLIGHT = 2u;
+	// Current frame index
+	uint32_t currentFrame = 0;
+
 	vk::raii::Context  context;
 	vk::raii::Instance instance = nullptr;
 	vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
@@ -72,11 +76,11 @@ struct Renderer {
 	vk::raii::Pipeline       graphicsPipeline = nullptr;
 
 	vk::raii::CommandPool    commandPool = nullptr;
-	vk::raii::CommandBuffer  commandBuffer = nullptr;
+	std::vector<vk::raii::CommandBuffer> commandBuffers;
 
-	vk::raii::Semaphore presentCompleteSemaphore = nullptr;
-	vk::raii::Semaphore renderFinishedSemaphore = nullptr;
-	vk::raii::Fence     drawFence = nullptr;
+	std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
+	std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
+	std::vector<vk::raii::Fence> inFlightFences;
 
 	bool initVulkan()
 	{
@@ -158,23 +162,33 @@ struct Renderer {
 
 	void drawFrame()
 	{
-		graphicsQueue.waitIdle();        // NOTE: for simplicity, wait for the queue to be idle before starting the frame
-		// In the next chapter you see how to use multiple frames in flight and fences to sync
-
-		auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphore, nullptr);
-		recordCommandBuffer(imageIndex);
-
-		device.resetFences(*drawFence);
-		vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
-		const vk::SubmitInfo   submitInfo{ .waitSemaphoreCount = 1, .pWaitSemaphores = &*presentCompleteSemaphore, .pWaitDstStageMask = &waitDestinationStageMask, .commandBufferCount = 1, .pCommandBuffers = &*commandBuffer, .signalSemaphoreCount = 1, .pSignalSemaphores = &*renderFinishedSemaphore };
-		graphicsQueue.submit(submitInfo, *drawFence);
-		result = device.waitForFences(*drawFence, vk::True, UINT64_MAX);
-		if (result != vk::Result::eSuccess)
+		auto fenceResult = device.waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
+		if (fenceResult != vk::Result::eSuccess)
 		{
 			throw std::runtime_error("failed to wait for fence!");
 		}
+		device.resetFences(*inFlightFences[currentFrame]);
 
-		const vk::PresentInfoKHR presentInfoKHR{ .waitSemaphoreCount = 1, .pWaitSemaphores = &*renderFinishedSemaphore, .swapchainCount = 1, .pSwapchains = &*swapChain, .pImageIndices = &imageIndex };
+		auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[currentFrame], nullptr);
+
+		commandBuffers[currentFrame].reset();
+		recordCommandBuffer(imageIndex);
+
+		vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+		const vk::SubmitInfo   submitInfo{ .waitSemaphoreCount = 1,
+										  .pWaitSemaphores = &*presentCompleteSemaphores[currentFrame],
+										  .pWaitDstStageMask = &waitDestinationStageMask,
+										  .commandBufferCount = 1,
+										  .pCommandBuffers = &*commandBuffers[currentFrame],
+										  .signalSemaphoreCount = 1,
+										  .pSignalSemaphores = &*renderFinishedSemaphores[imageIndex] };
+		graphicsQueue.submit(submitInfo, *inFlightFences[currentFrame]);
+
+		const vk::PresentInfoKHR presentInfoKHR{ .waitSemaphoreCount = 1,
+												.pWaitSemaphores = &*renderFinishedSemaphores[imageIndex],
+												.swapchainCount = 1,
+												.pSwapchains = &*swapChain,
+												.pImageIndices = &imageIndex };
 		result = presentQueue.presentKHR(presentInfoKHR);
 		switch (result)
 		{
@@ -186,6 +200,7 @@ struct Renderer {
 		default:
 			break;        // an unexpected result is returned!
 		}
+		currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 	}
 
 
