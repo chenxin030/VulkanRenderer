@@ -1,4 +1,8 @@
 #include "Renderer.h"
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
+#include <chrono>
 bool Renderer::createSwapChain() {
 	try {
 		// Query swap chain support
@@ -74,10 +78,10 @@ void Renderer::cleanupSwapChain() {
 }
 void Renderer::recreateSwapChain() {
 	int width = 0, height = 0;
-	glfwGetFramebufferSize(platform.window, &width, &height);
+	glfwGetFramebufferSize(platform->window, &width, &height);
 	while (width == 0 || height == 0)
 	{
-		glfwGetFramebufferSize(platform.window, &width, &height);
+		glfwGetFramebufferSize(platform->window, &width, &height);
 		glfwWaitEvents();
 	}
 
@@ -161,7 +165,7 @@ bool Renderer::createCommandBuffers() {
         return false;
     }
 }
-void Renderer::recordCommandBuffer(uint32_t imageIndex, const std::vector<Mesh>& resources)
+void Renderer::recordCommandBuffer(uint32_t imageIndex)
 {
 	auto& commandBuffer = commandBuffers[currentFrame];
 	commandBuffer.begin({});
@@ -192,10 +196,13 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex, const std::vector<Mesh>&
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
 	commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
 	commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
-	for (auto& resource : resources) {
-		commandBuffer.bindVertexBuffers(0, *resource.vertexBuffer, { 0 });
-		commandBuffer.bindIndexBuffer(*resource.indexBuffer, 0, vk::IndexTypeValue<decltype(resource.indices)::value_type>::value);
-		commandBuffer.drawIndexed(resource.indices.size(), 1, 0, 0, 0);
+	for (int i = 0; i < resourceManager->entityManager.meshes.size(); ++i) {
+		auto& mesh = resourceManager->entityManager.meshes[i];
+		auto& descriptorSets = resourceManager->entityManager.entityResource[i].descriptorSets;
+		commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
+		commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
+		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[currentFrame], nullptr);
+		commandBuffer.drawIndexed(mesh.indices.size(), 1, 0, 0, 0);
 	}
 	commandBuffer.endRendering();
 	// After rendering, transition the swapchain image to PRESENT_SRC
@@ -209,6 +216,22 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex, const std::vector<Mesh>&
 		vk::PipelineStageFlagBits2::eBottomOfPipe                  // dstStage
 	);
 	commandBuffer.end();
+}
+void Renderer::updateUniformBuffer(uint32_t currentImage) {
+	static auto startTime = std::chrono::high_resolution_clock::now();
+
+	auto  currentTime = std::chrono::high_resolution_clock::now();
+	float time = std::chrono::duration<float>(currentTime - startTime).count();
+
+	UniformBufferObject ubo{};
+	ubo.model = rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+	ubo.view = lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+	ubo.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f);
+	ubo.proj[1][1] *= -1;
+
+	for (auto& resource : resourceManager->entityManager.entityResource) {
+		memcpy(resource.uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+	}
 }
 
 void Renderer::transition_image_layout(

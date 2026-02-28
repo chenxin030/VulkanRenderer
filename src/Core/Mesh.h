@@ -45,8 +45,6 @@ struct Vertex {
     }
 };
 
-
-
 struct Mesh {
     std::vector<Vertex> vertices;
     std::vector<uint16_t> indices;
@@ -55,5 +53,4 @@ struct Mesh {
     vk::raii::DeviceMemory vertexBufferMemory = nullptr;
     vk::raii::Buffer indexBuffer = nullptr;
     vk::raii::DeviceMemory indexBufferMemory = nullptr;
-
 };

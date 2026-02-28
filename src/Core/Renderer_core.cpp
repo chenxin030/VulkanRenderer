@@ -15,7 +15,7 @@ static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallbackVkHpp(
 	return vk::False;
 }
 
-Renderer::Renderer(Platform& platform) : platform(platform) {
+Renderer::Renderer() {
 	deviceExtensions = requiredDeviceExtensions;
 }
 
@@ -114,7 +114,7 @@ bool Renderer::setupDebugMessenger() {
 bool Renderer::createSurface() {
 	try {
 		VkSurfaceKHR _surface;
-		if (!platform.CreateVulkanSurface(*instance, &_surface)) {
+		if (!platform->CreateVulkanSurface(*instance, &_surface)) {
 			std::cerr << "Failed to create window surface" << std::endl;
 			return false;
 		}
@@ -339,7 +339,7 @@ bool Renderer::createGraphicsPipeline() {
 		vk::PipelineInputAssemblyStateCreateInfo inputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList };
 		vk::PipelineViewportStateCreateInfo      viewportState{ .viewportCount = 1, .scissorCount = 1 };
 
-		vk::PipelineRasterizationStateCreateInfo rasterizer{ .depthClampEnable = vk::False, .rasterizerDiscardEnable = vk::False, .polygonMode = vk::PolygonMode::eFill, .cullMode = vk::CullModeFlagBits::eBack, .frontFace = vk::FrontFace::eClockwise, .depthBiasEnable = vk::False, .depthBiasSlopeFactor = 1.0f, .lineWidth = 1.0f };
+		vk::PipelineRasterizationStateCreateInfo rasterizer{ .depthClampEnable = vk::False, .rasterizerDiscardEnable = vk::False, .polygonMode = vk::PolygonMode::eFill, .cullMode = vk::CullModeFlagBits::eBack, .frontFace = vk::FrontFace::eCounterClockwise, .depthBiasEnable = vk::False, .depthBiasSlopeFactor = 1.0f, .lineWidth = 1.0f };
 
 		vk::PipelineMultisampleStateCreateInfo multisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False };
 
@@ -353,7 +353,7 @@ bool Renderer::createGraphicsPipeline() {
 			vk::DynamicState::eScissor };
 		vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
 
-		vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 0, .pushConstantRangeCount = 0 };
+		vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 1, .pSetLayouts = &*descriptorSetLayout, .pushConstantRangeCount = 0 };
 
 		pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 

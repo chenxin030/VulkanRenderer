@@ -40,10 +40,72 @@ void Renderer::createIndexBuffer(Mesh& mesh)
 
     copyBuffer(stagingBuffer, indexBuffer, bufferSize);
 }
-void Renderer::createResouceBuffer(std::vector<Mesh>& resources) {
-	for (auto& resource : resources) {
-		createVertexBuffer(resource);
-        createIndexBuffer(resource);
+
+void Renderer::createUniformBuffers(EntityResource& entityResource) {
+    auto& uniformBuffers = entityResource.uniformBuffers;
+    auto& uniformBuffersMemory = entityResource.uniformBuffersMemory;
+    auto& uniformBuffersMapped = entityResource.uniformBuffersMapped;
+
+    uniformBuffers.clear();
+    uniformBuffersMemory.clear();
+    uniformBuffersMapped.clear();
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
+        vk::raii::Buffer buffer({});
+        vk::raii::DeviceMemory bufferMem({});
+        createBuffer(bufferSize, vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer, bufferMem);
+        uniformBuffers.emplace_back(std::move(buffer));
+        uniformBuffersMemory.emplace_back(std::move(bufferMem));
+        uniformBuffersMapped.emplace_back(uniformBuffersMemory[i].mapMemory(0, bufferSize));
+    }
+}
+
+bool Renderer::createDescriptorPool() {
+    try
+    {
+        uint32_t uniformBufferCount = resourceManager->entityManager.entityResource.size();
+        vk::DescriptorPoolSize       poolSize(vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT * uniformBufferCount);
+        vk::DescriptorPoolCreateInfo poolInfo{ .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, .maxSets = MAX_FRAMES_IN_FLIGHT, .poolSizeCount = 1, .pPoolSizes = &poolSize };
+        descriptorPool = vk::raii::DescriptorPool(device, poolInfo);
+
+        return true;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Failed to create descriptor pool: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+void Renderer::createDescriptorSets() {
+    auto& entityResource = resourceManager->entityManager.entityResource;
+    size_t entityCount = entityResource.size();
+
+    for (auto& resource : resourceManager->entityManager.entityResource) {
+        std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *descriptorSetLayout);
+        vk::DescriptorSetAllocateInfo        allocInfo{
+            .descriptorPool = descriptorPool,
+            .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+            .pSetLayouts = layouts.data()
+        };
+        resource.descriptorSets = device.allocateDescriptorSets(allocInfo);
+
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+        {
+            vk::DescriptorBufferInfo bufferInfo{ .buffer = resource.uniformBuffers[i], .offset = 0, .range = sizeof(UniformBufferObject) };
+            vk::WriteDescriptorSet   descriptorWrite{ .dstSet = resource.descriptorSets[i], .dstBinding = 0, .dstArrayElement = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &bufferInfo };
+            device.updateDescriptorSets(descriptorWrite, {});
+        }
+    }
+}
+
+void Renderer::createResouceBuffer() {
+    auto& meshes = resourceManager->entityManager.meshes;
+    auto& entityResource = resourceManager->entityManager.entityResource;
+    for (int i = 0; i < meshes.size(); ++i) {
+		createVertexBuffer(meshes[i]);
+        createIndexBuffer(meshes[i]);
+        createUniformBuffers(entityResource[i]);
 	}
 }
 

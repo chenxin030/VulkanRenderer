@@ -1,12 +1,12 @@
 #pragma once
 
-#include "Mesh.h"
+#include "ResourceManager.h"
 
 #include <vulkan/vulkan_raii.hpp>
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <map>
-#include <Platform.h>
+#include <platform.h>
 
 const std::vector<char const*> validationLayers = {
 	"VK_LAYER_KHRONOS_validation" 
@@ -36,7 +36,7 @@ struct SwapChainSupportDetails {
 
 struct Renderer {
 
-	Renderer(Platform& _platform);
+	Renderer();
 
 	const uint32_t MAX_FRAMES_IN_FLIGHT = 2u;
 	// Current frame index
@@ -74,6 +74,7 @@ struct Renderer {
 	// Initialized at swapchain creation and updated as we transition.
 	std::vector<vk::ImageLayout> swapChainImageLayouts;
 
+	vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
 	vk::raii::PipelineLayout pipelineLayout = nullptr;
 	vk::raii::Pipeline       graphicsPipeline = nullptr;
 
@@ -84,7 +85,14 @@ struct Renderer {
 	std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
 	std::vector<vk::raii::Fence> inFlightFences;
 
+	vk::raii::DescriptorPool             descriptorPool = nullptr;
+
 	bool framebufferResized = false;
+
+	void initialize(Platform* _platform, ResourceManager* _resourceManager) {
+		platform = _platform;
+		resourceManager = _resourceManager;
+	}
 
 	bool initVulkan()
 	{
@@ -116,6 +124,10 @@ struct Renderer {
 			std::cerr << "Failed to create image views" << std::endl;
 			return false;
 		}
+		if (!createDescriptorSetLayout()) {
+			std::cerr << "Failed to create descriptor set layout" << std::endl;
+			return false;
+		}
 		if (!createGraphicsPipeline()) {
 			std::cerr << "Failed to create graphics pipeline" << std::endl;
 			return false;
@@ -124,6 +136,12 @@ struct Renderer {
 			std::cerr << "Failed to create command pool" << std::endl;
 			return false;
 		}
+		createResouceBuffer();
+		if (!createDescriptorPool()) {
+			std::cerr << "Failed to create descriptor pool" << std::endl;
+			return false;
+		}
+		createDescriptorSets();
 		if (!createCommandBuffers()) {
 			std::cerr << "Failed to create command buffers" << std::endl;
 			return false;
@@ -135,7 +153,7 @@ struct Renderer {
 		return true;
 	}
 
-	void render(const std::vector<Mesh>& resources)
+	void render()
 	{
 		auto fenceResult = device.waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
 		if (fenceResult != vk::Result::eSuccess)
@@ -153,11 +171,12 @@ struct Renderer {
 			assert(result == vk::Result::eTimeout || result == vk::Result::eNotReady);
 			throw std::runtime_error("failed to acquire swap chain image!");
 		}
+		updateUniformBuffer(currentFrame);
 
 		device.resetFences(*inFlightFences[currentFrame]);
 
 		commandBuffers[currentFrame].reset();
-		recordCommandBuffer(imageIndex, resources);
+		recordCommandBuffer(imageIndex);
 
 		vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
 		const vk::SubmitInfo   submitInfo{ .waitSemaphoreCount = 1,
@@ -197,12 +216,15 @@ struct Renderer {
 	void cleanupSwapChain();
 	void recreateSwapChain();
 	bool createImageViews();
+	bool createDescriptorSetLayout();
 	bool createGraphicsPipeline();
+	bool createDescriptorPool();
+	void createDescriptorSets();
 	bool createCommandPool();
 	bool createCommandBuffers();
 	bool createSyncObjects();
 
-	void recordCommandBuffer(uint32_t imageIndex, const std::vector<Mesh>& resources);
+	void recordCommandBuffer(uint32_t imageIndex);
 
 	void transition_image_layout(
 		uint32_t                imageIndex,
@@ -257,13 +279,16 @@ struct Renderer {
 
 	void createVertexBuffer(Mesh& mesh);
 	void createIndexBuffer(Mesh& mesh);
+	void createUniformBuffers(EntityResource& entityResource);
+	void updateUniformBuffer(uint32_t currentImage);
 
-	void createResouceBuffer(std::vector<Mesh>& resources);
+	void createResouceBuffer();
 
 	void waitIdle() {
 		device.waitIdle();
 	}
 
-	Platform& platform;
+	Platform* platform;
+	ResourceManager* resourceManager;
 
 };

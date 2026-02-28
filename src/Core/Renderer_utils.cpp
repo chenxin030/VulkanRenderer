@@ -172,7 +172,7 @@ vk::Extent2D Renderer::chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabi
     else {
         // Get framebuffer size
         int width, height;
-        platform.GetWindowSize(&width, &height);
+        platform->GetWindowSize(&width, &height);
 
         // Create extent
         vk::Extent2D actualExtent = {

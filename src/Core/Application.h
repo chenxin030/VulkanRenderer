@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Renderer.h>
-#include <Platform.h>
+#include <platform.h>
 #include <ResourceManager.h>
 
 struct Application {
@@ -12,12 +12,12 @@ struct Application {
 
 	bool running;
 
-	Application() : renderer(platform), running(true) {}
+	Application() : running(true) {}
 	void init() {
 		platform.initWindow();
 		resourceManager.initResources();
+		renderer.initialize(&platform, &resourceManager);
 		renderer.initVulkan();
-		renderer.createResouceBuffer(resourceManager.resources);
 	}
 	void run()
 	{
@@ -26,12 +26,13 @@ struct Application {
 				running = false;
 				break;
 			}
-			renderer.render(resourceManager.resources);
+			renderer.render();
 		}
 		renderer.waitIdle();
 	}
 
 	void cleanup() {
+		
 		platform.cleanup();
 	}
 };
