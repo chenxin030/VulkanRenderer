@@ -2,6 +2,26 @@
 #include <set>
 #include <fstream>
 
+uint32_t Renderer::findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const {
+    try {
+        // Get memory properties
+        vk::PhysicalDeviceMemoryProperties memProperties = physicalDevice.getMemoryProperties();
+
+        // Find suitable memory type
+        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+            if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+                return i;
+            }
+        }
+
+        throw std::runtime_error("Failed to find suitable memory type");
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Failed to find memory type: " << e.what() << std::endl;
+        throw;
+    }
+}
+
 std::vector<char> Renderer::readFile(const std::string& filename) {
     try {
         // Open file at end to get size

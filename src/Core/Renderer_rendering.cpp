@@ -1,4 +1,92 @@
 #include "Renderer.h"
+bool Renderer::createSwapChain() {
+	try {
+		// Query swap chain support
+		SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
+
+		// Choose swap surface format, present mode, and extent
+		vk::SurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
+		vk::PresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
+		vk::Extent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
+
+		// Choose image count
+		uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+		if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
+			imageCount = swapChainSupport.capabilities.maxImageCount;
+		}
+
+		// Create swap chain info
+		vk::SwapchainCreateInfoKHR createInfo{
+		  .surface = *surface,
+		  .minImageCount = imageCount,
+		  .imageFormat = surfaceFormat.format,
+		  .imageColorSpace = surfaceFormat.colorSpace,
+		  .imageExtent = extent,
+		  .imageArrayLayers = 1,
+		  .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst,
+		  .preTransform = swapChainSupport.capabilities.currentTransform,
+		  .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
+		  .presentMode = presentMode,
+		  .clipped = VK_TRUE,
+		  .oldSwapchain = nullptr
+		};
+
+		// Find queue families
+		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+		std::array<uint32_t, 2> queueFamilyIndicesLoc = { indices.graphicsFamily.value(), indices.presentFamily.value() };
+
+		// 当不同家族的队列访问同一张图像时，需要管理所有权转移
+		if (indices.graphicsFamily != indices.presentFamily) {
+			createInfo.imageSharingMode = vk::SharingMode::eConcurrent;	// 并发模式 (eConcurrent)
+			createInfo.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilyIndicesLoc.size());	// 有2个家族会访问
+			createInfo.pQueueFamilyIndices = queueFamilyIndicesLoc.data();	// 具体的家族索引列表
+		}
+		else {
+			createInfo.imageSharingMode = vk::SharingMode::eExclusive;	// 独占模式 (eExclusive),不需要显式所有权转移
+			createInfo.queueFamilyIndexCount = 0;
+			createInfo.pQueueFamilyIndices = nullptr;
+		}
+
+		// Create swap chain
+		swapChain = vk::raii::SwapchainKHR(device, createInfo);
+
+		// Get swap chain images
+		swapChainImages = swapChain.getImages();
+
+		// Swapchain images start in UNDEFINED layout; track per-image layout for correct barriers.
+		swapChainImageLayouts.assign(swapChainImages.size(), vk::ImageLayout::eUndefined);
+
+		// Store swap chain format and extent
+		swapChainImageFormat = surfaceFormat.format;
+		swapChainExtent = extent;
+
+		return true;
+	}
+	catch (const std::exception& e) {
+		std::cerr << "Failed to create swap chain: " << e.what() << std::endl;
+		return false;
+	}
+}
+void Renderer::cleanupSwapChain() {
+	swapChainImageViews.clear();
+	swapChain = vk::raii::SwapchainKHR(nullptr);
+
+}
+void Renderer::recreateSwapChain() {
+	int width = 0, height = 0;
+	glfwGetFramebufferSize(platform.window, &width, &height);
+	while (width == 0 || height == 0)
+	{
+		glfwGetFramebufferSize(platform.window, &width, &height);
+		glfwWaitEvents();
+	}
+
+	device.waitIdle();
+
+	cleanupSwapChain();
+	createSwapChain();
+	createImageViews();
+}
 bool Renderer::createImageViews() {
 	try {
 		swapChainImageViews.clear();
@@ -73,9 +161,10 @@ bool Renderer::createCommandBuffers() {
         return false;
     }
 }
-void Renderer::recordCommandBuffer(uint32_t imageIndex)
+void Renderer::recordCommandBuffer(uint32_t imageIndex, const std::vector<Mesh>& resources)
 {
 	auto& commandBuffer = commandBuffers[currentFrame];
+	commandBuffer.begin({});
 	// Before starting rendering, transition the swapchain image to COLOR_ATTACHMENT_OPTIMAL
 	transition_image_layout(
 		imageIndex,
@@ -103,7 +192,11 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
 	commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
 	commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
-	commandBuffer.draw(3, 1, 0, 0);
+	for (auto& resource : resources) {
+		commandBuffer.bindVertexBuffers(0, *resource.vertexBuffer, { 0 });
+		commandBuffer.bindIndexBuffer(*resource.indexBuffer, 0, vk::IndexTypeValue<decltype(resource.indices)::value_type>::value);
+		commandBuffer.drawIndexed(resource.indices.size(), 1, 0, 0, 0);
+	}
 	commandBuffer.endRendering();
 	// After rendering, transition the swapchain image to PRESENT_SRC
 	transition_image_layout(

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Mesh.h"
+
 #include <vulkan/vulkan_raii.hpp>
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -82,6 +84,8 @@ struct Renderer {
 	std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
 	std::vector<vk::raii::Fence> inFlightFences;
 
+	bool framebufferResized = false;
+
 	bool initVulkan()
 	{
 		if (!createInstance("Vulkan Renderer")) {
@@ -128,51 +132,32 @@ struct Renderer {
 			std::cerr << "Failed to create sync objects" << std::endl;
 			return false;
 		}
-
 		return true;
 	}
 
-	void render()
-	{
-		drawFrame();
-	}
-
-	bool createInstance(const std::string& appName);
-	bool setupDebugMessenger();
-	bool createSurface();
-	bool pickPhysicalDevice();
-	bool createLogicalDevice();
-	bool createSwapChain();
-	bool createImageViews();
-	bool createGraphicsPipeline();
-	bool createCommandPool();
-	bool createCommandBuffers();
-	bool createSyncObjects();
-
-	void recordCommandBuffer(uint32_t imageIndex);
-
-	void transition_image_layout(
-		uint32_t                imageIndex,
-		vk::ImageLayout         old_layout,
-		vk::ImageLayout         new_layout,
-		vk::AccessFlags2        src_access_mask,
-		vk::AccessFlags2        dst_access_mask,
-		vk::PipelineStageFlags2 src_stage_mask,
-		vk::PipelineStageFlags2 dst_stage_mask);
-
-	void drawFrame()
+	void render(const std::vector<Mesh>& resources)
 	{
 		auto fenceResult = device.waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
 		if (fenceResult != vk::Result::eSuccess)
 		{
 			throw std::runtime_error("failed to wait for fence!");
 		}
+		auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[currentFrame], nullptr);
+		if (result == vk::Result::eErrorOutOfDateKHR)
+		{
+			recreateSwapChain();
+			return;
+		}
+		else if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
+		{
+			assert(result == vk::Result::eTimeout || result == vk::Result::eNotReady);
+			throw std::runtime_error("failed to acquire swap chain image!");
+		}
+
 		device.resetFences(*inFlightFences[currentFrame]);
 
-		auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[currentFrame], nullptr);
-
 		commandBuffers[currentFrame].reset();
-		recordCommandBuffer(imageIndex);
+		recordCommandBuffer(imageIndex, resources);
 
 		vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
 		const vk::SubmitInfo   submitInfo{ .waitSemaphoreCount = 1,
@@ -190,19 +175,43 @@ struct Renderer {
 												.pSwapchains = &*swapChain,
 												.pImageIndices = &imageIndex };
 		result = presentQueue.presentKHR(presentInfoKHR);
-		switch (result)
+		if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || framebufferResized)
 		{
-		case vk::Result::eSuccess:
-			break;
-		case vk::Result::eSuboptimalKHR:
-			std::cout << "vk::Queue::presentKHR returned vk::Result::eSuboptimalKHR !\n";
-			break;
-		default:
-			break;        // an unexpected result is returned!
+			framebufferResized = false;
+			recreateSwapChain();
+		}
+		else
+		{
+			// There are no other success codes than eSuccess; on any error code, presentKHR already threw an exception.
+			assert(result == vk::Result::eSuccess);
 		}
 		currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 	}
 
+	bool createInstance(const std::string& appName);
+	bool setupDebugMessenger();
+	bool createSurface();
+	bool pickPhysicalDevice();
+	bool createLogicalDevice();
+	bool createSwapChain();
+	void cleanupSwapChain();
+	void recreateSwapChain();
+	bool createImageViews();
+	bool createGraphicsPipeline();
+	bool createCommandPool();
+	bool createCommandBuffers();
+	bool createSyncObjects();
+
+	void recordCommandBuffer(uint32_t imageIndex, const std::vector<Mesh>& resources);
+
+	void transition_image_layout(
+		uint32_t                imageIndex,
+		vk::ImageLayout         old_layout,
+		vk::ImageLayout         new_layout,
+		vk::AccessFlags2        src_access_mask,
+		vk::AccessFlags2        dst_access_mask,
+		vk::PipelineStageFlags2 src_stage_mask,
+		vk::PipelineStageFlags2 dst_stage_mask);
 
 	std::vector<const char*> getRequiredInstanceExtensions()
 	{
@@ -230,6 +239,11 @@ struct Renderer {
 
 	bool checkValidationLayerSupport() const;
 
+	uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const;
+
+	void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory);
+	void copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size);
+
 	std::vector<char> readFile(const std::string& filename);
 	vk::raii::ShaderModule createShaderModule(const std::vector<char>& code);
 
@@ -240,6 +254,15 @@ struct Renderer {
 	vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats);
 	vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes);
 	vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities);
+
+	void createVertexBuffer(Mesh& mesh);
+	void createIndexBuffer(Mesh& mesh);
+
+	void createResouceBuffer(std::vector<Mesh>& resources);
+
+	void waitIdle() {
+		device.waitIdle();
+	}
 
 	Platform& platform;
 

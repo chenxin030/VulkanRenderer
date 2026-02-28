@@ -7,10 +7,10 @@ static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallbackVkHpp(
 	const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData,
 	[[maybe_unused]] void* pUserData) {
 	if (messageSeverity >= vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
-		std::cerr << "Validation layer Warning/Error: " << pCallbackData->pMessage << std::endl;
+		std::cerr << "Validation layer Warning/Error: " << pCallbackData->pMessage << std::endl << std::endl;
 	}
 	else {
-		std::cout << "Validation layer Verbose/Info: " << pCallbackData->pMessage << std::endl;
+		std::cout << "Validation layer Verbose/Info: " << pCallbackData->pMessage << std::endl <<std::endl;
 	}
 	return vk::False;
 }
@@ -319,75 +319,6 @@ bool Renderer::createLogicalDevice() {
     }
 }
 
-bool Renderer::createSwapChain() {
-	try {
-		// Query swap chain support
-		SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
-
-		// Choose swap surface format, present mode, and extent
-		vk::SurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
-		vk::PresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
-		vk::Extent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
-
-		// Choose image count
-		uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
-		if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
-			imageCount = swapChainSupport.capabilities.maxImageCount;
-		}
-
-		// Create swap chain info
-		vk::SwapchainCreateInfoKHR createInfo{
-		  .surface = *surface,
-		  .minImageCount = imageCount,
-		  .imageFormat = surfaceFormat.format,
-		  .imageColorSpace = surfaceFormat.colorSpace,
-		  .imageExtent = extent,
-		  .imageArrayLayers = 1,
-		  .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst,
-		  .preTransform = swapChainSupport.capabilities.currentTransform,
-		  .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-		  .presentMode = presentMode,
-		  .clipped = VK_TRUE,
-		  .oldSwapchain = nullptr
-		};
-
-		// Find queue families
-		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
-		std::array<uint32_t, 2> queueFamilyIndicesLoc = { indices.graphicsFamily.value(), indices.presentFamily.value() };
-
-		// 当不同家族的队列访问同一张图像时，需要管理所有权转移
-		if (indices.graphicsFamily != indices.presentFamily) {
-			createInfo.imageSharingMode = vk::SharingMode::eConcurrent;	// 并发模式 (eConcurrent)
-			createInfo.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilyIndicesLoc.size());	// 有2个家族会访问
-			createInfo.pQueueFamilyIndices = queueFamilyIndicesLoc.data();	// 具体的家族索引列表
-		}
-		else {
-			createInfo.imageSharingMode = vk::SharingMode::eExclusive;	// 独占模式 (eExclusive),不需要显式所有权转移
-			createInfo.queueFamilyIndexCount = 0;
-			createInfo.pQueueFamilyIndices = nullptr;
-		}
-
-		// Create swap chain
-		swapChain = vk::raii::SwapchainKHR(device, createInfo);
-
-		// Get swap chain images
-		swapChainImages = swapChain.getImages();
-
-		// Swapchain images start in UNDEFINED layout; track per-image layout for correct barriers.
-		swapChainImageLayouts.assign(swapChainImages.size(), vk::ImageLayout::eUndefined);
-
-		// Store swap chain format and extent
-		swapChainImageFormat = surfaceFormat.format;
-		swapChainExtent = extent;
-
-		return true;
-	}
-	catch (const std::exception& e) {
-		std::cerr << "Failed to create swap chain: " << e.what() << std::endl;
-		return false;
-	}
-}
-
 bool Renderer::createGraphicsPipeline() {
 	try
 	{
@@ -397,8 +328,14 @@ bool Renderer::createGraphicsPipeline() {
 		vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain" };
 		vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
-
-		vk::PipelineVertexInputStateCreateInfo   vertexInputInfo;
+		auto                                     bindingDescription = Vertex::getBindingDescription();
+		auto                                     attributeDescriptions = Vertex::getAttributeDescriptions();
+		vk::PipelineVertexInputStateCreateInfo   vertexInputInfo{ 
+			.vertexBindingDescriptionCount = 1, 
+			.pVertexBindingDescriptions = &bindingDescription,
+			.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()), 
+			.pVertexAttributeDescriptions = attributeDescriptions.data() 
+		};
 		vk::PipelineInputAssemblyStateCreateInfo inputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList };
 		vk::PipelineViewportStateCreateInfo      viewportState{ .viewportCount = 1, .scissorCount = 1 };
 
@@ -416,7 +353,7 @@ bool Renderer::createGraphicsPipeline() {
 			vk::DynamicState::eScissor };
 		vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
 
-		vk::PipelineLayoutCreateInfo pipelineLayoutInfo;
+		vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 0, .pushConstantRangeCount = 0 };
 
 		pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 
