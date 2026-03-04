@@ -275,7 +275,7 @@ bool Renderer::createLogicalDevice() {
 			vk::PhysicalDeviceVulkan13Features,
 			vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
 			featureChain = {
-				{},											// vk::PhysicalDeviceFeatures2
+				{.features = {.samplerAnisotropy = true}},		// vk::PhysicalDeviceFeatures2£¬textureSampler
 				{.shaderDrawParameters = VK_TRUE },			// vk::PhysicalDeviceVulkan11Features
 				{.synchronization2 = VK_TRUE, .dynamicRendering = VK_TRUE },				// vk::PhysicalDeviceVulkan13Features
 				{.extendedDynamicState = VK_TRUE}				// vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
@@ -322,7 +322,7 @@ bool Renderer::createLogicalDevice() {
 bool Renderer::createGraphicsPipeline() {
 	try
 	{
-		vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "slang.spv"));
+		vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "shader.spv"));
 
 		vk::PipelineShaderStageCreateInfo vertShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain" };
 		vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain" };

@@ -33,8 +33,12 @@ bool Renderer::createDescriptorSetLayout(){
 
     //descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
 
-    vk::DescriptorSetLayoutBinding    uboLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr);
-    vk::DescriptorSetLayoutCreateInfo layoutInfo{ .bindingCount = 1, .pBindings = &uboLayoutBinding };
+    std::array bindings = {
+        vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr),
+        vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr) 
+    };
+
+    vk::DescriptorSetLayoutCreateInfo layoutInfo{ .bindingCount = bindings.size(), .pBindings = bindings.data()};
     descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
     return true;
   }

@@ -35,6 +35,8 @@ add_definitions(
     -DVULKAN_HPP_NO_STRUCT_CONSTRUCTORS
     -DGLFW_INCLUDE_VULKAN
     -DPLATFORM_DESKTOP
+    -DGLM_FORCE_DEFAULT_ALIGNED_GENTYPES    # 这样就不用考虑uniform的对齐问题（无需alignas），除非嵌套struct
+    -DSTB_IMAGE_IMPLEMENTATION
     -DVK_MODEL_DIR="${CMAKE_SOURCE_DIR}/assets/models/"
     -DVK_TEXTURE_DIR="${CMAKE_SOURCE_DIR}/assets/textures/"
     -DVK_SHADERS_DIR="${CMAKE_SOURCE_DIR}/shaders/"
@@ -45,11 +47,8 @@ if(FORCE_VALIDATION)
     add_definitions(-DFORCE_VALIDATION)
 endif()
 
-# 创建可执行文件
 add_executable(${NAME})
 
-# 先查找源文件
-# App 文件夹
 file(GLOB_RECURSE APP_SOURCES 
     ${CMAKE_CURRENT_SOURCE_DIR}/src/App/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/App/*.cxx
@@ -61,7 +60,6 @@ file(GLOB_RECURSE APP_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/App/*.hxx
 )
 
-# Core 文件夹
 file(GLOB_RECURSE CORE_SOURCES 
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Core/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Core/*.cxx
@@ -73,7 +71,6 @@ file(GLOB_RECURSE CORE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Core/*.hxx
 )
 
-# 检查是否找到源文件
 if(NOT APP_SOURCES AND NOT CORE_SOURCES)
     message(WARNING "No source files found in src/App or src/Core directories!")
 else()
@@ -81,7 +78,6 @@ else()
     message(STATUS "Found Core sources: ${CORE_SOURCES}")
 endif()
 
-# 添加所有源文件到目标
 target_sources(${NAME} PRIVATE
     ${APP_SOURCES}
     ${APP_HEADERS}
@@ -89,7 +85,6 @@ target_sources(${NAME} PRIVATE
     ${CORE_HEADERS}
 )
 
-# 设置包含目录
 target_include_directories(${NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external
     ${CMAKE_CURRENT_SOURCE_DIR}/external/GLFW3/include
@@ -101,13 +96,11 @@ target_include_directories(${NAME} PRIVATE
     ${Vulkan_INCLUDE_DIRS}
 )
 
-# 源文件分组
 source_group("App\\Source Files" FILES ${APP_SOURCES})
 source_group("App\\Header Files" FILES ${APP_HEADERS})
 source_group("Core\\Source Files" FILES ${CORE_SOURCES})
 source_group("Core\\Header Files" FILES ${CORE_HEADERS})
 
-# 添加着色器文件
 file(GLOB_RECURSE SHADER_SLANG_FILES 
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.slang
 )
@@ -115,7 +108,6 @@ file(GLOB_RECURSE SHADER_SLANG_FILES
 if(SHADER_SLANG_FILES)
     list(LENGTH SHADER_SLANG_FILES SHADER_COUNT)
     
-    # 调用着色器编译函数
     add_slang_shader_target(
         ShaderCompileTarget
         SOURCES ${SHADER_SLANG_FILES}
@@ -134,7 +126,6 @@ else()
     message(WARNING "No .slang shader files found in ${CMAKE_CURRENT_SOURCE_DIR}/shaders/")
 endif()
 
-# 查找GLFW库
 find_library(GLFW_LIBRARY 
     NAMES glfw3 glfw3dll
     PATHS ${CMAKE_CURRENT_SOURCE_DIR}/external/GLFW3/lib
@@ -145,13 +136,11 @@ if(NOT GLFW_LIBRARY)
     message(WARNING "GLFW library not found in external/GLFW3/lib")
 endif()
 
-# 链接库
 target_link_libraries(${NAME} PRIVATE
     Vulkan::Vulkan
     ${GLFW_LIBRARY}
 )
 
-# 设置目标属性
 set_target_properties(${NAME} PROPERTIES
     CXX_STANDARD 23
     CXX_STANDARD_REQUIRED ON

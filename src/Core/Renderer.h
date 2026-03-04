@@ -136,12 +136,10 @@ struct Renderer {
 			std::cerr << "Failed to create command pool" << std::endl;
 			return false;
 		}
-		createResouceBuffer();
 		if (!createDescriptorPool()) {
 			std::cerr << "Failed to create descriptor pool" << std::endl;
 			return false;
 		}
-		createDescriptorSets();
 		if (!createCommandBuffers()) {
 			std::cerr << "Failed to create command buffers" << std::endl;
 			return false;
@@ -151,6 +149,11 @@ struct Renderer {
 			return false;
 		}
 		return true;
+	}
+	void loadResource(const std::vector<std::string>& texPath) {
+		createResouceBuffer();
+		loadTextures(texPath);
+		createDescriptorSets(resourceManager->textures["texture.jpg"]);
 	}
 
 	void render()
@@ -219,7 +222,7 @@ struct Renderer {
 	bool createDescriptorSetLayout();
 	bool createGraphicsPipeline();
 	bool createDescriptorPool();
-	void createDescriptorSets();
+	void createDescriptorSets(const TextureData& texData);
 	bool createCommandPool();
 	bool createCommandBuffers();
 	bool createSyncObjects();
@@ -287,6 +290,16 @@ struct Renderer {
 	void waitIdle() {
 		device.waitIdle();
 	}
+	void loadTextures(const std::vector<std::string>& texPath);
+	void LoadTextureFromFile(const std::string& path, TextureData& texData);
+	void createImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, TextureData& texData);
+	vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags);
+	void createTextureSampler(vk::raii::Sampler& textureSampler);
+	void transitionImageLayout(const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout);
+	void copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image, uint32_t width, uint32_t height);
+
+	std::unique_ptr<vk::raii::CommandBuffer> beginSingleTimeCommands();
+	void endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer);
 
 	Platform* platform;
 	ResourceManager* resourceManager;

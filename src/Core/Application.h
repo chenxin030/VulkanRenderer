@@ -12,12 +12,17 @@ struct Application {
 
 	bool running;
 
+	std::vector<std::string> texPath{
+		"texture.jpg"
+	};
+
 	Application() : running(true) {}
 	void init() {
 		platform.initWindow();
 		resourceManager.initResources();
 		renderer.initialize(&platform, &resourceManager);
 		renderer.initVulkan();
+		renderer.loadResource(texPath);
 	}
 	void run()
 	{
