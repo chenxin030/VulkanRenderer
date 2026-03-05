@@ -1,12 +1,9 @@
 #pragma once
 
 #include "ResourceManager.h"
+#include "Platform.h"
 
-#include <vulkan/vulkan_raii.hpp>
-#include <GLFW/glfw3.h>
-#include <iostream>
 #include <map>
-#include <platform.h>
 
 const std::vector<char const*> validationLayers = {
 	"VK_LAYER_KHRONOS_validation" 
@@ -89,6 +86,8 @@ struct Renderer {
 
 	bool framebufferResized = false;
 
+	TextureData depthData;
+
 	void initialize(Platform* _platform, ResourceManager* _resourceManager) {
 		platform = _platform;
 		resourceManager = _resourceManager;
@@ -136,6 +135,10 @@ struct Renderer {
 			std::cerr << "Failed to create command pool" << std::endl;
 			return false;
 		}
+		if (!createDepthResources()) {
+			std::cerr << "Failed to create depth resources" << std::endl;
+			return false;
+		}
 		if (!createDescriptorPool()) {
 			std::cerr << "Failed to create descriptor pool" << std::endl;
 			return false;
@@ -150,10 +153,9 @@ struct Renderer {
 		}
 		return true;
 	}
-	void loadResource(const std::vector<std::string>& texPath) {
-		createResouceBuffer();
-		loadTextures(texPath);
-		createDescriptorSets(resourceManager->textures["texture.jpg"]);
+	void loadResource() {
+		loadModels();
+		loadTextures();
 	}
 
 	void render()
@@ -226,17 +228,19 @@ struct Renderer {
 	bool createCommandPool();
 	bool createCommandBuffers();
 	bool createSyncObjects();
+	bool createDepthResources();
 
 	void recordCommandBuffer(uint32_t imageIndex);
 
 	void transition_image_layout(
-		uint32_t                imageIndex,
+		vk::Image               image,
 		vk::ImageLayout         old_layout,
 		vk::ImageLayout         new_layout,
 		vk::AccessFlags2        src_access_mask,
 		vk::AccessFlags2        dst_access_mask,
 		vk::PipelineStageFlags2 src_stage_mask,
-		vk::PipelineStageFlags2 dst_stage_mask);
+		vk::PipelineStageFlags2 dst_stage_mask,
+		vk::ImageAspectFlags    image_aspect_flags);
 
 	std::vector<const char*> getRequiredInstanceExtensions()
 	{
@@ -282,24 +286,27 @@ struct Renderer {
 
 	void createVertexBuffer(Mesh& mesh);
 	void createIndexBuffer(Mesh& mesh);
-	void createUniformBuffers(EntityResource& entityResource);
+	void createUniformBuffers(MeshResource& entityResource);
 	void updateUniformBuffer(uint32_t currentImage);
-
-	void createResouceBuffer();
 
 	void waitIdle() {
 		device.waitIdle();
 	}
-	void loadTextures(const std::vector<std::string>& texPath);
+	void loadModels();
+	void loadTextures();
 	void LoadTextureFromFile(const std::string& path, TextureData& texData);
 	void createImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, TextureData& texData);
 	vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags);
+	vk::Format findSupportedFormat(const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features);
+	vk::Format findDepthFormat();
+	bool hasStencilComponent(vk::Format format);
 	void createTextureSampler(vk::raii::Sampler& textureSampler);
 	void transitionImageLayout(const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout);
 	void copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image, uint32_t width, uint32_t height);
 
 	std::unique_ptr<vk::raii::CommandBuffer> beginSingleTimeCommands();
 	void endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer);
+
 
 	Platform* platform;
 	ResourceManager* resourceManager;

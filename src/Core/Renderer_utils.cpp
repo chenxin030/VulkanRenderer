@@ -187,3 +187,44 @@ vk::Extent2D Renderer::chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabi
         return actualExtent;
     }
 }
+
+vk::Format Renderer::findSupportedFormat(const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features) {
+    try {
+        for (vk::Format format : candidates) {
+            vk::FormatProperties props = physicalDevice.getFormatProperties(format);
+
+            if (tiling == vk::ImageTiling::eLinear && (props.linearTilingFeatures & features) == features) {
+                return format;
+            }
+            else if (tiling == vk::ImageTiling::eOptimal && (props.optimalTilingFeatures & features) == features) {
+                return format;
+            }
+        }
+
+        throw std::runtime_error("Failed to find supported format");
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Failed to find supported format: " << e.what() << std::endl;
+        throw;
+    }
+}
+
+vk::Format Renderer::findDepthFormat() {
+    try {
+        vk::Format depthFormat = findSupportedFormat(
+            { vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint },
+            vk::ImageTiling::eOptimal,
+            vk::FormatFeatureFlagBits::eDepthStencilAttachment);
+        std::cout << "Found depth format: " << static_cast<int>(depthFormat) << std::endl;
+        return depthFormat;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Failed to find supported depth format, falling back to D32_SFLOAT: " << e.what() << std::endl;
+        // Fallback to D32_SFLOAT which is widely supported
+        return vk::Format::eD32Sfloat;
+    }
+}
+
+bool Renderer::hasStencilComponent(vk::Format format) {
+    return format == vk::Format::eD32SfloatS8Uint || format == vk::Format::eD24UnormS8Uint;
+}

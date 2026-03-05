@@ -1,4 +1,5 @@
 #include "Renderer.h"
+#define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
 void Renderer::createVertexBuffer(Mesh& mesh) {
@@ -42,10 +43,10 @@ void Renderer::createIndexBuffer(Mesh& mesh)
     copyBuffer(stagingBuffer, indexBuffer, bufferSize);
 }
 
-void Renderer::createUniformBuffers(EntityResource& entityResource) {
-    auto& uniformBuffers = entityResource.uniformBuffers;
-    auto& uniformBuffersMemory = entityResource.uniformBuffersMemory;
-    auto& uniformBuffersMapped = entityResource.uniformBuffersMapped;
+void Renderer::createUniformBuffers(MeshResource& meshResource) {
+    auto& uniformBuffers = meshResource.uniformBuffers;
+    auto& uniformBuffersMemory = meshResource.uniformBuffersMemory;
+    auto& uniformBuffersMapped = meshResource.uniformBuffersMapped;
 
     uniformBuffers.clear();
     uniformBuffersMemory.clear();
@@ -65,10 +66,11 @@ void Renderer::createUniformBuffers(EntityResource& entityResource) {
 bool Renderer::createDescriptorPool() {
     try
     {
-        uint32_t uniformBufferCount = resourceManager->entityManager.entityResource.size();
+        uint32_t uniformBufferCount = resourceManager->meshResource.size();
+        uint32_t textureCount = resourceManager->texCount;
         std::array poolSize{
             vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT * uniformBufferCount),
-            vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, MAX_FRAMES_IN_FLIGHT) 
+            vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, MAX_FRAMES_IN_FLIGHT * textureCount)
         };
         vk::DescriptorPoolCreateInfo poolInfo{
             .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
@@ -87,10 +89,10 @@ bool Renderer::createDescriptorPool() {
 }
 
 void Renderer::createDescriptorSets(const TextureData& texData) {
-    auto& entityResource = resourceManager->entityManager.entityResource;
+    auto& entityResource = resourceManager->meshResource;
     size_t entityCount = entityResource.size();
 
-    for (auto& resource : resourceManager->entityManager.entityResource) {
+    for (auto& resource : resourceManager->meshResource) {
         std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *descriptorSetLayout);
         vk::DescriptorSetAllocateInfo        allocInfo{
             .descriptorPool = descriptorPool,
@@ -127,16 +129,6 @@ void Renderer::createDescriptorSets(const TextureData& texData) {
             device.updateDescriptorSets(descriptorWrites, {});
         }
     }
-}
-
-void Renderer::createResouceBuffer() {
-    auto& meshes = resourceManager->entityManager.meshes;
-    auto& entityResource = resourceManager->entityManager.entityResource;
-    for (int i = 0; i < meshes.size(); ++i) {
-		createVertexBuffer(meshes[i]);
-        createIndexBuffer(meshes[i]);
-        createUniformBuffers(entityResource[i]);
-	}
 }
 
 void Renderer::createBuffer(
@@ -188,10 +180,23 @@ void Renderer::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuff
     }
 }
 
-void Renderer::loadTextures(const std::vector<std::string>& texPath) {
-    for (auto& path : texPath) {
+void Renderer::loadModels() {
+    auto& meshes = resourceManager->meshes;
+    auto& meshResource = resourceManager->meshResource;
+    auto& modelPath = resourceManager->modelPath;
+    for (int i = 0; i < modelPath.size(); ++i) {
+        loadModel(modelPath[i], meshes[i]);
+        createVertexBuffer(meshes[i]);
+        createIndexBuffer(meshes[i]);
+        createUniformBuffers(meshResource[i]);
+    }
+}
+
+void Renderer::loadTextures() {
+    for (auto& path : resourceManager->texPath) {
         LoadTextureFromFile(path, resourceManager->textures[path]);
         createTextureSampler(resourceManager->textures[path].textureSampler);
+        createDescriptorSets(resourceManager->textures[path]);
     }
 }
 void Renderer::LoadTextureFromFile(const std::string& path, TextureData& texData)

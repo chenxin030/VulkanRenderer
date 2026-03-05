@@ -10,37 +10,29 @@ struct UniformBufferObject {
 	glm::mat4 proj;
 };
 
-struct EntityResource {
+struct MeshResource {
 	std::vector<vk::raii::Buffer> uniformBuffers;
 	std::vector<vk::raii::DeviceMemory> uniformBuffersMemory;
 	std::vector<void*> uniformBuffersMapped;
 	std::vector<vk::raii::DescriptorSet> descriptorSets;
 };
 
-struct EntityManager {
-	std::vector<Mesh> meshes;
-	std::vector<EntityResource> entityResource;
-};
-
 struct ResourceManager {
-	EntityManager entityManager;
+	std::vector<Mesh> meshes;
+	std::vector<MeshResource> meshResource;
 	std::unordered_map<std::string, TextureData> textures;
-	// models
+	uint16_t texCount = 0;
 
-	void initResources() {
-		auto& meshes = entityManager.meshes;
-		auto& entityResource = entityManager.entityResource;
-		meshes.resize(1);
-		entityResource.resize(1);
+	std::vector<std::string> modelPath{
+		"viking_room.glb"
+	};
+	std::vector<std::string> texPath{
+		"viking_room.png"
+	};
 
-		meshes[0].vertices.resize(4);
-		meshes[0].vertices = {
-			{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-			{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-			{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-			{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
-		};
-		meshes[0].indices.resize(6);
-		meshes[0].indices = { 0, 1, 2, 2, 3, 0 };
+	void initResource(unsigned int modelCount) {
+		meshes.resize(modelPath.size());
+		meshResource.resize(modelCount);
+		texCount = texPath.size();
 	}
 };

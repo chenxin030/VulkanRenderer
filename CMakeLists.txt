@@ -35,8 +35,10 @@ add_definitions(
     -DVULKAN_HPP_NO_STRUCT_CONSTRUCTORS
     -DGLFW_INCLUDE_VULKAN
     -DPLATFORM_DESKTOP
+    -DGLM_FORCE_RADIANS
     -DGLM_FORCE_DEFAULT_ALIGNED_GENTYPES    # 这样就不用考虑uniform的对齐问题（无需alignas），除非嵌套struct
-    -DSTB_IMAGE_IMPLEMENTATION
+    -DGLM_FORCE_DEPTH_ZERO_TO_ONE
+    -DGLM_ENABLE_EXPERIMENTAL               # The hash functions are defined in the gtx folder, which means that it is technically still an experimental extension to GLM.
     -DVK_MODEL_DIR="${CMAKE_SOURCE_DIR}/assets/models/"
     -DVK_TEXTURE_DIR="${CMAKE_SOURCE_DIR}/assets/textures/"
     -DVK_SHADERS_DIR="${CMAKE_SOURCE_DIR}/shaders/"

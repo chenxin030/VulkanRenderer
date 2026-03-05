@@ -343,6 +343,14 @@ bool Renderer::createGraphicsPipeline() {
 
 		vk::PipelineMultisampleStateCreateInfo multisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False };
 
+		vk::PipelineDepthStencilStateCreateInfo depthStencil{
+			.depthTestEnable = vk::True,
+			.depthWriteEnable = vk::True,
+			.depthCompareOp = vk::CompareOp::eLess,
+			.depthBoundsTestEnable = vk::False,
+			.stencilTestEnable = vk::False 
+		};
+
 		vk::PipelineColorBlendAttachmentState colorBlendAttachment{ .blendEnable = vk::False,
 																   .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA };
 
@@ -357,6 +365,8 @@ bool Renderer::createGraphicsPipeline() {
 
 		pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 
+		vk::Format depthFormat = findDepthFormat();
+
 		vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipelineCreateInfoChain = {
 			{
 				.stageCount = 2,
@@ -366,6 +376,7 @@ bool Renderer::createGraphicsPipeline() {
 				.pViewportState = &viewportState,
 				.pRasterizationState = &rasterizer,
 				.pMultisampleState = &multisampling,
+				.pDepthStencilState = &depthStencil,
 				.pColorBlendState = &colorBlending,
 				.pDynamicState = &dynamicState,
 				.layout = pipelineLayout,
@@ -373,7 +384,8 @@ bool Renderer::createGraphicsPipeline() {
 			},
 			{
 				.colorAttachmentCount = 1,
-				.pColorAttachmentFormats = &swapChainImageFormat
+				.pColorAttachmentFormats = &swapChainImageFormat,
+				.depthAttachmentFormat = depthFormat
 			}
 		};
 

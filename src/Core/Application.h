@@ -1,8 +1,6 @@
 #pragma once
 
 #include <Renderer.h>
-#include <platform.h>
-#include <ResourceManager.h>
 
 struct Application {
 
@@ -12,17 +10,13 @@ struct Application {
 
 	bool running;
 
-	std::vector<std::string> texPath{
-		"texture.jpg"
-	};
-
 	Application() : running(true) {}
 	void init() {
 		platform.initWindow();
-		resourceManager.initResources();
+		resourceManager.initResource(1);
 		renderer.initialize(&platform, &resourceManager);
 		renderer.initVulkan();
-		renderer.loadResource(texPath);
+		renderer.loadResource();
 	}
 	void run()
 	{
