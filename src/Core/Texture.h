@@ -6,4 +6,5 @@ struct TextureData {
 	vk::raii::DeviceMemory textureImageMemory = nullptr;
 	vk::raii::ImageView    textureImageView = nullptr;
 	vk::raii::Sampler      textureSampler = nullptr;
+	uint32_t mipLevels;
 };

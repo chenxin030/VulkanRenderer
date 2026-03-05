@@ -89,10 +89,10 @@ bool Renderer::createDescriptorPool() {
 }
 
 void Renderer::createDescriptorSets(const TextureData& texData) {
-    auto& entityResource = resourceManager->meshResource;
-    size_t entityCount = entityResource.size();
+    size_t meshCount = resourceManager->meshResource.size();
 
     for (auto& resource : resourceManager->meshResource) {
+        resource.descriptorSets.clear();
         std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *descriptorSetLayout);
         vk::DescriptorSetAllocateInfo        allocInfo{
             .descriptorPool = descriptorPool,
@@ -204,7 +204,8 @@ void Renderer::LoadTextureFromFile(const std::string& path, TextureData& texData
     int            texWidth, texHeight, texChannels;
     stbi_uc* pixels = stbi_load((VK_TEXTURE_DIR + path).c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
     vk::DeviceSize imageSize = texWidth * texHeight * 4;
-
+    auto& mipLevels = texData.mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight)))) + 1;
+    
     if (!pixels)
     {
         throw std::runtime_error("failed to load texture image: " + path + "\n");
@@ -220,21 +221,22 @@ void Renderer::LoadTextureFromFile(const std::string& path, TextureData& texData
 
     stbi_image_free(pixels);
 
-    createImage(texWidth, texHeight, vk::Format::eR8G8B8A8Srgb, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, texData);
+    createImage(texWidth, texHeight, mipLevels, vk::Format::eR8G8B8A8Srgb, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, texData);
 
-    transitionImageLayout(texData.textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+    transitionImageLayout(texData.textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, mipLevels);
     copyBufferToImage(stagingBuffer, texData.textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
-    transitionImageLayout(texData.textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
-    texData.textureImageView = createImageView(texData.textureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor);
+    generateMipmaps(texData.textureImage, vk::Format::eR8G8B8A8Srgb, texWidth, texHeight, mipLevels);
+
+    texData.textureImageView = createImageView(texData.textureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor, mipLevels);
 }
 
-void Renderer::createImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, TextureData& texData)
+void Renderer::createImage(uint32_t width, uint32_t height, uint32_t mipLevels, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, TextureData& texData)
 {
     auto& image = texData.textureImage;
     auto& imageMemory = texData.textureImageMemory;
 
-    vk::ImageCreateInfo imageInfo{ .imageType = vk::ImageType::e2D, .format = format, .extent = {width, height, 1}, .mipLevels = 1, .arrayLayers = 1, .samples = vk::SampleCountFlagBits::e1, .tiling = tiling, .usage = usage, .sharingMode = vk::SharingMode::eExclusive };
+    vk::ImageCreateInfo imageInfo{ .imageType = vk::ImageType::e2D, .format = format, .extent = {width, height, 1}, .mipLevels = mipLevels, .arrayLayers = 1, .samples = vk::SampleCountFlagBits::e1, .tiling = tiling, .usage = usage, .sharingMode = vk::SharingMode::eExclusive };
 
     image = vk::raii::Image(device, imageInfo);
 
@@ -244,38 +246,41 @@ void Renderer::createImage(uint32_t width, uint32_t height, vk::Format format, v
     imageMemory = vk::raii::DeviceMemory(device, allocInfo);
     image.bindMemory(imageMemory, 0);
 }
-vk::raii::ImageView Renderer::createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags)
+vk::raii::ImageView Renderer::createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags, uint32_t mipLevels)
 {
     vk::ImageViewCreateInfo viewInfo{
         .image = image,
         .viewType = vk::ImageViewType::e2D,
         .format = format,
-        .subresourceRange = {aspectFlags, 0, 1, 0, 1} };
+        .subresourceRange = {aspectFlags, 0, mipLevels, 0, 1} };
     return vk::raii::ImageView(device, viewInfo);
 }
 void Renderer::createTextureSampler(vk::raii::Sampler& textureSampler)
 {
     vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
     vk::SamplerCreateInfo        samplerInfo{
-               .magFilter = vk::Filter::eLinear,
-               .minFilter = vk::Filter::eLinear,
-               .mipmapMode = vk::SamplerMipmapMode::eLinear,
-               .addressModeU = vk::SamplerAddressMode::eRepeat,
-               .addressModeV = vk::SamplerAddressMode::eRepeat,
-               .addressModeW = vk::SamplerAddressMode::eRepeat,
-               .mipLodBias = 0.0f,
-               .anisotropyEnable = vk::True,
-               .maxAnisotropy = properties.limits.maxSamplerAnisotropy,
-               .compareEnable = vk::False,
-               .compareOp = vk::CompareOp::eAlways };
+        .magFilter = vk::Filter::eLinear,
+        .minFilter = vk::Filter::eLinear,
+        .mipmapMode = vk::SamplerMipmapMode::eLinear,
+        .addressModeU = vk::SamplerAddressMode::eRepeat,
+        .addressModeV = vk::SamplerAddressMode::eRepeat,
+        .addressModeW = vk::SamplerAddressMode::eRepeat,
+        .mipLodBias = 0.0f,
+        .anisotropyEnable = vk::True,
+        .maxAnisotropy = properties.limits.maxSamplerAnisotropy,
+        .compareEnable = vk::False,
+        .compareOp = vk::CompareOp::eAlways,
+        .minLod = 0.0f,
+        .maxLod = vk::LodClampNone
+    };
     textureSampler = vk::raii::Sampler(device, samplerInfo);
 }
 
-void Renderer::transitionImageLayout(const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout)
+void Renderer::transitionImageLayout(const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, uint32_t mipLevels)
 {
     auto commandBuffer = beginSingleTimeCommands();
 
-    vk::ImageMemoryBarrier barrier{ .oldLayout = oldLayout, .newLayout = newLayout, .image = image, .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1} };
+    vk::ImageMemoryBarrier barrier{ .oldLayout = oldLayout, .newLayout = newLayout, .image = image, .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, mipLevels, 0, 1} };
 
     vk::PipelineStageFlags sourceStage;
     vk::PipelineStageFlags destinationStage;
