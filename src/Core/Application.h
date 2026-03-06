@@ -13,7 +13,7 @@ struct Application {
 	Application() : running(true) {}
 	void init() {
 		platform.initWindow();
-		resourceManager.initResource(1);
+		resourceManager.initResource(MAX_OBJECTS);
 		renderer.initialize(&platform, &resourceManager);
 		renderer.initVulkan();
 		renderer.loadResource();

@@ -67,14 +67,13 @@ bool Renderer::createDescriptorPool() {
     try
     {
         uint32_t uniformBufferCount = resourceManager->meshResource.size();
-        uint32_t textureCount = resourceManager->texCount;
         std::array poolSize{
             vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT * uniformBufferCount),
-            vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, MAX_FRAMES_IN_FLIGHT * textureCount)
+            vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, MAX_FRAMES_IN_FLIGHT * uniformBufferCount)
         };
         vk::DescriptorPoolCreateInfo poolInfo{
             .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-            .maxSets = MAX_FRAMES_IN_FLIGHT,
+            .maxSets = MAX_FRAMES_IN_FLIGHT * uniformBufferCount,
             .poolSizeCount = static_cast<uint32_t>(poolSize.size()),
             .pPoolSizes = poolSize.data() 
         };
@@ -188,10 +187,13 @@ void Renderer::loadModels() {
         loadModel(modelPath[i], meshes[i]);
         createVertexBuffer(meshes[i]);
         createIndexBuffer(meshes[i]);
-        createUniformBuffers(meshResource[i]);
+    }
+    for (auto& resource : resourceManager->meshResource) {
+        createUniformBuffers(resource);
     }
 }
 
+// 不能处理无纹理的model，以及超过1个纹理的model
 void Renderer::loadTextures() {
     for (auto& path : resourceManager->texPath) {
         LoadTextureFromFile(path, resourceManager->textures[path]);

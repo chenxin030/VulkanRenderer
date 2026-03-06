@@ -215,13 +215,15 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
 	commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
 	commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
-	for (int i = 0; i < resourceManager->meshes.size(); ++i) {
-		auto& mesh = resourceManager->meshes[i];
-		auto& descriptorSets = resourceManager->meshResource[i].descriptorSets;
+	for (auto& mesh : resourceManager->meshes) {
 		commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
 		commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
-		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[currentFrame], nullptr);
-		commandBuffer.drawIndexed(mesh.indices.size(), 1, 0, 0, 0);
+		// 需要想个办法确定有几个对象共用一份顶点和索引
+		for (int i = 0; i < MAX_OBJECTS; ++i) {
+			auto& descriptorSets = resourceManager->meshResource[i].descriptorSets;
+			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[currentFrame], nullptr);
+			commandBuffer.drawIndexed(mesh.indices.size(), 1, 0, 0, 0);
+		}
 	}
 	commandBuffer.endRendering();
 	// After rendering, transition the swapchain image to PRESENT_SRC
@@ -239,17 +241,28 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 }
 void Renderer::updateUniformBuffer(uint32_t currentImage) {
 	static auto startTime = std::chrono::high_resolution_clock::now();
-
-	auto  currentTime = std::chrono::high_resolution_clock::now();
+	auto currentTime = std::chrono::high_resolution_clock::now();
 	float time = std::chrono::duration<float>(currentTime - startTime).count();
 
-	UniformBufferObject ubo{};
-	ubo.model = rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-	ubo.view = lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-	ubo.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f);
-	ubo.proj[1][1] *= -1;
+	glm::mat4 view = glm::lookAt(glm::vec3(2.0f, 2.0f, 6.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+	glm::mat4 proj = glm::perspective(glm::radians(45.0f),
+		static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height),
+		0.1f, 20.0f);
+	proj[1][1] *= -1; // Flip Y for Vulkan
 
 	for (auto& resource : resourceManager->meshResource) {
+		resource.rotation.y += 0.001f;
+
+		// Get the model matrix for this object
+		glm::mat4 initialRotation = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+		glm::mat4 model = resource.getModelMatrix() * initialRotation;
+
+		UniformBufferObject ubo{
+			.model = model,
+			.view = view,
+			.proj = proj
+		};
+
 		memcpy(resource.uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 	}
 }

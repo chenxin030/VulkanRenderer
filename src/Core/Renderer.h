@@ -5,6 +5,8 @@
 
 #include <map>
 
+constexpr int MAX_OBJECTS = 3;
+
 const std::vector<char const*> validationLayers = {
 	"VK_LAYER_KHRONOS_validation" 
 };
