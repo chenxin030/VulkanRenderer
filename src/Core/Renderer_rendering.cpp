@@ -192,13 +192,13 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 		vk::ImageAspectFlagBits::eDepth
 	);
 	vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
-	vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
 	vk::RenderingAttachmentInfo attachmentInfo = {
 		.imageView = swapChainImageViews[imageIndex],
 		.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
 		.loadOp = vk::AttachmentLoadOp::eClear,
 		.storeOp = vk::AttachmentStoreOp::eStore,
 		.clearValue = clearColor };
+	vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
 	vk::RenderingAttachmentInfo depthAttachmentInfo = {
 		.imageView = depthData.textureImageView,
 		.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
@@ -209,7 +209,9 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 		.renderArea = {.offset = {0, 0}, .extent = swapChainExtent},
 		.layerCount = 1,
 		.colorAttachmentCount = 1,
-		.pColorAttachments = &attachmentInfo };
+		.pColorAttachments = &attachmentInfo,
+		.pDepthAttachment = &depthAttachmentInfo 
+	};
 
 	commandBuffer.beginRendering(renderingInfo);
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
@@ -241,21 +243,22 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 }
 void Renderer::updateUniformBuffer(uint32_t currentImage) {
 	static auto startTime = std::chrono::high_resolution_clock::now();
+	static auto lastFrameTime = startTime;
 	auto currentTime = std::chrono::high_resolution_clock::now();
 	float time = std::chrono::duration<float>(currentTime - startTime).count();
+	float       deltaTime = std::chrono::duration<float>(currentTime - lastFrameTime).count();
+	lastFrameTime = currentTime;
 
-	glm::mat4 view = glm::lookAt(glm::vec3(2.0f, 2.0f, 6.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+	glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 2.0f, 3.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 	glm::mat4 proj = glm::perspective(glm::radians(45.0f),
 		static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height),
 		0.1f, 20.0f);
 	proj[1][1] *= -1; // Flip Y for Vulkan
 
 	for (auto& resource : resourceManager->meshResource) {
-		resource.rotation.y += 0.001f;
-
-		// Get the model matrix for this object
-		glm::mat4 initialRotation = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-		glm::mat4 model = resource.getModelMatrix() * initialRotation;
+		const float rotationSpeed = 0.5f;                          // Rotation speed in radians per second
+		resource.rotation.y += rotationSpeed * deltaTime;        // Slow rotation around Y axis scaled by frame time
+		glm::mat4 model = resource.getModelMatrix();
 
 		UniformBufferObject ubo{
 			.model = model,

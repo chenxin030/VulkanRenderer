@@ -70,10 +70,7 @@ void loadModel(const std::string& modelName, Mesh& mesh)
 				Vertex vertex{};
 
 				const float* pos = reinterpret_cast<const float*>(&posBuffer.data[posBufferView.byteOffset + posAccessor.byteOffset + i * 12]);
-				// glTF uses a right-handed coordinate system with Y-up
-				// Vulkan uses a right-handed coordinate system with Y-down
-				// We need to flip the Y coordinate
-				vertex.pos = { pos[0], -pos[1], pos[2] };
+				vertex.pos = { pos[0], pos[1], pos[2] };
 
 				if (hasTexCoords)
 				{
