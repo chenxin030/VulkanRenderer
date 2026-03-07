@@ -17,6 +17,7 @@ struct Application {
 		renderer.initialize(&platform, &resourceManager);
 		renderer.initVulkan();
 		renderer.loadResource();
+		renderer.createDescriptorSets();
 	}
 	void run()
 	{

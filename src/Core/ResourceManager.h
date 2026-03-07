@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Mesh.h"
-#include "Texture.h"
 #include <unordered_map>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -13,7 +12,7 @@ struct UniformBufferObject {
 	alignas(16) glm::mat4 proj;
 };
 
-struct MeshResource {
+struct MeshUniformBuffer {
 	glm::vec3 position = { 0.0f, 0.0f, 0.0f };
 	glm::vec3 rotation = { 0.0f, 0.0f, 0.0f };
 	glm::vec3 scale = { 1.0f, 1.0f, 1.0f };
@@ -34,11 +33,18 @@ struct MeshResource {
 	}
 };
 
+struct TextureData {
+	vk::raii::Image textureImage = nullptr;
+	vk::raii::DeviceMemory textureImageMemory = nullptr;
+	vk::raii::ImageView    textureImageView = nullptr;
+	vk::raii::Sampler      textureSampler = nullptr;
+	uint32_t mipLevels;
+};
+
 struct ResourceManager {
 	std::vector<Mesh> meshes;
-	std::vector<MeshResource> meshResource;
-	std::unordered_map<std::string, TextureData> textures;
-	uint16_t texCount = 0;
+	std::vector<TextureData> textures;
+	std::vector<MeshUniformBuffer> meshUniformBuffer;
 
 	std::vector<std::string> modelPath{
 		"viking_room.glb"
@@ -49,22 +55,22 @@ struct ResourceManager {
 
 	void initResource(unsigned int modelCount) {
 		meshes.resize(modelPath.size());
-		meshResource.resize(modelCount);
-		texCount = texPath.size();
+		textures.resize(texPath.size());
+		meshUniformBuffer.resize(modelCount);
 
 		// Object 1 - Center
-		meshResource[0].position = { 0.0f, 0.0f, 0.0f };
-		meshResource[0].rotation = { 0.0f, glm::radians(-90.0f), 0.0f };
-		meshResource[0].scale = { 1.0f, 1.0f, 1.0f };
+		meshUniformBuffer[0].position = { 0.0f, 0.0f, 0.0f };
+		meshUniformBuffer[0].rotation = { 0.0f, glm::radians(-90.0f), 0.0f };
+		meshUniformBuffer[0].scale = { 1.0f, 1.0f, 1.0f };
 
 		// Object 2 - Left
-		meshResource[1].position = { -2.0f, 0.0f, -1.0f };
-		meshResource[1].rotation = { 0.0f, glm::radians(45.0f), .0f };
-		meshResource[1].scale = { 0.75f, 0.75f, 0.75f };
+		meshUniformBuffer[1].position = { -2.0f, 0.0f, -1.0f };
+		meshUniformBuffer[1].rotation = { 0.0f, glm::radians(45.0f), .0f };
+		meshUniformBuffer[1].scale = { 0.75f, 0.75f, 0.75f };
 
 		// Object 3 - Right
-		meshResource[2].position = { 2.0f, 0.0f, -1.0f };
-		meshResource[2].rotation = { 0.0f, glm::radians(-45.0f), 0.0f };
-		meshResource[2].scale = { 0.75f, 0.75f, 0.75f };
+		meshUniformBuffer[2].position = { 2.0f, 0.0f, -1.0f };
+		meshUniformBuffer[2].rotation = { 0.0f, glm::radians(-45.0f), 0.0f };
+		meshUniformBuffer[2].scale = { 0.75f, 0.75f, 0.75f };
 	}
 };

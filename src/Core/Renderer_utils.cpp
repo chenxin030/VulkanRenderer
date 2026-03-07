@@ -101,6 +101,7 @@ QueueFamilyIndices Renderer::findQueueFamilies(const vk::raii::PhysicalDevice& d
     // Fallback: if no dedicated transfer queue, reuse graphics queue for transfer
     if (!indices.transferFamily.has_value() && indices.graphicsFamily.has_value()) {
         indices.transferFamily = indices.graphicsFamily;
+        std::cout << "no dedicated transfer queue, reuse graphics queue for transfer\n";
     }
 
     return indices;

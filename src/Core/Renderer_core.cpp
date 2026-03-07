@@ -215,6 +215,7 @@ bool Renderer::pickPhysicalDevice() {
 					break;
 				}
 			}
+			std::cout << " API: " << (deviceProperties.apiVersion >> 22) << "." << ((deviceProperties.apiVersion >> 12) & 0x3ff) << "." << (deviceProperties.apiVersion & 0xfff) << "\n";
 
 			std::cout << "  - Device is suitable with score: " << score << std::endl;
 			suitableDevices.emplace(score, _device);
@@ -265,7 +266,7 @@ bool Renderer::createLogicalDevice() {
 
         // Enable required features (now verified to be supported)
 		vk::PhysicalDeviceFeatures supportedFeatures = physicalDevice.getFeatures();
-		if (!supportedFeatures.samplerAnisotropy) {  // 如果不需要纹理，这行可以删除
+		if (!supportedFeatures.samplerAnisotropy) {  // 纹理
 			std::cout << "Warning: samplerAnisotropy not supported" << std::endl;
 		}
 		// 基础特性配置
@@ -280,19 +281,6 @@ bool Renderer::createLogicalDevice() {
 				{.synchronization2 = VK_TRUE, .dynamicRendering = VK_TRUE },				// vk::PhysicalDeviceVulkan13Features
 				{.extendedDynamicState = VK_TRUE}				// vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
 		};
-		//vk::PhysicalDeviceFeatures deviceFeatures{};
-		//deviceFeatures.samplerAnisotropy = VK_TRUE;  // 纹理需要，保留
-		//deviceFeatures.depthClamp = VK_TRUE;         // 深度测试，3D需要
-
-  //      // Vulkan 1.3特性
-		//vk::PhysicalDeviceVulkan13Features vulkan13Features{};
-		//vulkan13Features.dynamicRendering = VK_TRUE;     // 简化渲染流程
-		//vulkan13Features.synchronization2 = VK_TRUE;     // 简化同步
-
-		//// 特性链
-		//auto features = vk::PhysicalDeviceFeatures2()
-		//	.setFeatures(deviceFeatures)
-		//	.setPNext(&vulkan13Features);
 
         vk::DeviceCreateInfo createInfo{
           .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),	// 不能直接用.pNext = &featureChain（很神秘）
@@ -300,12 +288,11 @@ bool Renderer::createLogicalDevice() {
           .pQueueCreateInfos = queueCreateInfos.data(),
           .enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size()),
           .ppEnabledExtensionNames = deviceExtensions.data(),
-          .pEnabledFeatures = nullptr // Using pNext for features
+          .pEnabledFeatures = nullptr 
         };
 
         device = vk::raii::Device(physicalDevice, createInfo);
 
-        // Get queue handles
         graphicsQueue = vk::raii::Queue(device, queueFamilyIndices.graphicsFamily.value(), 0);
         presentQueue = vk::raii::Queue(device, queueFamilyIndices.presentFamily.value(), 0);
         computeQueue = vk::raii::Queue(device, queueFamilyIndices.computeFamily.value(), 0);

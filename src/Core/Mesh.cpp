@@ -3,8 +3,6 @@
 #define TINYGLTF_IMPLEMENTATION
 #include <tiny_gltf.h>
 
-
-
 void loadModel(const std::string& modelName, Mesh& mesh)
 {
 	// Use tinygltf to load the model instead of tinyobjloader

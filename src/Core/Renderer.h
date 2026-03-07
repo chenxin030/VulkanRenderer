@@ -162,6 +162,7 @@ struct Renderer {
 
 	void render()
 	{
+		// prepareFrame
 		auto fenceResult = device.waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
 		if (fenceResult != vk::Result::eSuccess)
 		{
@@ -178,13 +179,20 @@ struct Renderer {
 			assert(result == vk::Result::eTimeout || result == vk::Result::eNotReady);
 			throw std::runtime_error("failed to acquire swap chain image!");
 		}
+		// prepareFrame---
+
+		// updateLights()
+		
+		//
 		updateUniformBuffer(currentFrame);
+		//
 
 		device.resetFences(*inFlightFences[currentFrame]);
 
 		commandBuffers[currentFrame].reset();
 		recordCommandBuffer(imageIndex);
 
+		// submitFrame()
 		vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
 		const vk::SubmitInfo   submitInfo{ .waitSemaphoreCount = 1,
 										  .pWaitSemaphores = &*presentCompleteSemaphores[currentFrame],
@@ -212,6 +220,7 @@ struct Renderer {
 			assert(result == vk::Result::eSuccess);
 		}
 		currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+		// submitFrame()
 	}
 
 	bool createInstance(const std::string& appName);
@@ -226,7 +235,7 @@ struct Renderer {
 	bool createDescriptorSetLayout();
 	bool createGraphicsPipeline();
 	bool createDescriptorPool();
-	void createDescriptorSets(const TextureData& texData);
+	void createDescriptorSets();
 	bool createCommandPool();
 	bool createCommandBuffers();
 	bool createSyncObjects();
@@ -288,7 +297,7 @@ struct Renderer {
 
 	void createVertexBuffer(Mesh& mesh);
 	void createIndexBuffer(Mesh& mesh);
-	void createUniformBuffers(MeshResource& entityResource);
+	void createUniformBuffers(MeshUniformBuffer& entityResource);
 	void updateUniformBuffer(uint32_t currentImage);
 
 	void waitIdle() {

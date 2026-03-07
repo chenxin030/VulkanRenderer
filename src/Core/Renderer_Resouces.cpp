@@ -43,7 +43,7 @@ void Renderer::createIndexBuffer(Mesh& mesh)
     copyBuffer(stagingBuffer, indexBuffer, bufferSize);
 }
 
-void Renderer::createUniformBuffers(MeshResource& meshResource) {
+void Renderer::createUniformBuffers(MeshUniformBuffer& meshResource) {
     auto& uniformBuffers = meshResource.uniformBuffers;
     auto& uniformBuffersMemory = meshResource.uniformBuffersMemory;
     auto& uniformBuffersMapped = meshResource.uniformBuffersMapped;
@@ -66,7 +66,7 @@ void Renderer::createUniformBuffers(MeshResource& meshResource) {
 bool Renderer::createDescriptorPool() {
     try
     {
-        uint32_t uniformBufferCount = resourceManager->meshResource.size();
+        uint32_t uniformBufferCount = resourceManager->meshUniformBuffer.size();
         std::array poolSize{
             vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT * uniformBufferCount),
             vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, MAX_FRAMES_IN_FLIGHT * uniformBufferCount)
@@ -87,10 +87,8 @@ bool Renderer::createDescriptorPool() {
     }
 }
 
-void Renderer::createDescriptorSets(const TextureData& texData) {
-    size_t meshCount = resourceManager->meshResource.size();
-
-    for (auto& resource : resourceManager->meshResource) {
+void Renderer::createDescriptorSets() {
+    for (auto& resource : resourceManager->meshUniformBuffer) {
         resource.descriptorSets.clear();
         std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *descriptorSetLayout);
         vk::DescriptorSetAllocateInfo        allocInfo{
@@ -104,8 +102,8 @@ void Renderer::createDescriptorSets(const TextureData& texData) {
         {
             vk::DescriptorBufferInfo uniformBufferInfo{ .buffer = resource.uniformBuffers[i], .offset = 0, .range = sizeof(UniformBufferObject) };
             vk::DescriptorImageInfo imageInfo{
-                .sampler = texData.textureSampler,
-                .imageView = texData.textureImageView,
+                .sampler = resourceManager->textures[0].textureSampler,
+                .imageView = resourceManager->textures[0].textureImageView,
                 .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
             std::array descriptorWrites{
                 vk::WriteDescriptorSet{
@@ -180,25 +178,25 @@ void Renderer::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuff
 }
 
 void Renderer::loadModels() {
-    auto& meshes = resourceManager->meshes;
-    auto& meshResource = resourceManager->meshResource;
     auto& modelPath = resourceManager->modelPath;
+    auto& meshes = resourceManager->meshes;
+    auto& meshUniformBuffers = resourceManager->meshUniformBuffer;
+
     for (int i = 0; i < modelPath.size(); ++i) {
         loadModel(modelPath[i], meshes[i]);
         createVertexBuffer(meshes[i]);
         createIndexBuffer(meshes[i]);
     }
-    for (auto& resource : resourceManager->meshResource) {
-        createUniformBuffers(resource);
+    for (auto& meshUniformBuffer : meshUniformBuffers) {
+        createUniformBuffers(meshUniformBuffer);
     }
 }
 
 // 不能处理无纹理的model，以及超过1个纹理的model
 void Renderer::loadTextures() {
-    for (auto& path : resourceManager->texPath) {
-        LoadTextureFromFile(path, resourceManager->textures[path]);
-        createTextureSampler(resourceManager->textures[path].textureSampler);
-        createDescriptorSets(resourceManager->textures[path]);
+    for (int i = 0; i < resourceManager->texPath.size(); ++i) {
+        LoadTextureFromFile(resourceManager->texPath[i], resourceManager->textures[i]);
+        createTextureSampler(resourceManager->textures[i].textureSampler);
     }
 }
 void Renderer::LoadTextureFromFile(const std::string& path, TextureData& texData)

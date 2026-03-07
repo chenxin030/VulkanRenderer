@@ -217,16 +217,16 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
 	commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
 	commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
-	for (auto& mesh : resourceManager->meshes) {
-		commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
-		commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
-		// 需要想个办法确定有几个对象共用一份顶点和索引
-		for (int i = 0; i < MAX_OBJECTS; ++i) {
-			auto& descriptorSets = resourceManager->meshResource[i].descriptorSets;
-			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[currentFrame], nullptr);
-			commandBuffer.drawIndexed(mesh.indices.size(), 1, 0, 0, 0);
-		}
+
+	auto& mesh = resourceManager->meshes[0];
+	commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
+	commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
+	for (int i = 0; i < MAX_OBJECTS; ++i) {
+		auto& descriptorSets = resourceManager->meshUniformBuffer[i].descriptorSets;
+		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[currentFrame], nullptr);
+		commandBuffer.drawIndexed(mesh.indices.size(), 1, 0, 0, 0);
 	}
+
 	commandBuffer.endRendering();
 	// After rendering, transition the swapchain image to PRESENT_SRC
 	transition_image_layout(
@@ -255,7 +255,7 @@ void Renderer::updateUniformBuffer(uint32_t currentImage) {
 		0.1f, 20.0f);
 	proj[1][1] *= -1; // Flip Y for Vulkan
 
-	for (auto& resource : resourceManager->meshResource) {
+	for (auto& resource : resourceManager->meshUniformBuffer) {
 		const float rotationSpeed = 0.5f;                          // Rotation speed in radians per second
 		resource.rotation.y += rotationSpeed * deltaTime;        // Slow rotation around Y axis scaled by frame time
 		glm::mat4 model = resource.getModelMatrix();
