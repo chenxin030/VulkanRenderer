@@ -93,6 +93,11 @@ struct Renderer {
 	void initialize(Platform* _platform, ResourceManager* _resourceManager) {
 		platform = _platform;
 		resourceManager = _resourceManager;
+		glfwSetWindowUserPointer(platform->window, this);
+		glfwSetFramebufferSizeCallback(platform->window, [](GLFWwindow* w, int width, int height) {
+			auto* renderer = static_cast<Renderer*>(glfwGetWindowUserPointer(w));
+			renderer->framebufferResized = true;
+		});
 	}
 
 	bool initVulkan()
@@ -162,65 +167,70 @@ struct Renderer {
 
 	void render()
 	{
-		// prepareFrame
-		auto fenceResult = device.waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
-		if (fenceResult != vk::Result::eSuccess)
-		{
-			throw std::runtime_error("failed to wait for fence!");
+		try {
+			// prepareFrame
+			auto fenceResult = device.waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
+			if (fenceResult != vk::Result::eSuccess)
+			{
+				throw std::runtime_error("failed to wait for fence!");
+			}
+			auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[currentFrame], nullptr);
+			if (result == vk::Result::eErrorOutOfDateKHR)
+			{
+				recreateSwapChain();
+				return;
+			}
+			if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
+			{
+				assert(result == vk::Result::eTimeout || result == vk::Result::eNotReady);
+				throw std::runtime_error("failed to acquire swap chain image!");
+			}
+			updateUniformBuffer(currentFrame);
+
+			device.resetFences(*inFlightFences[currentFrame]);
+
+			commandBuffers[currentFrame].reset();
+			recordCommandBuffer(imageIndex);
+
+			// submitFrame()
+			vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+			const vk::SubmitInfo   submitInfo{ .waitSemaphoreCount = 1,
+											  .pWaitSemaphores = &*presentCompleteSemaphores[currentFrame],
+											  .pWaitDstStageMask = &waitDestinationStageMask,
+											  .commandBufferCount = 1,
+											  .pCommandBuffers = &*commandBuffers[currentFrame],
+											  .signalSemaphoreCount = 1,
+											  .pSignalSemaphores = &*renderFinishedSemaphores[imageIndex] };
+			graphicsQueue.submit(submitInfo, *inFlightFences[currentFrame]);
+
+			const vk::PresentInfoKHR presentInfoKHR{ .waitSemaphoreCount = 1,
+													.pWaitSemaphores = &*renderFinishedSemaphores[imageIndex],
+													.swapchainCount = 1,
+													.pSwapchains = &*swapChain,
+													.pImageIndices = &imageIndex };
+			result = presentQueue.presentKHR(presentInfoKHR);
+
+			if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || framebufferResized)
+			{
+				framebufferResized = false;
+				recreateSwapChain();
+			}
+			else
+			{
+				// There are no other success codes than eSuccess; on any error code, presentKHR already threw an exception.
+				assert(result == vk::Result::eSuccess);
+			}
+			currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 		}
-		auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[currentFrame], nullptr);
-		if (result == vk::Result::eErrorOutOfDateKHR)
-		{
-			recreateSwapChain();
-			return;
-		}
-		else if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
-		{
-			assert(result == vk::Result::eTimeout || result == vk::Result::eNotReady);
-			throw std::runtime_error("failed to acquire swap chain image!");
-		}
-		// prepareFrame---
-
-		// updateLights()
-		
-		//
-		updateUniformBuffer(currentFrame);
-		//
-
-		device.resetFences(*inFlightFences[currentFrame]);
-
-		commandBuffers[currentFrame].reset();
-		recordCommandBuffer(imageIndex);
-
-		// submitFrame()
-		vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
-		const vk::SubmitInfo   submitInfo{ .waitSemaphoreCount = 1,
-										  .pWaitSemaphores = &*presentCompleteSemaphores[currentFrame],
-										  .pWaitDstStageMask = &waitDestinationStageMask,
-										  .commandBufferCount = 1,
-										  .pCommandBuffers = &*commandBuffers[currentFrame],
-										  .signalSemaphoreCount = 1,
-										  .pSignalSemaphores = &*renderFinishedSemaphores[imageIndex] };
-		graphicsQueue.submit(submitInfo, *inFlightFences[currentFrame]);
-
-		const vk::PresentInfoKHR presentInfoKHR{ .waitSemaphoreCount = 1,
-												.pWaitSemaphores = &*renderFinishedSemaphores[imageIndex],
-												.swapchainCount = 1,
-												.pSwapchains = &*swapChain,
-												.pImageIndices = &imageIndex };
-		result = presentQueue.presentKHR(presentInfoKHR);
-		if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || framebufferResized)
-		{
+		catch (const vk::OutOfDateKHRError& e) {
 			framebufferResized = false;
 			recreateSwapChain();
 		}
-		else
-		{
-			// There are no other success codes than eSuccess; on any error code, presentKHR already threw an exception.
-			assert(result == vk::Result::eSuccess);
-		}
-		currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
-		// submitFrame()
+		
+	}
+
+	void cleanup() {
+		cleanupUBO();
 	}
 
 	bool createInstance(const std::string& appName);
@@ -289,6 +299,7 @@ struct Renderer {
 
 	QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& device);
 	SwapChainSupportDetails querySwapChainSupport(const vk::raii::PhysicalDevice& device);
+	static uint32_t chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabilities);
 	bool checkDeviceExtensionSupport(vk::raii::PhysicalDevice& device);
 
 	vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats);
@@ -306,6 +317,7 @@ struct Renderer {
 	void loadModels();
 	void loadTextures();
 	void LoadTextureFromFile(const std::string& path, TextureData& texData);
+	void cleanupUBO();
 	void createImage(uint32_t width, uint32_t height, uint32_t mipLevels, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, TextureData& texData);
 	vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags, uint32_t mipLevels);
 	vk::Format findSupportedFormat(const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features);

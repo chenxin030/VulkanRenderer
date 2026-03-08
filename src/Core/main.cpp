@@ -1,5 +1,15 @@
 #include <Application.h>
 
+#	define LOGI(...)        \
+		printf(__VA_ARGS__); \
+		printf("\n")
+#	define LOGW(...)        \
+		printf(__VA_ARGS__); \
+		printf("\n")
+#	define LOGE(...)                 \
+		fprintf(stderr, __VA_ARGS__); \
+		fprintf(stderr, "\n")
+
 int main() {
 
 	try
@@ -7,11 +17,10 @@ int main() {
 		Application app;
 		app.init();
 		app.run();
-		app.cleanup();
 	}
 	catch (const std::exception& e)
 	{
-		std::cerr << e.what() << std::endl;
+		LOGE("%s", e.what());
 		return EXIT_FAILURE;
 	}
 

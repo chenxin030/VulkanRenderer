@@ -89,14 +89,21 @@ bool Renderer::createDescriptorPool() {
 
 void Renderer::createDescriptorSets() {
     for (auto& resource : resourceManager->meshUniformBuffer) {
-        resource.descriptorSets.clear();
         std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *descriptorSetLayout);
         vk::DescriptorSetAllocateInfo        allocInfo{
             .descriptorPool = descriptorPool,
             .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
             .pSetLayouts = layouts.data()
         };
-        resource.descriptorSets = device.allocateDescriptorSets(allocInfo);
+
+        try {
+            resource.descriptorSets.clear();
+            resource.descriptorSets = device.allocateDescriptorSets(allocInfo);
+        }
+        catch (const std::exception& e) {
+            std::cerr << "Failed to allocate descriptor sets: " << e.what() << std::endl;
+            throw;
+        }
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
         {
@@ -229,6 +236,24 @@ void Renderer::LoadTextureFromFile(const std::string& path, TextureData& texData
     generateMipmaps(texData.textureImage, vk::Format::eR8G8B8A8Srgb, texWidth, texHeight, mipLevels);
 
     texData.textureImageView = createImageView(texData.textureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor, mipLevels);
+}
+
+void Renderer::cleanupUBO() {
+    for (auto& ubo : resourceManager->meshUniformBuffer) {
+        for (size_t i = 0; i < ubo.uniformBuffersMemory.size(); i++)
+        {
+            if (ubo.uniformBuffersMapped[i] != nullptr)
+            {
+                ubo.uniformBuffersMemory[i].unmapMemory();
+            }
+        }
+
+        // Clear vectors to release resources
+        ubo.uniformBuffers.clear();
+        ubo.uniformBuffersMemory.clear();
+        ubo.uniformBuffersMapped.clear();
+        ubo.descriptorSets.clear();
+    }
 }
 
 void Renderer::createImage(uint32_t width, uint32_t height, uint32_t mipLevels, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, TextureData& texData)

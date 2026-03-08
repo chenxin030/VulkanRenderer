@@ -5,30 +5,26 @@
 #include <chrono>
 bool Renderer::createSwapChain() {
 	try {
-		// Query swap chain support
-		SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
+		vk::SurfaceCapabilitiesKHR surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(*surface);
+		swapChainExtent = chooseSwapExtent(surfaceCapabilities);
+		uint32_t minImageCount = chooseSwapMinImageCount(surfaceCapabilities);
 
-		// Choose swap surface format, present mode, and extent
-		vk::SurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
-		vk::PresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
-		vk::Extent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
+		std::vector<vk::SurfaceFormatKHR> availableFormats = physicalDevice.getSurfaceFormatsKHR(*surface);
+		vk::SurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(availableFormats);
 
-		// Choose image count
-		uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
-		if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
-			imageCount = swapChainSupport.capabilities.maxImageCount;
-		}
+		std::vector<vk::PresentModeKHR> availablePresentModes = physicalDevice.getSurfacePresentModesKHR(*surface);
+		vk::PresentModeKHR              presentMode = chooseSwapPresentMode(availablePresentModes);
 
 		// Create swap chain info
 		vk::SwapchainCreateInfoKHR createInfo{
 		  .surface = *surface,
-		  .minImageCount = imageCount,
+		  .minImageCount = minImageCount,
 		  .imageFormat = surfaceFormat.format,
 		  .imageColorSpace = surfaceFormat.colorSpace,
-		  .imageExtent = extent,
+		  .imageExtent = swapChainExtent,
 		  .imageArrayLayers = 1,
 		  .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst,
-		  .preTransform = swapChainSupport.capabilities.currentTransform,
+		  .preTransform = surfaceCapabilities.currentTransform,
 		  .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
 		  .presentMode = presentMode,
 		  .clipped = VK_TRUE,
@@ -62,7 +58,6 @@ bool Renderer::createSwapChain() {
 
 		// Store swap chain format and extent
 		swapChainImageFormat = surfaceFormat.format;
-		swapChainExtent = extent;
 
 		return true;
 	}
@@ -73,10 +68,15 @@ bool Renderer::createSwapChain() {
 }
 void Renderer::cleanupSwapChain() {
 	swapChainImageViews.clear();
-	swapChain = vk::raii::SwapchainKHR(nullptr);
 
+	depthData.textureImageView = vk::raii::ImageView(nullptr);
+	depthData.textureImage = vk::raii::Image(nullptr);
+	depthData.textureImageMemory = vk::raii::DeviceMemory(nullptr);
+
+	swapChain = vk::raii::SwapchainKHR(nullptr);
 }
 void Renderer::recreateSwapChain() {
+
 	int width = 0, height = 0;
 	glfwGetFramebufferSize(platform->window, &width, &height);
 	while (width == 0 || height == 0)
@@ -94,19 +94,12 @@ void Renderer::recreateSwapChain() {
 }
 bool Renderer::createImageViews() {
 	try {
-		swapChainImageViews.clear();
-		swapChainImageViews.reserve(swapChainImages.size());
+		assert(swapChainImageViews.empty());
 
 		// Create image view info template (image will be set per iteration)
 		vk::ImageViewCreateInfo createInfo{
 		  .viewType = vk::ImageViewType::e2D,
 		  .format = swapChainImageFormat,
-		  .components = {
-			.r = vk::ComponentSwizzle::eIdentity,
-			.g = vk::ComponentSwizzle::eIdentity,
-			.b = vk::ComponentSwizzle::eIdentity,
-			.a = vk::ComponentSwizzle::eIdentity
-		  },
 		  .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1}
 		};
 

@@ -27,12 +27,16 @@ struct Application {
 				break;
 			}
 			renderer.render();
+
+			platform.endFrame();
 		}
 		renderer.waitIdle();
+
+		cleanup();
 	}
 
 	void cleanup() {
-		
+		renderer.cleanup();
 		platform.cleanup();
 	}
 };

@@ -117,6 +117,16 @@ SwapChainSupportDetails Renderer::querySwapChainSupport(const vk::raii::Physical
 	return details;
 }
 
+uint32_t Renderer::chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabilities)
+{
+    auto minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
+    if ((0 < surfaceCapabilities.maxImageCount) && (surfaceCapabilities.maxImageCount < minImageCount))
+    {
+        minImageCount = surfaceCapabilities.maxImageCount;
+    }
+    return minImageCount;
+}
+
 bool Renderer::checkDeviceExtensionSupport(vk::raii::PhysicalDevice& device) {
     auto availableDeviceExtensions = device.enumerateDeviceExtensionProperties();
 
