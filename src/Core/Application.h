@@ -26,6 +26,7 @@ struct Application {
 				running = false;
 				break;
 			}
+			renderer.processInput(platform.frameTimer);
 			renderer.render();
 
 			platform.endFrame();

@@ -35,14 +35,14 @@ bool Renderer::createSwapChain() {
 		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 		std::array<uint32_t, 2> queueFamilyIndicesLoc = { indices.graphicsFamily.value(), indices.presentFamily.value() };
 
-		// µ±²»Í¬¼Ò×åµÄ¶ÓÁÐ·ÃÎÊÍ¬Ò»ÕÅÍ¼ÏñÊ±£¬ÐèÒª¹ÜÀíËùÓÐÈ¨×ªÒÆ
+		// ï¿½ï¿½ï¿½ï¿½Í¬ï¿½ï¿½ï¿½ï¿½Ä¶ï¿½ï¿½Ð·ï¿½ï¿½ï¿½Í¬Ò»ï¿½ï¿½Í¼ï¿½ï¿½Ê±ï¿½ï¿½ï¿½ï¿½Òªï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È¨×ªï¿½ï¿½
 		if (indices.graphicsFamily != indices.presentFamily) {
-			createInfo.imageSharingMode = vk::SharingMode::eConcurrent;	// ²¢·¢Ä£Ê½ (eConcurrent)
-			createInfo.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilyIndicesLoc.size());	// ÓÐ2¸ö¼Ò×å»á·ÃÎÊ
-			createInfo.pQueueFamilyIndices = queueFamilyIndicesLoc.data();	// ¾ßÌåµÄ¼Ò×åË÷ÒýÁÐ±í
+			createInfo.imageSharingMode = vk::SharingMode::eConcurrent;	// ï¿½ï¿½ï¿½ï¿½Ä£Ê½ (eConcurrent)
+			createInfo.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilyIndicesLoc.size());	// ï¿½ï¿½2ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+			createInfo.pQueueFamilyIndices = queueFamilyIndicesLoc.data();	// ï¿½ï¿½ï¿½ï¿½Ä¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ð±ï¿½
 		}
 		else {
-			createInfo.imageSharingMode = vk::SharingMode::eExclusive;	// ¶ÀÕ¼Ä£Ê½ (eExclusive),²»ÐèÒªÏÔÊ½ËùÓÐÈ¨×ªÒÆ
+			createInfo.imageSharingMode = vk::SharingMode::eExclusive;	// ï¿½ï¿½Õ¼Ä£Ê½ (eExclusive),ï¿½ï¿½ï¿½ï¿½Òªï¿½ï¿½Ê½ï¿½ï¿½ï¿½ï¿½È¨×ªï¿½ï¿½
 			createInfo.queueFamilyIndexCount = 0;
 			createInfo.pQueueFamilyIndices = nullptr;
 		}
@@ -116,48 +116,48 @@ bool Renderer::createImageViews() {
 	}
 }
 bool Renderer::createCommandPool() {
-    try {
-        // Find queue families
-        QueueFamilyIndices queueFamilyIndicesLoc = findQueueFamilies(physicalDevice);
+	try {
+		// Find queue families
+		QueueFamilyIndices queueFamilyIndicesLoc = findQueueFamilies(physicalDevice);
 
-        // Create command pool info
-        vk::CommandPoolCreateInfo poolInfo{
-          .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-          .queueFamilyIndex = queueFamilyIndicesLoc.graphicsFamily.value()
-        };
+		// Create command pool info
+		vk::CommandPoolCreateInfo poolInfo{
+		  .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+		  .queueFamilyIndex = queueFamilyIndicesLoc.graphicsFamily.value()
+		};
 
-        // Create command pool
-        commandPool = vk::raii::CommandPool(device, poolInfo);
+		// Create command pool
+		commandPool = vk::raii::CommandPool(device, poolInfo);
 
-        return true;
-    }
-    catch (const std::exception& e) {
-        std::cerr << "Failed to create command pool: " << e.what() << std::endl;
-        return false;
-    }
+		return true;
+	}
+	catch (const std::exception& e) {
+		std::cerr << "Failed to create command pool: " << e.what() << std::endl;
+		return false;
+	}
 }
 bool Renderer::createCommandBuffers() {
-    try {
-        // Resize command buffers vector
-        commandBuffers.clear();
-        commandBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
+	try {
+		// Resize command buffers vector
+		commandBuffers.clear();
+		commandBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
 
-        // Create command buffer allocation info
-        vk::CommandBufferAllocateInfo allocInfo{
-          .commandPool = *commandPool,
-          .level = vk::CommandBufferLevel::ePrimary,
-          .commandBufferCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)
-        };
+		// Create command buffer allocation info
+		vk::CommandBufferAllocateInfo allocInfo{
+		  .commandPool = *commandPool,
+		  .level = vk::CommandBufferLevel::ePrimary,
+		  .commandBufferCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)
+		};
 
-        // Allocate command buffers
-        commandBuffers = vk::raii::CommandBuffers(device, allocInfo);
+		// Allocate command buffers
+		commandBuffers = vk::raii::CommandBuffers(device, allocInfo);
 
-        return true;
-    }
-    catch (const std::exception& e) {
-        std::cerr << "Failed to create command buffers: " << e.what() << std::endl;
-        return false;
-    }
+		return true;
+	}
+	catch (const std::exception& e) {
+		std::cerr << "Failed to create command buffers: " << e.what() << std::endl;
+		return false;
+	}
 }
 void Renderer::recordCommandBuffer(uint32_t imageIndex)
 {
@@ -203,7 +203,7 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 		.layerCount = 1,
 		.colorAttachmentCount = 1,
 		.pColorAttachments = &attachmentInfo,
-		.pDepthAttachment = &depthAttachmentInfo 
+		.pDepthAttachment = &depthAttachmentInfo
 	};
 
 	commandBuffer.beginRendering(renderingInfo);
@@ -235,17 +235,12 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 	commandBuffer.end();
 }
 void Renderer::updateUniformBuffer(uint32_t currentImage) {
-	static auto startTime = std::chrono::high_resolution_clock::now();
-	static auto lastFrameTime = startTime;
-	auto currentTime = std::chrono::high_resolution_clock::now();
-	float time = std::chrono::duration<float>(currentTime - startTime).count();
-	float       deltaTime = std::chrono::duration<float>(currentTime - lastFrameTime).count();
-	lastFrameTime = currentTime;
+	float deltaTime = platform->frameTimer;
 
-	glm::mat4 view = glm::lookAt(glm::vec3(0.0f, 2.0f, 3.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-	glm::mat4 proj = glm::perspective(glm::radians(45.0f),
+	glm::mat4 view = camera.GetViewMatrix();
+	glm::mat4 proj = glm::perspective(glm::radians(camera.Zoom),
 		static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height),
-		0.1f, 20.0f);
+		0.1f, 100.0f);
 	proj[1][1] *= -1; // Flip Y for Vulkan
 
 	for (auto& resource : resourceManager->meshUniformBuffer) {
