@@ -133,6 +133,7 @@ void Renderer::createDescriptorSets() {
             device.updateDescriptorSets(descriptorWrites, {});
         }
     }
+    createInstancedDescriptorSets();
 }
 
 void Renderer::createBuffer(
@@ -199,7 +200,7 @@ void Renderer::loadModels() {
     }
 }
 
-// ²»ÄÜ´¦ÀíÎÞÎÆÀíµÄmodel£¬ÒÔ¼°³¬¹ý1¸öÎÆÀíµÄmodel
+// ï¿½ï¿½ï¿½Ü´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½modelï¿½ï¿½ï¿½Ô¼ï¿½ï¿½ï¿½ï¿½ï¿½1ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½model
 void Renderer::loadTextures() {
     for (int i = 0; i < resourceManager->texPath.size(); ++i) {
         LoadTextureFromFile(resourceManager->texPath[i], resourceManager->textures[i]);

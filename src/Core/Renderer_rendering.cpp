@@ -35,7 +35,6 @@ bool Renderer::createSwapChain() {
 		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 		std::array<uint32_t, 2> queueFamilyIndicesLoc = { indices.graphicsFamily.value(), indices.presentFamily.value() };
 
-		// ����ͬ����Ķ��з���ͬһ��ͼ��ʱ����Ҫ��������Ȩת��
 		if (indices.graphicsFamily != indices.presentFamily) {
 			createInfo.imageSharingMode = vk::SharingMode::eConcurrent;	// ����ģʽ (eConcurrent)
 			createInfo.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilyIndicesLoc.size());	// ��2����������
@@ -96,7 +95,6 @@ bool Renderer::createImageViews() {
 	try {
 		assert(swapChainImageViews.empty());
 
-		// Create image view info template (image will be set per iteration)
 		vk::ImageViewCreateInfo createInfo{
 		  .viewType = vk::ImageViewType::e2D,
 		  .format = swapChainImageFormat,
@@ -211,13 +209,26 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 	commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
 	commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
 
-	auto& mesh = resourceManager->meshes[0];
-	commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
-	commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
-	for (int i = 0; i < MAX_OBJECTS; ++i) {
-		auto& descriptorSets = resourceManager->meshUniformBuffer[i].descriptorSets;
-		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[currentFrame], nullptr);
-		commandBuffer.drawIndexed(mesh.indices.size(), 1, 0, 0, 0);
+	bool useInstancing = false; // Toggle for instanced rendering
+
+	if (useInstancing) {
+		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *instancedPipeline);
+		auto& mesh = resourceManager->meshes[0];
+		commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
+		commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
+		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *instancedPipelineLayout, 0, *instancedBufferResources.descriptorSets[currentFrame], nullptr);
+		commandBuffer.drawIndexed(mesh.indices.size(), MAX_OBJECTS, 0, 0, 0);
+	}
+	else {
+		commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
+		auto& mesh = resourceManager->meshes[0];
+		commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
+		commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
+		for (int i = 0; i < MAX_OBJECTS; ++i) {
+			auto& descriptorSets = resourceManager->meshUniformBuffer[i].descriptorSets;
+			commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[currentFrame], nullptr);
+			commandBuffer.drawIndexed(mesh.indices.size(), 1, 0, 0, 0);
+		}
 	}
 
 	commandBuffer.endRendering();
@@ -243,10 +254,13 @@ void Renderer::updateUniformBuffer(uint32_t currentImage) {
 		0.1f, 100.0f);
 	proj[1][1] *= -1; // Flip Y for Vulkan
 
-	for (auto& resource : resourceManager->meshUniformBuffer) {
+	for (size_t i = 0; i < resourceManager->transforms.size(); ++i) {
+		auto& resource = resourceManager->meshUniformBuffer[i];
+		auto& transform = resourceManager->transforms[i];
+
 		const float rotationSpeed = 0.5f;                          // Rotation speed in radians per second
-		resource.rotation.y += rotationSpeed * deltaTime;        // Slow rotation around Y axis scaled by frame time
-		glm::mat4 model = resource.getModelMatrix();
+		transform.rotation.y += rotationSpeed * deltaTime;        // Slow rotation around Y axis scaled by frame time
+		glm::mat4 model = transform.getModelMatrix();
 
 		UniformBufferObject ubo{
 			.model = model,
@@ -256,6 +270,9 @@ void Renderer::updateUniformBuffer(uint32_t currentImage) {
 
 		memcpy(resource.uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
 	}
+
+	// Update instanced buffers
+	updateInstancedBuffers(currentImage);
 }
 bool Renderer::createDepthResources() {
 	try {

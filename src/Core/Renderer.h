@@ -9,7 +9,7 @@
 constexpr int MAX_OBJECTS = 3;
 
 const std::vector<char const*> validationLayers = {
-	"VK_LAYER_KHRONOS_validation" 
+	"VK_LAYER_KHRONOS_validation"
 };
 
 #ifdef NDEBUG
@@ -49,11 +49,10 @@ struct Renderer {
 	vk::raii::PhysicalDevice physicalDevice = nullptr;
 	vk::raii::Device         device = nullptr;
 
-	// Queue family indices
 	QueueFamilyIndices queueFamilyIndices;
 	vk::raii::Queue graphicsQueue = nullptr;
-	vk::raii::Queue presentQueue  = nullptr;
-	vk::raii::Queue computeQueue  = nullptr;
+	vk::raii::Queue presentQueue = nullptr;
+	vk::raii::Queue computeQueue = nullptr;
 	vk::raii::Queue transferQueue = nullptr;
 
 	vk::raii::SurfaceKHR surface = nullptr;
@@ -87,6 +86,15 @@ struct Renderer {
 
 	vk::raii::DescriptorPool             descriptorPool = nullptr;
 
+	// Instanced rendering resources
+	vk::raii::DescriptorSetLayout        instancedDescriptorSetLayout = nullptr;
+	vk::raii::PipelineLayout             instancedPipelineLayout = nullptr;
+	vk::raii::Pipeline                   instancedPipeline = nullptr;
+	vk::raii::DescriptorPool             instancedDescriptorPool = nullptr;
+
+	MeshUniformBuffer instancedBufferResources;
+	MeshUniformBuffer globalUboResources;
+
 	bool framebufferResized = false;
 
 	TextureData depthData;
@@ -99,7 +107,7 @@ struct Renderer {
 
 		platform->resizeCallback = [this](int width, int height) {
 			framebufferResized = true;
-		};
+			};
 
 		// Set mouse callback
 		platform->mouseCallback = [this](float xpos, float ypos, uint32_t button) {
@@ -184,6 +192,22 @@ struct Renderer {
 			std::cerr << "Failed to create sync objects" << std::endl;
 			return false;
 		}
+
+		// Initialize instanced rendering
+		createInstancedBuffers();
+		if (!createInstancedDescriptorSetLayout()) {
+			std::cerr << "Failed to create Instanced DescriptorSetLayout" << std::endl;
+			return false;
+		}
+		if (!createInstancedDescriptorPool()) {
+			std::cerr << "Failed to create Instanced DescriptorPool" << std::endl;
+			return false;
+		}
+		if (!createInstancedPipeline()) {
+			std::cerr << "Failed to create Instanced Pipeline" << std::endl;
+			return false;
+		}
+
 		return true;
 	}
 	void loadResource() {
@@ -294,6 +318,14 @@ struct Renderer {
 	bool createSyncObjects();
 	bool createDepthResources();
 
+	// Instanced rendering functions
+	bool createInstancedDescriptorSetLayout();
+	bool createInstancedDescriptorPool();
+	void createInstancedDescriptorSets();
+	bool createInstancedPipeline();
+	void createInstancedBuffers();
+	void updateInstancedBuffers(uint32_t currentImage);
+
 	void recordCommandBuffer(uint32_t imageIndex);
 
 	void transition_image_layout(
@@ -320,7 +352,7 @@ struct Renderer {
 		return extensions;
 	}
 
-	static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity, vk::DebugUtilsMessageTypeFlagsEXT type, const vk::DebugUtilsMessengerCallbackDataEXT * pCallbackData, void*)
+	static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity, vk::DebugUtilsMessageTypeFlagsEXT type, const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData, void*)
 	{
 		if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError || severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning)
 		{
