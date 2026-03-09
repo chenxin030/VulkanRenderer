@@ -133,7 +133,6 @@ void Renderer::createDescriptorSets() {
             device.updateDescriptorSets(descriptorWrites, {});
         }
     }
-    createInstancedDescriptorSets();
 }
 
 void Renderer::createBuffer(

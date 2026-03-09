@@ -252,8 +252,12 @@ void Renderer::updateInstancedBuffers(uint32_t currentImage) {
     memcpy(globalUboResources.uniformBuffersMapped[currentImage], &globalUbo, sizeof(globalUbo));
 
     // Instance Data
+    float deltaTime = platform->frameTimer;
     std::vector<InstanceData> instanceData(MAX_OBJECTS);
     for (uint32_t i = 0; i < MAX_OBJECTS; ++i) {
+        auto& transform = resourceManager->transforms[i];
+        const float rotationSpeed = 0.5f;
+        transform.rotation.y += rotationSpeed * deltaTime;
         instanceData[i].model = resourceManager->transforms[i].getModelMatrix();
     }
     memcpy(instancedBufferResources.uniformBuffersMapped[currentImage], instanceData.data(), sizeof(InstanceData) * MAX_OBJECTS);

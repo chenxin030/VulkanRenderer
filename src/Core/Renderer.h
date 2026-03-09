@@ -1,5 +1,7 @@
 #pragma once
 
+#define RENDERING_LEVEL 1 // 1: Multi-draw, 2: Instanced
+
 #include "ResourceManager.h"
 #include "Platform.h"
 #include "Camera.h"
@@ -73,10 +75,6 @@ struct Renderer {
 	// Initialized at swapchain creation and updated as we transition.
 	std::vector<vk::ImageLayout> swapChainImageLayouts;
 
-	vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
-	vk::raii::PipelineLayout pipelineLayout = nullptr;
-	vk::raii::Pipeline       graphicsPipeline = nullptr;
-
 	vk::raii::CommandPool    commandPool = nullptr;
 	std::vector<vk::raii::CommandBuffer> commandBuffers;
 
@@ -84,7 +82,22 @@ struct Renderer {
 	std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
 	std::vector<vk::raii::Fence> inFlightFences;
 
-	vk::raii::DescriptorPool             descriptorPool = nullptr;
+	// In Renderer.h
+#if RENDERING_LEVEL == 1
+	vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
+	vk::raii::PipelineLayout      pipelineLayout = nullptr;
+	vk::raii::Pipeline            graphicsPipeline = nullptr;
+	vk::raii::DescriptorPool      descriptorPool = nullptr;
+#elif RENDERING_LEVEL >= 2
+	// Instanced rendering resources
+	vk::raii::DescriptorSetLayout instancedDescriptorSetLayout = nullptr;
+	vk::raii::PipelineLayout      instancedPipelineLayout = nullptr;
+	vk::raii::Pipeline            instancedPipeline = nullptr;
+	vk::raii::DescriptorPool      instancedDescriptorPool = nullptr;
+
+	MeshUniformBuffer instancedBufferResources;
+	MeshUniformBuffer globalUboResources;
+#endif
 
 	// Instanced rendering resources
 	vk::raii::DescriptorSetLayout        instancedDescriptorSetLayout = nullptr;
@@ -164,6 +177,7 @@ struct Renderer {
 			std::cerr << "Failed to create image views" << std::endl;
 			return false;
 		}
+#if RENDERING_LEVEL == 1
 		if (!createDescriptorSetLayout()) {
 			std::cerr << "Failed to create descriptor set layout" << std::endl;
 			return false;
@@ -172,27 +186,11 @@ struct Renderer {
 			std::cerr << "Failed to create graphics pipeline" << std::endl;
 			return false;
 		}
-		if (!createCommandPool()) {
-			std::cerr << "Failed to create command pool" << std::endl;
-			return false;
-		}
-		if (!createDepthResources()) {
-			std::cerr << "Failed to create depth resources" << std::endl;
-			return false;
-		}
 		if (!createDescriptorPool()) {
 			std::cerr << "Failed to create descriptor pool" << std::endl;
 			return false;
 		}
-		if (!createCommandBuffers()) {
-			std::cerr << "Failed to create command buffers" << std::endl;
-			return false;
-		}
-		if (!createSyncObjects()) {
-			std::cerr << "Failed to create sync objects" << std::endl;
-			return false;
-		}
-
+#elif RENDERING_LEVEL >= 2
 		// Initialize instanced rendering
 		createInstancedBuffers();
 		if (!createInstancedDescriptorSetLayout()) {
@@ -205,6 +203,23 @@ struct Renderer {
 		}
 		if (!createInstancedPipeline()) {
 			std::cerr << "Failed to create Instanced Pipeline" << std::endl;
+			return false;
+		}
+#endif
+		if (!createCommandPool()) {
+			std::cerr << "Failed to create command pool" << std::endl;
+			return false;
+		}
+		if (!createDepthResources()) {
+			std::cerr << "Failed to create depth resources" << std::endl;
+			return false;
+		}
+		if (!createCommandBuffers()) {
+			std::cerr << "Failed to create command buffers" << std::endl;
+			return false;
+		}
+		if (!createSyncObjects()) {
+			std::cerr << "Failed to create sync objects" << std::endl;
 			return false;
 		}
 
@@ -235,7 +250,11 @@ struct Renderer {
 				assert(result == vk::Result::eTimeout || result == vk::Result::eNotReady);
 				throw std::runtime_error("failed to acquire swap chain image!");
 			}
+#if RENDERING_LEVEL == 1
 			updateUniformBuffer(currentFrame);
+#elif RENDERING_LEVEL == 2
+			updateInstancedBuffers(currentFrame);
+#endif
 
 			device.resetFences(*inFlightFences[currentFrame]);
 

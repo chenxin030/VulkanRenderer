@@ -17,7 +17,11 @@ struct Application {
 		renderer.initialize(&platform, &resourceManager);
 		renderer.initVulkan();
 		renderer.loadResource();
+#if RENDERING_LEVEL == 1
 		renderer.createDescriptorSets();
+#elif RENDERING_LEVEL == 2 
+		renderer.createInstancedDescriptorSets();
+#endif
 	}
 	void run()
 	{
