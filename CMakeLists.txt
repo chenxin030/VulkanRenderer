@@ -92,6 +92,8 @@ target_include_directories(${NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external/GLFW3/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/glm
     ${CMAKE_CURRENT_SOURCE_DIR}/external/tinygltf
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/ktx/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/ktx/other_include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/App
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Core

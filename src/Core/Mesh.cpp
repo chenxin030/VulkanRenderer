@@ -27,7 +27,7 @@ void loadModel(const std::string& modelName, Mesh& mesh)
 	{
 		throw std::runtime_error("Failed to load glTF model");
 	}
-	
+
 	auto& vertices = mesh.vertices;
 	auto& indices = mesh.indices;
 	vertices.clear();
@@ -47,6 +47,18 @@ void loadModel(const std::string& modelName, Mesh& mesh)
 			const tinygltf::Accessor& posAccessor = model.accessors[primitive.attributes.at("POSITION")];
 			const tinygltf::BufferView& posBufferView = model.bufferViews[posAccessor.bufferView];
 			const tinygltf::Buffer& posBuffer = model.buffers[posBufferView.buffer];
+
+			// Get vertex normals
+			bool hasNormals = primitive.attributes.find("NORMAL") != primitive.attributes.end();
+			const tinygltf::Accessor* normalAccessor = nullptr;
+			const tinygltf::BufferView* normalBufferView = nullptr;
+			const tinygltf::Buffer* normalBuffer = nullptr;
+			if (hasNormals)
+			{
+				normalAccessor = &model.accessors[primitive.attributes.at("NORMAL")];
+				normalBufferView = &model.bufferViews[normalAccessor->bufferView];
+				normalBuffer = &model.buffers[normalBufferView->buffer];
+			}
 
 			// Get texture coordinates if available
 			bool                        hasTexCoords = primitive.attributes.find("TEXCOORD_0") != primitive.attributes.end();
@@ -70,6 +82,16 @@ void loadModel(const std::string& modelName, Mesh& mesh)
 				const float* pos = reinterpret_cast<const float*>(&posBuffer.data[posBufferView.byteOffset + posAccessor.byteOffset + i * 12]);
 				vertex.pos = { pos[0], pos[1], pos[2] };
 
+				if (hasNormals)
+				{
+					const float* normal = reinterpret_cast<const float*>(&normalBuffer->data[normalBufferView->byteOffset + normalAccessor->byteOffset + i * 12]);
+					vertex.normal = { normal[0], normal[1], normal[2] };
+				}
+				else
+				{
+					vertex.normal = { 0.0f, 1.0f, 0.0f };
+				}
+
 				if (hasTexCoords)
 				{
 					const float* texCoord = reinterpret_cast<const float*>(&texCoordBuffer->data[texCoordBufferView->byteOffset + texCoordAccessor->byteOffset + i * 8]);
@@ -79,8 +101,6 @@ void loadModel(const std::string& modelName, Mesh& mesh)
 				{
 					vertex.texCoord = { 0.0f, 0.0f };
 				}
-
-				vertex.color = { 1.0f, 1.0f, 1.0f };
 
 				vertices.push_back(vertex);
 			}
@@ -128,6 +148,88 @@ void loadModel(const std::string& modelName, Mesh& mesh)
 
 				indices.push_back(baseVertex + index);
 			}
+		}
+	}
+}
+
+void generateCube(Mesh& mesh) {
+	mesh.vertices = {
+		// Front face (Normal: 0, 0, 1)
+		{{-1.0f, -1.0f,  1.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
+		{{ 1.0f, -1.0f,  1.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
+		{{ 1.0f,  1.0f,  1.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+		{{-1.0f,  1.0f,  1.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+
+		// Back face (Normal: 0, 0, -1)
+		{{-1.0f, -1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}, {1.0f, 0.0f}},
+		{{-1.0f,  1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f}},
+		{{ 1.0f,  1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f}},
+		{{ 1.0f, -1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 0.0f}},
+
+		// Left face (Normal: -1, 0, 0)
+		{{-1.0f, -1.0f, -1.0f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+		{{-1.0f, -1.0f,  1.0f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+		{{-1.0f,  1.0f,  1.0f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
+		{{-1.0f,  1.0f, -1.0f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
+
+		// Right face (Normal: 1, 0, 0)
+		{{ 1.0f, -1.0f, -1.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+		{{ 1.0f,  1.0f, -1.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
+		{{ 1.0f,  1.0f,  1.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
+		{{ 1.0f, -1.0f,  1.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+
+		// Top face (Normal: 0, 1, 0)
+		{{-1.0f,  1.0f, -1.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+		{{-1.0f,  1.0f,  1.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+		{{ 1.0f,  1.0f,  1.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+		{{ 1.0f,  1.0f, -1.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+
+		// Bottom face (Normal: 0, -1, 0)
+		{{-1.0f, -1.0f, -1.0f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f}},
+		{{ 1.0f, -1.0f, -1.0f}, {0.0f, -1.0f, 0.0f}, {0.0f, 1.0f}},
+		{{ 1.0f, -1.0f,  1.0f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
+		{{-1.0f, -1.0f,  1.0f}, {0.0f, -1.0f, 0.0f}, {1.0f, 0.0f}},
+	};
+
+	mesh.indices = {
+		0,  1,  2,  2,  3,  0,  // Front
+		4,  5,  6,  6,  7,  4,  // Back
+		8,  9,  10, 10, 11, 8,  // Left
+		12, 13, 14, 14, 15, 12, // Right
+		16, 17, 18, 18, 19, 16, // Top
+		20, 21, 22, 22, 23, 20  // Bottom
+	};
+}
+
+void generateSphere(Mesh& mesh, float radius, uint32_t precision) {
+	mesh.vertices.clear();
+	mesh.indices.clear();
+
+	for (uint32_t y = 0; y <= precision; ++y) {
+		for (uint32_t x = 0; x <= precision; ++x) {
+			float xSegment = (float)x / (float)precision;
+			float ySegment = (float)y / (float)precision;
+			float xPos = radius * std::cos(xSegment * 2.0f * M_PI) * std::sin(ySegment * M_PI);
+			float yPos = radius * std::cos(ySegment * M_PI);
+			float zPos = radius * std::sin(xSegment * 2.0f * M_PI) * std::sin(ySegment * M_PI);
+
+			Vertex vertex;
+			vertex.pos = glm::vec3(xPos, yPos, zPos);
+			vertex.normal = glm::normalize(vertex.pos);
+			vertex.texCoord = glm::vec2(xSegment, ySegment);
+			mesh.vertices.push_back(vertex);
+		}
+	}
+
+	for (uint32_t y = 0; y < precision; ++y) {
+		for (uint32_t x = 0; x < precision; ++x) {
+			mesh.indices.push_back((y + 1) * (precision + 1) + x);
+			mesh.indices.push_back(y * (precision + 1) + x);
+			mesh.indices.push_back(y * (precision + 1) + (x + 1));
+
+			mesh.indices.push_back((y + 1) * (precision + 1) + x);
+			mesh.indices.push_back(y * (precision + 1) + (x + 1));
+			mesh.indices.push_back((y + 1) * (precision + 1) + (x + 1));
 		}
 	}
 }

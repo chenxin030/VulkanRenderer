@@ -4,9 +4,9 @@
 
 void Renderer::createVertexBuffer(Mesh& mesh) {
 
-	auto& vertices = mesh.vertices;
-	auto& vertexBuffer = mesh.vertexBuffer;
-	auto& vertexBufferMemory = mesh.vertexBufferMemory;
+    auto& vertices = mesh.vertices;
+    auto& vertexBuffer = mesh.vertexBuffer;
+    auto& vertexBufferMemory = mesh.vertexBufferMemory;
 
     vk::DeviceSize         bufferSize = sizeof(vertices[0]) * vertices.size();
     vk::raii::Buffer       stagingBuffer({});
@@ -43,26 +43,46 @@ void Renderer::createIndexBuffer(Mesh& mesh)
     copyBuffer(stagingBuffer, indexBuffer, bufferSize);
 }
 
-void Renderer::createUniformBuffers(MeshUniformBuffer& meshResource) {
-    auto& uniformBuffers = meshResource.uniformBuffers;
-    auto& uniformBuffersMemory = meshResource.uniformBuffersMemory;
-    auto& uniformBuffersMapped = meshResource.uniformBuffersMapped;
+void Renderer::createUniformBuffers(MeshBuffer& meshResource, vk::DeviceSize size) {
+    auto& uniformBuffers = meshResource.Buffers;
+    auto& uniformBuffersMemory = meshResource.BuffersMemory;
+    auto& uniformBuffersMapped = meshResource.BuffersMapped;
 
     uniformBuffers.clear();
     uniformBuffersMemory.clear();
     uniformBuffersMapped.clear();
 
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        vk::DeviceSize bufferSize = sizeof(UniformBufferObject);
         vk::raii::Buffer buffer({});
         vk::raii::DeviceMemory bufferMem({});
-        createBuffer(bufferSize, vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer, bufferMem);
+        createBuffer(size, vk::BufferUsageFlagBits::eUniformBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer, bufferMem);
         uniformBuffers.emplace_back(std::move(buffer));
         uniformBuffersMemory.emplace_back(std::move(bufferMem));
-        uniformBuffersMapped.emplace_back(uniformBuffersMemory[i].mapMemory(0, bufferSize));
+        uniformBuffersMapped.emplace_back(uniformBuffersMemory[i].mapMemory(0, size));
     }
 }
 
+void Renderer::createStorageBuffers(MeshBuffer& meshResource, vk::DeviceSize size)
+{
+    auto& uniformBuffers = meshResource.Buffers;
+    auto& uniformBuffersMemory = meshResource.BuffersMemory;
+    auto& uniformBuffersMapped = meshResource.BuffersMapped;
+
+    uniformBuffers.clear();
+    uniformBuffersMemory.clear();
+    uniformBuffersMapped.clear();
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vk::raii::Buffer buffer({});
+        vk::raii::DeviceMemory bufferMem({});
+        createBuffer(size, vk::BufferUsageFlagBits::eStorageBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer, bufferMem);
+        uniformBuffers.emplace_back(std::move(buffer));
+        uniformBuffersMemory.emplace_back(std::move(bufferMem));
+        uniformBuffersMapped.emplace_back(uniformBuffersMemory[i].mapMemory(0, size));
+    }
+}
+
+#if RENDERING_LEVEL == 1
 bool Renderer::createDescriptorPool() {
     try
     {
@@ -75,7 +95,7 @@ bool Renderer::createDescriptorPool() {
             .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
             .maxSets = MAX_FRAMES_IN_FLIGHT * uniformBufferCount,
             .poolSizeCount = static_cast<uint32_t>(poolSize.size()),
-            .pPoolSizes = poolSize.data() 
+            .pPoolSizes = poolSize.data()
         };
         descriptorPool = vk::raii::DescriptorPool(device, poolInfo);
 
@@ -107,7 +127,7 @@ void Renderer::createDescriptorSets() {
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
         {
-            vk::DescriptorBufferInfo uniformBufferInfo{ .buffer = resource.uniformBuffers[i], .offset = 0, .range = sizeof(UniformBufferObject) };
+            vk::DescriptorBufferInfo uniformBufferInfo{ .buffer = resource.Buffers[i], .offset = 0, .range = sizeof(MVP) };
             vk::DescriptorImageInfo imageInfo{
                 .sampler = resourceManager->textures[0].textureSampler,
                 .imageView = resourceManager->textures[0].textureImageView,
@@ -115,7 +135,7 @@ void Renderer::createDescriptorSets() {
             std::array descriptorWrites{
                 vk::WriteDescriptorSet{
                     .dstSet = resource.descriptorSets[i],
-                    .dstBinding = 0, 
+                    .dstBinding = 0,
                     .dstArrayElement = 0,
                     .descriptorCount = 1,
                     .descriptorType = vk::DescriptorType::eUniformBuffer,
@@ -134,11 +154,12 @@ void Renderer::createDescriptorSets() {
         }
     }
 }
+#endif
 
 void Renderer::createBuffer(
     vk::DeviceSize size,
     vk::BufferUsageFlags usage,
-    vk::MemoryPropertyFlags properties, 
+    vk::MemoryPropertyFlags properties,
     vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory) {
 
     try {
@@ -185,21 +206,20 @@ void Renderer::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuff
 }
 
 void Renderer::loadModels() {
-    auto& modelPath = resourceManager->modelPath;
     auto& meshes = resourceManager->meshes;
-    auto& meshUniformBuffers = resourceManager->meshUniformBuffer;
-
-    for (int i = 0; i < modelPath.size(); ++i) {
-        loadModel(modelPath[i], meshes[i]);
+    generateSphere(meshes[0], 1, 100);
+    createVertexBuffer(meshes[0]);
+    createIndexBuffer(meshes[0]);
+    for (int i = 0; i < resourceManager->modelPath.size(); ++i) {
+#if RENDERING_LEVEL == 3
+#else
+        loadModel(resourceManager->modelPath[i], meshes[i]);
+#endif
         createVertexBuffer(meshes[i]);
         createIndexBuffer(meshes[i]);
     }
-    for (auto& meshUniformBuffer : meshUniformBuffers) {
-        createUniformBuffers(meshUniformBuffer);
-    }
 }
 
-// ���ܴ�����������model���Լ�����1��������model
 void Renderer::loadTextures() {
     for (int i = 0; i < resourceManager->texPath.size(); ++i) {
         LoadTextureFromFile(resourceManager->texPath[i], resourceManager->textures[i]);
@@ -212,7 +232,7 @@ void Renderer::LoadTextureFromFile(const std::string& path, TextureData& texData
     stbi_uc* pixels = stbi_load((VK_TEXTURE_DIR + path).c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
     vk::DeviceSize imageSize = texWidth * texHeight * 4;
     auto& mipLevels = texData.mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight)))) + 1;
-    
+
     if (!pixels)
     {
         throw std::runtime_error("failed to load texture image: " + path + "\n");
@@ -240,18 +260,18 @@ void Renderer::LoadTextureFromFile(const std::string& path, TextureData& texData
 
 void Renderer::cleanupUBO() {
     for (auto& ubo : resourceManager->meshUniformBuffer) {
-        for (size_t i = 0; i < ubo.uniformBuffersMemory.size(); i++)
+        for (size_t i = 0; i < ubo.BuffersMemory.size(); i++)
         {
-            if (ubo.uniformBuffersMapped[i] != nullptr)
+            if (ubo.BuffersMapped[i] != nullptr)
             {
-                ubo.uniformBuffersMemory[i].unmapMemory();
+                ubo.BuffersMemory[i].unmapMemory();
             }
         }
 
         // Clear vectors to release resources
-        ubo.uniformBuffers.clear();
-        ubo.uniformBuffersMemory.clear();
-        ubo.uniformBuffersMapped.clear();
+        ubo.Buffers.clear();
+        ubo.BuffersMemory.clear();
+        ubo.BuffersMapped.clear();
         ubo.descriptorSets.clear();
     }
 }

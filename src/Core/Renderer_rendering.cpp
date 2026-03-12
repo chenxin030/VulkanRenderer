@@ -3,6 +3,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <chrono>
+
 bool Renderer::createSwapChain() {
 	try {
 		vk::SurfaceCapabilitiesKHR surfaceCapabilities = physicalDevice.getSurfaceCapabilitiesKHR(*surface);
@@ -36,12 +37,12 @@ bool Renderer::createSwapChain() {
 		std::array<uint32_t, 2> queueFamilyIndicesLoc = { indices.graphicsFamily.value(), indices.presentFamily.value() };
 
 		if (indices.graphicsFamily != indices.presentFamily) {
-			createInfo.imageSharingMode = vk::SharingMode::eConcurrent;	// ����ģʽ (eConcurrent)
-			createInfo.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilyIndicesLoc.size());	// ��2����������
-			createInfo.pQueueFamilyIndices = queueFamilyIndicesLoc.data();	// ����ļ��������б�
+			createInfo.imageSharingMode = vk::SharingMode::eConcurrent;	// ?????? (eConcurrent)
+			createInfo.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilyIndicesLoc.size());	// ??2??????????
+			createInfo.pQueueFamilyIndices = queueFamilyIndicesLoc.data();	// ?????????????��?
 		}
 		else {
-			createInfo.imageSharingMode = vk::SharingMode::eExclusive;	// ��ռģʽ (eExclusive),����Ҫ��ʽ����Ȩת��
+			createInfo.imageSharingMode = vk::SharingMode::eExclusive;	// ????? (eExclusive),????????????????
 			createInfo.queueFamilyIndexCount = 0;
 			createInfo.pQueueFamilyIndices = nullptr;
 		}
@@ -205,7 +206,6 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 	};
 
 	commandBuffer.beginRendering(renderingInfo);
-	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
 	commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
 	commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
 
@@ -227,6 +227,13 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 	commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
 	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *instancedPipelineLayout, 0, *instancedBufferResources.descriptorSets[currentFrame], nullptr);
 	commandBuffer.drawIndexed(mesh.indices.size(), MAX_OBJECTS, 0, 0, 0);
+#elif RENDERING_LEVEL == 3
+	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *pbrPipeline);
+	auto& mesh = resourceManager->meshes[0];
+	commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
+	commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
+	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pbrPipelineLayout, 0, *pbrInstanceBufferResources.descriptorSets[currentFrame], nullptr);
+	commandBuffer.drawIndexed(mesh.indices.size(), MAX_OBJECTS, 0, 0, 0);
 #endif
 
 	commandBuffer.endRendering();
@@ -243,6 +250,8 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 	);
 	commandBuffer.end();
 }
+
+#if RENDERING_LEVEL == 1
 void Renderer::updateUniformBuffer(uint32_t currentImage) {
 	float deltaTime = platform->frameTimer;
 
@@ -260,15 +269,17 @@ void Renderer::updateUniformBuffer(uint32_t currentImage) {
 		transform.rotation.y += rotationSpeed * deltaTime;        
 		glm::mat4 model = transform.getModelMatrix();
 
-		UniformBufferObject ubo{
+		MVP ubo{
 			.model = model,
 			.view = view,
 			.proj = proj
 		};
 
-		memcpy(resource.uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+		memcpy(resource.BuffersMapped[currentImage], &ubo, sizeof(ubo));
 	}
 }
+#endif
+
 bool Renderer::createDepthResources() {
 	try {
 		vk::Format depthFormat = findDepthFormat();

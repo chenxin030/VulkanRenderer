@@ -1,36 +1,28 @@
 #include "Renderer.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <chrono>
 
-#if RENDERING_LEVEL == 2
+#if RENDERING_LEVEL == 3
 
-struct GlobalUBO {
-    glm::mat4 view;
-    glm::mat4 proj;
-};
-
-struct InstanceData {
-    glm::mat4 model;
-};
-
-bool Renderer::createInstancedDescriptorSetLayout() {
+bool Renderer::createPBRDescriptorSetLayout() {
     try {
         std::vector<vk::DescriptorSetLayoutBinding> bindings = {
             {
                 .binding = 0,
                 .descriptorType = vk::DescriptorType::eUniformBuffer,
                 .descriptorCount = 1,
-                .stageFlags = vk::ShaderStageFlagBits::eVertex
+                .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment
             },
             {
                 .binding = 1,
                 .descriptorType = vk::DescriptorType::eStorageBuffer,
                 .descriptorCount = 1,
-                .stageFlags = vk::ShaderStageFlagBits::eVertex
+                .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment
             },
             {
                 .binding = 2,
-                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                .descriptorType = vk::DescriptorType::eUniformBuffer,
                 .descriptorCount = 1,
                 .stageFlags = vk::ShaderStageFlagBits::eFragment
             }
@@ -41,21 +33,20 @@ bool Renderer::createInstancedDescriptorSetLayout() {
             .pBindings = bindings.data()
         };
 
-        instancedDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
+        pbrDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
         return true;
     }
     catch (const std::exception& e) {
-        std::cerr << "Failed to create instanced descriptor set layout: " << e.what() << std::endl;
+        std::cerr << "Failed to create PBR descriptor set layout: " << e.what() << std::endl;
         return false;
     }
 }
 
-bool Renderer::createInstancedDescriptorPool() {
+bool Renderer::createPBRDescriptorPool() {
     try {
         std::vector<vk::DescriptorPoolSize> poolSizes = {
-            {.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
-            {.type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT }, // storage buffer
-            {.type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT }
+            {.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2 }, // Scene + Light
+            {.type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT }
         };
 
         vk::DescriptorPoolCreateInfo poolInfo{
@@ -65,55 +56,55 @@ bool Renderer::createInstancedDescriptorPool() {
             .pPoolSizes = poolSizes.data()
         };
 
-        instancedDescriptorPool = vk::raii::DescriptorPool(device, poolInfo);
+        pbrDescriptorPool = vk::raii::DescriptorPool(device, poolInfo);
         return true;
     }
     catch (const std::exception& e) {
-        std::cerr << "Failed to create instanced descriptor pool: " << e.what() << std::endl;
+        std::cerr << "Failed to create PBR descriptor pool: " << e.what() << std::endl;
         return false;
     }
 }
 
-void Renderer::createInstancedDescriptorSets() {
-    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *instancedDescriptorSetLayout);
+void Renderer::createPBRDescriptorSets() {
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *pbrDescriptorSetLayout);
     vk::DescriptorSetAllocateInfo allocInfo{
-        .descriptorPool = *instancedDescriptorPool,
+        .descriptorPool = *pbrDescriptorPool,
         .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
         .pSetLayouts = layouts.data()
     };
 
-    instancedBufferResources.descriptorSets = vk::raii::DescriptorSets(device, allocInfo);
+    pbrInstanceBufferResources.descriptorSets = vk::raii::DescriptorSets(device, allocInfo);
 
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        vk::DescriptorBufferInfo globalBufferInfo{
-            .buffer = *globalUboResources.Buffers[i],
+        vk::DescriptorBufferInfo sceneBufferInfo{
+            .buffer = *sceneUboResources.Buffers[i],
             .offset = 0,
-            .range = sizeof(GlobalUBO)
+            .range = sizeof(SceneUBO)
         };
 
         vk::DescriptorBufferInfo instanceBufferInfo{
-            .buffer = *instancedBufferResources.Buffers[i],
+            .buffer = *pbrInstanceBufferResources.Buffers[i],
             .offset = 0,
-            .range = sizeof(InstanceData) * MAX_OBJECTS
+            .range = sizeof(PBRInstanceData) * MAX_OBJECTS
         };
 
-        vk::DescriptorImageInfo imageInfo{
-            .sampler = *resourceManager->textures[0].textureSampler,
-            .imageView = *resourceManager->textures[0].textureImageView,
-            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+        vk::DescriptorBufferInfo lightBufferInfo{
+            .buffer = *lightUboResources.Buffers[i],
+            .offset = 0,
+            .range = sizeof(LightUBO)
         };
 
         std::vector<vk::WriteDescriptorSet> descriptorWrites = {
             {
-                .dstSet = *instancedBufferResources.descriptorSets[i],
+                .dstSet = *pbrInstanceBufferResources.descriptorSets[i],
                 .dstBinding = 0,
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
                 .descriptorType = vk::DescriptorType::eUniformBuffer,
-                .pBufferInfo = &globalBufferInfo
+                .pBufferInfo = &sceneBufferInfo
             },
             {
-                .dstSet = *instancedBufferResources.descriptorSets[i],
+                .dstSet = *pbrInstanceBufferResources.descriptorSets[i],
                 .dstBinding = 1,
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
@@ -121,12 +112,12 @@ void Renderer::createInstancedDescriptorSets() {
                 .pBufferInfo = &instanceBufferInfo
             },
             {
-                .dstSet = *instancedBufferResources.descriptorSets[i],
+                .dstSet = *pbrInstanceBufferResources.descriptorSets[i],
                 .dstBinding = 2,
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                .pImageInfo = &imageInfo
+                .descriptorType = vk::DescriptorType::eUniformBuffer,
+                .pBufferInfo = &lightBufferInfo
             }
         };
 
@@ -134,9 +125,9 @@ void Renderer::createInstancedDescriptorSets() {
     }
 }
 
-bool Renderer::createInstancedPipeline() {
+bool Renderer::createPBRPipeline() {
     try {
-        vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "instanced.spv"));
+        vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "pbr.spv"));
 
         vk::PipelineShaderStageCreateInfo vertShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain" };
         vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain" };
@@ -175,9 +166,9 @@ bool Renderer::createInstancedPipeline() {
             vk::DynamicState::eScissor };
         vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
 
-        vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 1, .pSetLayouts = &*instancedDescriptorSetLayout, .pushConstantRangeCount = 0 };
+        vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 1, .pSetLayouts = &*pbrDescriptorSetLayout, .pushConstantRangeCount = 0 };
 
-        instancedPipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
+        pbrPipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 
         vk::Format depthFormat = findDepthFormat();
 
@@ -193,7 +184,7 @@ bool Renderer::createInstancedPipeline() {
                 .pDepthStencilState = &depthStencil,
                 .pColorBlendState = &colorBlending,
                 .pDynamicState = &dynamicState,
-                .layout = instancedPipelineLayout,
+                .layout = pbrPipelineLayout,
                 .renderPass = nullptr
             },
             {
@@ -203,41 +194,66 @@ bool Renderer::createInstancedPipeline() {
             }
         };
 
-        instancedPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
+        pbrPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
         return true;
     }
     catch (const std::exception& e) {
-        std::cerr << "Failed to create instanced graphics pipeline: " << e.what() << std::endl;
+        std::cerr << "Failed to create PBR graphics pipeline: " << e.what() << std::endl;
         return false;
     }
 }
 
-void Renderer::createInstancedBuffers() {
-    createUniformBuffers(globalUboResources, sizeof(GlobalUBO));
-    createStorageBuffers(instancedBufferResources, sizeof(InstanceData) * MAX_OBJECTS);
+void Renderer::createPBRBuffers() {
+    createUniformBuffers(sceneUboResources, sizeof(SceneUBO));
+    createUniformBuffers(lightUboResources, sizeof(LightUBO));
+    createStorageBuffers(pbrInstanceBufferResources, sizeof(PBRInstanceData) * MAX_OBJECTS);
 }
 
-void Renderer::updateInstancedBuffers(uint32_t currentImage) {
-    // Global UBO
-    GlobalUBO globalUbo{
-        .view = camera.GetViewMatrix(),
-        .proj = glm::perspective(glm::radians(camera.Zoom),
+void Renderer::updatePBRInstanceBuffers(uint32_t currentImage) {
+    // Scene UBO
+    SceneUBO sceneUbo{
+        .projection = glm::perspective(glm::radians(camera.Zoom),
             static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height),
-            0.1f, 100.0f)
+            0.1f, 100.0f),
+        .view = camera.GetViewMatrix(),
+        .camPos = camera.Position
     };
-    globalUbo.proj[1][1] *= -1;
-    memcpy(globalUboResources.BuffersMapped[currentImage], &globalUbo, sizeof(globalUbo));
+    sceneUbo.projection[1][1] *= -1;
+    memcpy(sceneUboResources.BuffersMapped[currentImage], &sceneUbo, sizeof(sceneUbo));
 
-    // Instance Data
-    float deltaTime = platform->frameTimer;
-    std::vector<InstanceData> instanceData(MAX_OBJECTS);
-    for (uint32_t i = 0; i < MAX_OBJECTS; ++i) {
-        auto& transform = resourceManager->transforms[i];
-        const float rotationSpeed = 0.5f;
-        transform.rotation.y += rotationSpeed * deltaTime;
-        instanceData[i].model = resourceManager->transforms[i].getModelMatrix();
+    // Instance Data (7*7 grid)
+    std::vector<PBRInstanceData> instanceData(MAX_OBJECTS);
+    uint32_t gridSize = sqrt(MAX_OBJECTS);
+    for (uint32_t y = 0; y < gridSize; ++y) {
+        for (uint32_t x = 0; x < gridSize; ++x) {
+            uint32_t index = y * gridSize + x;
+            glm::mat4 model = glm::mat4(1.0f);
+            model = glm::translate(model, glm::vec3(float(x - (gridSize / 2.0f)) * 1.5f, float(y - (gridSize / 2.0f)) * 1.5f, 0.0f));
+            model = glm::scale(model, glm::vec3(0.7f));
+            instanceData[index].model = model;
+            instanceData[index].metallic = glm::clamp((float)x / (float)(gridSize - 1), 0.1f, 1.0f);
+            instanceData[index].roughness = glm::clamp((float)y / (float)(gridSize - 1), 0.05f, 1.0f);
+            instanceData[index].color = glm::vec3(1.0f, 0.765557f, 0.336057f);  // gold
+        }
     }
-    memcpy(instancedBufferResources.BuffersMapped[currentImage], instanceData.data(), sizeof(InstanceData) * MAX_OBJECTS);
+    memcpy(pbrInstanceBufferResources.BuffersMapped[currentImage], instanceData.data(), sizeof(PBRInstanceData) * MAX_OBJECTS);
+
+    // Light Animation
+    static auto startTime = std::chrono::high_resolution_clock::now();
+    auto currentTime = std::chrono::high_resolution_clock::now();
+    float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+    LightUBO lightUbo;
+    lightUbo.lights[0] = { .position = glm::vec4(20.0f, 20.0f, 20.0f, 1.0f), .color = glm::vec4(1.0f, 1.0f, 1.0f, 400) };
+
+    lightUbo.lights[1] = { .position = glm::vec4(-20.0f, -10.0f, 10.0f, 1.0f), .color = glm::vec4(1.0f, 1.0f, 1.0f, 50.0f) };
+
+    // Moving along X axis
+    lightUbo.lights[2] = { .position = glm::vec4(sin(time * 0.5f) * 12.0f, 5.0f, 8.0f, 1.0f), .color = glm::vec4(1.0f, 1.0f, 1.0f, 150.0f) };
+    // Moving along Y axis
+    lightUbo.lights[3] = { .position = glm::vec4(0.0f, cos(time * 0.5f) * 12.0f, 8.0f, 1.0f), .color = glm::vec4(1.0f, 1.0f, 1.0f, 150.0f) };
+
+    memcpy(lightUboResources.BuffersMapped[currentImage], &lightUbo, sizeof(lightUbo));
 }
 
 #endif

@@ -14,19 +14,17 @@ struct Platform
 	int height = 600;
 
 	bool isFullscreen = false;
-	int windowedX = 0, windowedY = 0;  // ����ģʽλ��
-	int windowedWidth = 800, windowedHeight = 600;  // ����ģʽ��С�����ڽ���ȫ��ǰ����һ�Σ�ȡ��ȫ����ص����ȫ��ǰ�Ĵ��ڴ�С��
+	int windowedX = 0, windowedY = 0;
+	int windowedWidth = 800, windowedHeight = 600;
 
 	bool windowResized = false;
 
-	// FPS��ʱ�����
 	uint32_t frameCounter = 0;
 	uint32_t lastFPS = 0;
 	std::chrono::time_point<std::chrono::high_resolution_clock> lastTimestamp;
 	std::chrono::time_point<std::chrono::high_resolution_clock> frameStart;
 	float frameTimer = 0.0f;
 
-	// ���ڱ������
 	std::string baseTitle = "Vulkan";
 	std::string customTitleFormat;
 
@@ -96,7 +94,6 @@ struct Platform
 			}
 			});
 
-		// ��ʼ��ʱ��
 		lastTimestamp = std::chrono::high_resolution_clock::now();
 		frameStart = lastTimestamp;
 	}
@@ -121,42 +118,35 @@ struct Platform
 		return !glfwWindowShouldClose(window);
 	}
 
-	// ��ÿ֡��Ⱦ��ɺ���ã�����FPS��֡ʱ��
 	void endFrame() {
 		frameCounter++;
 
 		auto tEnd = std::chrono::high_resolution_clock::now();
 		auto tDiff = std::chrono::duration<double, std::milli>(tEnd - frameStart).count();
-		frameTimer = (float)tDiff / 1000.0f;  // ת��Ϊ��
+		frameTimer = (float)tDiff / 1000.0f; 
 		frameStart = tEnd; // Update frameStart for next frame
 
-		// ����FPS��ʾ��ÿ�룩
 		float fpsTimer = (float)std::chrono::duration<double, std::milli>(tEnd - lastTimestamp).count();
 		if (fpsTimer > 1000.0f) {
 			lastFPS = static_cast<uint32_t>((float)frameCounter * (1000.0f / fpsTimer));
 
-			// ���´��ڱ���
 			updateWindowTitle();
 
-			// ���ü�����
 			frameCounter = 0;
 			lastTimestamp = tEnd;
 		}
 	}
 
-	// ���´��ڱ���
 	void updateWindowTitle() {
 		if (!window) return;
 
 		std::string title;
 		if (!customTitleFormat.empty()) {
-			// ʹ���Զ����ʽ
 			char buffer[256];
 			snprintf(buffer, sizeof(buffer), customTitleFormat.c_str(), lastFPS, frameTimer * 1000.0f);
 			title = buffer;
 		}
 		else {
-			// Ĭ�ϸ�ʽ
 			title = baseTitle + " - FPS: " + std::to_string(lastFPS);
 		}
 
@@ -167,20 +157,17 @@ struct Platform
 		if (!window) return;
 
 		if (!isFullscreen) {
-			// ���洰��ģʽ��λ�úʹ�С
 			glfwGetWindowPos(window, &windowedX, &windowedY);
 			glfwGetWindowSize(window, &windowedWidth, &windowedHeight);
 
 			GLFWmonitor* monitor = glfwGetPrimaryMonitor();
 			const GLFWvidmode* mode = glfwGetVideoMode(monitor);
 
-			// �л���ȫ��
 			glfwSetWindowMonitor(window, monitor, 0, 0,
 				mode->width, mode->height, mode->refreshRate);
 			isFullscreen = true;
 		}
 		else {
-			// �ָ�������ģʽ
 			glfwSetWindowMonitor(window, nullptr,
 				windowedX, windowedY,
 				windowedWidth, windowedHeight, 0);
@@ -194,30 +181,23 @@ struct Platform
 		}
 	}
 
-	// �����Զ�������ʽ
-	// ����ʹ�� %d ��ʾFPS��%f ��ʾ֡ʱ��(ms)
-	// ����: "MyApp - FPS: %d | Frame Time: %.2f ms"
 	void SetTitleFormat(const std::string& format) {
 		customTitleFormat = format;
 	}
 
-	// ���û������⣨������FPS��
 	void SetBaseTitle(const std::string& title) {
 		baseTitle = title;
 		updateWindowTitle();
 	}
 
-	// ��ȡ��ǰFPS
 	uint32_t GetFPS() const {
 		return lastFPS;
 	}
 
-	// ��ȡ��ǰ֡ʱ�䣨�룩
 	float GetFrameTime() const {
 		return frameTimer;
 	}
 
-	// ��ȡ��ǰ֡ʱ�䣨���룩
 	float GetFrameTimeMS() const {
 		return frameTimer * 1000.0f;
 	}

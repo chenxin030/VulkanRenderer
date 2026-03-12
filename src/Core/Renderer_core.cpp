@@ -306,6 +306,7 @@ bool Renderer::createLogicalDevice() {
     }
 }
 
+#if RENDERING_LEVEL == 1
 bool Renderer::createGraphicsPipeline() {
 	try
 	{
@@ -338,14 +339,16 @@ bool Renderer::createGraphicsPipeline() {
 			.stencilTestEnable = vk::False 
 		};
 
-		vk::PipelineColorBlendAttachmentState colorBlendAttachment{ .blendEnable = vk::False,
-																   .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA };
+		vk::PipelineColorBlendAttachmentState colorBlendAttachment{ 
+			.blendEnable = vk::False,
+			.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA };
 
 		vk::PipelineColorBlendStateCreateInfo colorBlending{ .logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 1, .pAttachments = &colorBlendAttachment };
 
 		std::vector dynamicStates = {
 			vk::DynamicState::eViewport,
-			vk::DynamicState::eScissor };
+			vk::DynamicState::eScissor 
+		};
 		vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
 
 		vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 1, .pSetLayouts = &*descriptorSetLayout, .pushConstantRangeCount = 0 };
@@ -384,6 +387,7 @@ bool Renderer::createGraphicsPipeline() {
 		return false;
 	}
 }
+#endif
 
 bool Renderer::createSyncObjects()
 {

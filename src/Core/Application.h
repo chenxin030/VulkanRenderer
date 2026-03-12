@@ -21,6 +21,8 @@ struct Application {
 		renderer.createDescriptorSets();
 #elif RENDERING_LEVEL == 2 
 		renderer.createInstancedDescriptorSets();
+#elif RENDERING_LEVEL == 3
+		renderer.createPBRDescriptorSets();
 #endif
 	}
 	void run()

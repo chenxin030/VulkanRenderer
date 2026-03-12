@@ -1,5 +1,7 @@
 #include "Renderer.h"
 
+#if RENDERING_LEVEL == 1
+
 bool Renderer::createDescriptorSetLayout(){
   try {
     std::array bindings = {
@@ -16,3 +18,4 @@ bool Renderer::createDescriptorSetLayout(){
     return false;
  }
 }
+#endif

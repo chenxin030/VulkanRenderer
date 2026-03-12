@@ -1,6 +1,6 @@
 #pragma once
 
-#define RENDERING_LEVEL 1 // 1: Multi-draw, 2: Instanced
+#define RENDERING_LEVEL 3 // 1: Multi-draw, 2: Instanced, 3: PBR Instanced
 
 #include "ResourceManager.h"
 #include "Platform.h"
@@ -8,7 +8,11 @@
 
 #include <map>
 
+#if RENDERING_LEVEL < 3
 constexpr int MAX_OBJECTS = 3;
+#else
+constexpr int MAX_OBJECTS = 49; // Updated for 10x10 grid
+#endif
 
 const std::vector<char const*> validationLayers = {
 	"VK_LAYER_KHRONOS_validation"
@@ -82,37 +86,37 @@ struct Renderer {
 	std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
 	std::vector<vk::raii::Fence> inFlightFences;
 
-	// In Renderer.h
 #if RENDERING_LEVEL == 1
 	vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
+	vk::raii::DescriptorPool      descriptorPool = nullptr;
 	vk::raii::PipelineLayout      pipelineLayout = nullptr;
 	vk::raii::Pipeline            graphicsPipeline = nullptr;
-	vk::raii::DescriptorPool      descriptorPool = nullptr;
-#elif RENDERING_LEVEL >= 2
+#elif RENDERING_LEVEL == 2
 	// Instanced rendering resources
 	vk::raii::DescriptorSetLayout instancedDescriptorSetLayout = nullptr;
+	vk::raii::DescriptorPool      instancedDescriptorPool = nullptr;
 	vk::raii::PipelineLayout      instancedPipelineLayout = nullptr;
 	vk::raii::Pipeline            instancedPipeline = nullptr;
-	vk::raii::DescriptorPool      instancedDescriptorPool = nullptr;
 
-	MeshUniformBuffer instancedBufferResources;
-	MeshUniformBuffer globalUboResources;
+	MeshBuffer instancedBufferResources;
+	MeshBuffer globalUboResources;
+#elif RENDERING_LEVEL == 3
+	// PBR Instanced rendering resources
+	vk::raii::DescriptorSetLayout pbrDescriptorSetLayout = nullptr;
+	vk::raii::PipelineLayout      pbrPipelineLayout = nullptr;
+	vk::raii::Pipeline            pbrPipeline = nullptr;
+	vk::raii::DescriptorPool      pbrDescriptorPool = nullptr;
+
+	MeshBuffer pbrInstanceBufferResources;
+	MeshBuffer sceneUboResources;
+	MeshBuffer lightUboResources;
 #endif
-
-	// Instanced rendering resources
-	vk::raii::DescriptorSetLayout        instancedDescriptorSetLayout = nullptr;
-	vk::raii::PipelineLayout             instancedPipelineLayout = nullptr;
-	vk::raii::Pipeline                   instancedPipeline = nullptr;
-	vk::raii::DescriptorPool             instancedDescriptorPool = nullptr;
-
-	MeshUniformBuffer instancedBufferResources;
-	MeshUniformBuffer globalUboResources;
 
 	bool framebufferResized = false;
 
 	TextureData depthData;
 
-	Camera camera = Camera(glm::vec3(0.0f, 1.0f, 3.0f));
+	Camera camera = Camera(glm::vec3(0.0f, -1.0f, 13.0f));
 
 	void initialize(Platform* _platform, ResourceManager* _resourceManager) {
 		platform = _platform;
@@ -178,6 +182,9 @@ struct Renderer {
 			return false;
 		}
 #if RENDERING_LEVEL == 1
+		for (auto& meshUniformBuffer : resourceManager->meshUniformBuffer) {
+			createUniformBuffers(meshUniformBuffer, sizeof(MVP) * MAX_OBJECTS);
+		}
 		if (!createDescriptorSetLayout()) {
 			std::cerr << "Failed to create descriptor set layout" << std::endl;
 			return false;
@@ -190,7 +197,7 @@ struct Renderer {
 			std::cerr << "Failed to create descriptor pool" << std::endl;
 			return false;
 		}
-#elif RENDERING_LEVEL >= 2
+#elif RENDERING_LEVEL == 2
 		// Initialize instanced rendering
 		createInstancedBuffers();
 		if (!createInstancedDescriptorSetLayout()) {
@@ -203,6 +210,21 @@ struct Renderer {
 		}
 		if (!createInstancedPipeline()) {
 			std::cerr << "Failed to create Instanced Pipeline" << std::endl;
+			return false;
+		}
+#elif RENDERING_LEVEL == 3
+		// Initialize PBR instanced rendering
+		createPBRBuffers();
+		if (!createPBRDescriptorSetLayout()) {
+			std::cerr << "Failed to create PBR DescriptorSetLayout" << std::endl;
+			return false;
+		}
+		if (!createPBRDescriptorPool()) {
+			std::cerr << "Failed to create PBR DescriptorPool" << std::endl;
+			return false;
+		}
+		if (!createPBRPipeline()) {
+			std::cerr << "Failed to create PBR Pipeline" << std::endl;
 			return false;
 		}
 #endif
@@ -254,6 +276,8 @@ struct Renderer {
 			updateUniformBuffer(currentFrame);
 #elif RENDERING_LEVEL == 2
 			updateInstancedBuffers(currentFrame);
+#elif RENDERING_LEVEL == 3
+			updatePBRInstanceBuffers(currentFrame);
 #endif
 
 			device.resetFences(*inFlightFences[currentFrame]);
@@ -345,6 +369,14 @@ struct Renderer {
 	void createInstancedBuffers();
 	void updateInstancedBuffers(uint32_t currentImage);
 
+	// PBR Instanced rendering functions
+	bool createPBRDescriptorSetLayout();
+	bool createPBRDescriptorPool();
+	void createPBRDescriptorSets();
+	bool createPBRPipeline();
+	void createPBRBuffers();
+	void updatePBRInstanceBuffers(uint32_t currentImage);
+
 	void recordCommandBuffer(uint32_t imageIndex);
 
 	void transition_image_layout(
@@ -402,7 +434,8 @@ struct Renderer {
 
 	void createVertexBuffer(Mesh& mesh);
 	void createIndexBuffer(Mesh& mesh);
-	void createUniformBuffers(MeshUniformBuffer& entityResource);
+	void createUniformBuffers(MeshBuffer& meshResource, vk::DeviceSize size);
+	void createStorageBuffers(MeshBuffer& meshResource, vk::DeviceSize size);
 	void updateUniformBuffer(uint32_t currentImage);
 
 	void waitIdle() {
