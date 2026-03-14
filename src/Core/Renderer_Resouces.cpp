@@ -210,21 +210,85 @@ void Renderer::loadModels() {
     generateSphere(meshes[0], 1, 100);
     createVertexBuffer(meshes[0]);
     createIndexBuffer(meshes[0]);
-    for (int i = 0; i < resourceManager->modelPath.size(); ++i) {
-#if RENDERING_LEVEL == 3
-#else
-        loadModel(resourceManager->modelPath[i], meshes[i]);
+#if RENDERING_LEVEL == 4
+    skyboxTriangleMesh.vertices = {
+        { { -1.0f, -1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f } },
+        { {  3.0f, -1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 2.0f, 0.0f } },
+        { { -1.0f,  3.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 2.0f } },
+    };
+    skyboxTriangleMesh.indices = { 0, 1, 2 };
+    createVertexBuffer(skyboxTriangleMesh);
+    createIndexBuffer(skyboxTriangleMesh);
 #endif
+#if RENDERING_LEVEL < 3
+    for (int i = 0; i < resourceManager->modelPath.size(); ++i) {
+        loadModel(resourceManager->modelPath[i], meshes[i]);
         createVertexBuffer(meshes[i]);
         createIndexBuffer(meshes[i]);
     }
+#endif
 }
 
 void Renderer::loadTextures() {
     for (int i = 0; i < resourceManager->texPath.size(); ++i) {
-        LoadTextureFromFile(resourceManager->texPath[i], resourceManager->textures[i]);
+        const auto& path = resourceManager->texPath[i];
+#if RENDERING_LEVEL == 4
+        const bool isHdr = path.size() >= 4 && path.substr(path.size() - 4) == ".hdr";
+        if (isHdr) {
+            LoadHDRTextureFromFile(path, resourceManager->textures[i]);
+            vk::SamplerCreateInfo samplerInfo{
+                .magFilter = vk::Filter::eLinear,
+                .minFilter = vk::Filter::eLinear,
+                .mipmapMode = vk::SamplerMipmapMode::eLinear,
+                .addressModeU = vk::SamplerAddressMode::eClampToEdge,
+                .addressModeV = vk::SamplerAddressMode::eClampToEdge,
+                .addressModeW = vk::SamplerAddressMode::eClampToEdge,
+                .mipLodBias = 0.0f,
+                .anisotropyEnable = vk::False,
+                .maxAnisotropy = 1.0f,
+                .compareEnable = vk::False,
+                .compareOp = vk::CompareOp::eAlways,
+                .minLod = 0.0f,
+                .maxLod = 0.0f
+            };
+            resourceManager->textures[i].textureSampler = vk::raii::Sampler(device, samplerInfo);
+            continue;
+        }
+#endif
+        LoadTextureFromFile(path, resourceManager->textures[i]);
         createTextureSampler(resourceManager->textures[i].textureSampler);
     }
+}
+
+void Renderer::LoadHDRTextureFromFile(const std::string& path, TextureData& texData)
+{
+    int texWidth = 0, texHeight = 0, texChannels = 0;
+    float* pixels = stbi_loadf((VK_TEXTURE_DIR + path).c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+    if (!pixels) {
+        throw std::runtime_error("failed to load HDR texture image: " + path + "\n");
+    }
+
+    texData.mipLevels = 1;
+    vk::DeviceSize imageSize = static_cast<vk::DeviceSize>(texWidth) * static_cast<vk::DeviceSize>(texHeight) * 4u * sizeof(float);
+
+    vk::raii::Buffer stagingBuffer({});
+    vk::raii::DeviceMemory stagingBufferMemory({});
+    createBuffer(imageSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
+
+    void* data = stagingBufferMemory.mapMemory(0, imageSize);
+    memcpy(data, pixels, static_cast<size_t>(imageSize));
+    stagingBufferMemory.unmapMemory();
+
+    stbi_image_free(pixels);
+
+    createImage(static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight), texData.mipLevels, vk::Format::eR32G32B32A32Sfloat, vk::ImageTiling::eOptimal,
+        vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, texData);
+
+    transitionImageLayout(texData.textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, texData.mipLevels);
+    copyBufferToImage(stagingBuffer, texData.textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+    transitionImageLayout(texData.textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, texData.mipLevels);
+
+    texData.textureImageView = createImageView(texData.textureImage, vk::Format::eR32G32B32A32Sfloat, vk::ImageAspectFlagBits::eColor, texData.mipLevels);
 }
 void Renderer::LoadTextureFromFile(const std::string& path, TextureData& texData)
 {
@@ -278,16 +342,34 @@ void Renderer::cleanupUBO() {
 
 void Renderer::createImage(uint32_t width, uint32_t height, uint32_t mipLevels, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, TextureData& texData)
 {
+    createImage(width, height, mipLevels, 1, {}, format, tiling, usage, properties, texData);
+}
+
+void Renderer::createImage(uint32_t width, uint32_t height, uint32_t mipLevels, uint32_t arrayLayers, vk::ImageCreateFlags flags, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, TextureData& texData)
+{
     auto& image = texData.textureImage;
     auto& imageMemory = texData.textureImageMemory;
 
-    vk::ImageCreateInfo imageInfo{ .imageType = vk::ImageType::e2D, .format = format, .extent = {width, height, 1}, .mipLevels = mipLevels, .arrayLayers = 1, .samples = vk::SampleCountFlagBits::e1, .tiling = tiling, .usage = usage, .sharingMode = vk::SharingMode::eExclusive };
+    vk::ImageCreateInfo imageInfo{
+        .flags = flags,
+        .imageType = vk::ImageType::e2D,
+        .format = format,
+        .extent = {width, height, 1},
+        .mipLevels = mipLevels,
+        .arrayLayers = arrayLayers,
+        .samples = vk::SampleCountFlagBits::e1,
+        .tiling = tiling,
+        .usage = usage,
+        .sharingMode = vk::SharingMode::eExclusive
+    };
 
     image = vk::raii::Image(device, imageInfo);
 
     vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
-    vk::MemoryAllocateInfo allocInfo{ .allocationSize = memRequirements.size,
-                                     .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties) };
+    vk::MemoryAllocateInfo allocInfo{
+        .allocationSize = memRequirements.size,
+        .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)
+    };
     imageMemory = vk::raii::DeviceMemory(device, allocInfo);
     image.bindMemory(imageMemory, 0);
 }

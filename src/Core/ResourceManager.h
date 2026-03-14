@@ -65,6 +65,16 @@ struct SceneUBO {
 	glm::vec3 camPos;
 };
 
+struct ParamsUBO {
+	float exposure;
+	float gamma;
+};
+
+struct SkyboxUBO {
+	glm::mat4 invProjection;
+	glm::mat4 invView;
+};
+
 struct ResourceManager {
 	std::vector<Mesh> meshes;
 	std::vector<TextureData> textures;
@@ -79,11 +89,18 @@ struct ResourceManager {
 	std::vector<std::string> texPath{
 #if RENDERING_LEVEL < 3
 		"viking_room.png"
+#elif RENDERING_LEVEL == 4
+		"newport_loft.hdr"
 #endif
 	};
 	void initResource(unsigned int modelCount) {
 #if RENDERING_LEVEL == 3
 		meshes.resize(1);
+		meshUniformBuffer.resize(modelCount);
+		transforms.resize(modelCount);
+#elif RENDERING_LEVEL == 4
+		meshes.resize(1);
+		textures.resize(texPath.size());
 		meshUniformBuffer.resize(modelCount);
 		transforms.resize(modelCount);
 #endif
@@ -112,7 +129,7 @@ struct ResourceManager {
 			transforms[2].position = { 2.0f, 0.0f, -1.0f };
 			transforms[2].rotation = { 0.0f, glm::radians(-45.0f), 0.0f };
 			transforms[2].scale = { 0.75f, 0.75f, 0.75f };
-	}
+		}
 #endif
-}
-};
+	}
+	};

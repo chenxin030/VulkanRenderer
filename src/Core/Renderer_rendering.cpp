@@ -39,7 +39,7 @@ bool Renderer::createSwapChain() {
 		if (indices.graphicsFamily != indices.presentFamily) {
 			createInfo.imageSharingMode = vk::SharingMode::eConcurrent;	// ?????? (eConcurrent)
 			createInfo.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilyIndicesLoc.size());	// ??2??????????
-			createInfo.pQueueFamilyIndices = queueFamilyIndicesLoc.data();	// ?????????????งา?
+			createInfo.pQueueFamilyIndices = queueFamilyIndicesLoc.data();	// ????????????????
 		}
 		else {
 			createInfo.imageSharingMode = vk::SharingMode::eExclusive;	// ????? (eExclusive),????????????????
@@ -234,6 +234,19 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 	commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
 	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pbrPipelineLayout, 0, *pbrInstanceBufferResources.descriptorSets[currentFrame], nullptr);
 	commandBuffer.drawIndexed(mesh.indices.size(), MAX_OBJECTS, 0, 0, 0);
+#elif RENDERING_LEVEL == 4
+	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *skyboxPipeline);
+	commandBuffer.bindVertexBuffers(0, *skyboxTriangleMesh.vertexBuffer, { 0 });
+	commandBuffer.bindIndexBuffer(*skyboxTriangleMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(skyboxTriangleMesh.indices)::value_type>::value);
+	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *skyboxPipelineLayout, 0, *skyboxDescriptorSets[currentFrame], nullptr);
+	commandBuffer.drawIndexed(static_cast<uint32_t>(skyboxTriangleMesh.indices.size()), 1, 0, 0, 0);
+
+	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *iblPbrPipeline);
+	auto& mesh = resourceManager->meshes[0];
+	commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
+	commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
+	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *iblPbrPipelineLayout, 0, *pbrInstanceBufferResources.descriptorSets[currentFrame], nullptr);
+	commandBuffer.drawIndexed(static_cast<uint32_t>(mesh.indices.size()), MAX_OBJECTS, 0, 0, 0);
 #endif
 
 	commandBuffer.endRendering();
@@ -265,8 +278,8 @@ void Renderer::updateUniformBuffer(uint32_t currentImage) {
 		auto& resource = resourceManager->meshUniformBuffer[i];
 		auto& transform = resourceManager->transforms[i];
 
-		const float rotationSpeed = 0.5f;                         
-		transform.rotation.y += rotationSpeed * deltaTime;        
+		const float rotationSpeed = 0.5f;
+		transform.rotation.y += rotationSpeed * deltaTime;
 		glm::mat4 model = transform.getModelMatrix();
 
 		MVP ubo{

@@ -1,6 +1,6 @@
 #pragma once
 
-#define RENDERING_LEVEL 3 // 1: Multi-draw, 2: Instanced, 3: PBR Instanced
+#define RENDERING_LEVEL 4 // 1: Multi-draw, 2: Instanced, 3: PBR Instanced, 4: IBL_PBR
 
 #include "ResourceManager.h"
 #include "Platform.h"
@@ -11,7 +11,7 @@
 #if RENDERING_LEVEL < 3
 constexpr int MAX_OBJECTS = 3;
 #else
-constexpr int MAX_OBJECTS = 49; // Updated for 10x10 grid
+constexpr int MAX_OBJECTS = 49;
 #endif
 
 const std::vector<char const*> validationLayers = {
@@ -110,6 +110,31 @@ struct Renderer {
 	MeshBuffer pbrInstanceBufferResources;
 	MeshBuffer sceneUboResources;
 	MeshBuffer lightUboResources;
+#elif RENDERING_LEVEL == 4
+	// IBL PBR + skybox resources
+	vk::raii::DescriptorSetLayout iblPbrDescriptorSetLayout = nullptr;
+	vk::raii::PipelineLayout      iblPbrPipelineLayout = nullptr;
+	vk::raii::Pipeline            iblPbrPipeline = nullptr;
+	vk::raii::DescriptorPool      iblPbrDescriptorPool = nullptr;
+
+	MeshBuffer pbrInstanceBufferResources;
+	MeshBuffer sceneUboResources;
+	MeshBuffer lightUboResources;
+	MeshBuffer paramsUboResources;
+	MeshBuffer skyboxUboResources;
+
+	vk::raii::DescriptorSetLayout skyboxDescriptorSetLayout = nullptr;
+	vk::raii::PipelineLayout      skyboxPipelineLayout = nullptr;
+	vk::raii::Pipeline            skyboxPipeline = nullptr;
+	vk::raii::DescriptorPool      skyboxDescriptorPool = nullptr;
+	std::vector<vk::raii::DescriptorSet> skyboxDescriptorSets;
+
+	Mesh skyboxTriangleMesh;
+
+	TextureData envCubemapData;
+	TextureData irradianceCubemapData;
+	TextureData prefilteredEnvMapData;
+	TextureData brdfLutData;
 #endif
 
 	bool framebufferResized = false;
@@ -227,6 +252,33 @@ struct Renderer {
 			std::cerr << "Failed to create PBR Pipeline" << std::endl;
 			return false;
 		}
+#elif RENDERING_LEVEL == 4
+		// Initialize IBL PBR rendering
+		createIBLPBRBuffers();
+		if (!createIBLPBRDescriptorSetLayout()) {
+			std::cerr << "Failed to create IBL PBR DescriptorSetLayout" << std::endl;
+			return false;
+		}
+		if (!createIBLPBRDescriptorPool()) {
+			std::cerr << "Failed to create IBL PBR DescriptorPool" << std::endl;
+			return false;
+		}
+		if (!createIBLPBRPipeline()) {
+			std::cerr << "Failed to create IBL PBR Pipeline" << std::endl;
+			return false;
+		}
+		if (!createSkyboxDescriptorSetLayout()) {
+			std::cerr << "Failed to create Skybox DescriptorSetLayout" << std::endl;
+			return false;
+		}
+		if (!createSkyboxDescriptorPool()) {
+			std::cerr << "Failed to create Skybox DescriptorPool" << std::endl;
+			return false;
+		}
+		if (!createSkyboxPipeline()) {
+			std::cerr << "Failed to create Skybox Pipeline" << std::endl;
+			return false;
+		}
 #endif
 		if (!createCommandPool()) {
 			std::cerr << "Failed to create command pool" << std::endl;
@@ -250,6 +302,9 @@ struct Renderer {
 	void loadResource() {
 		loadModels();
 		loadTextures();
+#if RENDERING_LEVEL == 4
+		generateIBLResources();
+#endif
 	}
 
 	void render()
@@ -278,6 +333,8 @@ struct Renderer {
 			updateInstancedBuffers(currentFrame);
 #elif RENDERING_LEVEL == 3
 			updatePBRInstanceBuffers(currentFrame);
+#elif RENDERING_LEVEL == 4
+			updateIBLPBRBuffers(currentFrame);
 #endif
 
 			device.resetFences(*inFlightFences[currentFrame]);
@@ -314,13 +371,13 @@ struct Renderer {
 				assert(result == vk::Result::eSuccess);
 			}
 			currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
-		}
+			}
 		catch (const vk::OutOfDateKHRError& e) {
 			framebufferResized = false;
 			recreateSwapChain();
 		}
 
-	}
+		}
 
 	void cleanup() {
 		cleanupUBO();
@@ -376,6 +433,21 @@ struct Renderer {
 	bool createPBRPipeline();
 	void createPBRBuffers();
 	void updatePBRInstanceBuffers(uint32_t currentImage);
+
+	// IBL PBR rendering functions
+	bool createIBLPBRDescriptorSetLayout();
+	bool createIBLPBRDescriptorPool();
+	void createIBLPBRDescriptorSets();
+	bool createIBLPBRPipeline();
+	void createIBLPBRBuffers();
+	void updateIBLPBRBuffers(uint32_t currentImage);
+
+	bool createSkyboxDescriptorSetLayout();
+	bool createSkyboxDescriptorPool();
+	void createSkyboxDescriptorSets();
+	bool createSkyboxPipeline();
+
+	void generateIBLResources();
 
 	void recordCommandBuffer(uint32_t imageIndex);
 
@@ -444,8 +516,10 @@ struct Renderer {
 	void loadModels();
 	void loadTextures();
 	void LoadTextureFromFile(const std::string& path, TextureData& texData);
+	void LoadHDRTextureFromFile(const std::string& path, TextureData& texData);
 	void cleanupUBO();
 	void createImage(uint32_t width, uint32_t height, uint32_t mipLevels, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, TextureData& texData);
+	void createImage(uint32_t width, uint32_t height, uint32_t mipLevels, uint32_t arrayLayers, vk::ImageCreateFlags flags, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, TextureData& texData);
 	vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags, uint32_t mipLevels);
 	vk::Format findSupportedFormat(const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features);
 	vk::Format findDepthFormat();
@@ -462,4 +536,4 @@ struct Renderer {
 	Platform* platform;
 	ResourceManager* resourceManager;
 
-};
+	};
