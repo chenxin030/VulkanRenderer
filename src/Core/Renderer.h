@@ -1,6 +1,6 @@
 #pragma once
 
-#define RENDERING_LEVEL 2 // 1: Multi-draw, 2: Instanced, 3: PBR Instanced, 4: IBL_PBR
+#define RENDERING_LEVEL 1 // 1: Multi-draw, 2: Instanced, 3: PBR Instanced, 4: IBL_PBR
 
 #include "ResourceManager.h"
 #include "Platform.h"
