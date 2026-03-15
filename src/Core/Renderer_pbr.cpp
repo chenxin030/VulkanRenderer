@@ -421,7 +421,10 @@ bool Renderer::createIBLPBRPipeline()
 		vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
 		auto bindingDescription = Vertex::getBindingDescription();
-		auto attributeDescriptions = Vertex::getAttributeDescriptions();
+		std::array<vk::VertexInputAttributeDescription, 2> attributeDescriptions = {
+			vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos)),
+			vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal))
+		};
 		vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
 			.vertexBindingDescriptionCount = 1,
 			.pVertexBindingDescriptions = &bindingDescription,
@@ -638,7 +641,9 @@ bool Renderer::createSkyboxPipeline()
 		vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
 		auto bindingDescription = Vertex::getBindingDescription();
-		auto attributeDescriptions = Vertex::getAttributeDescriptions();
+		std::array<vk::VertexInputAttributeDescription, 1> attributeDescriptions = {
+			vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos))
+		};
 		vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
 			.vertexBindingDescriptionCount = 1,
 			.pVertexBindingDescriptions = &bindingDescription,
@@ -722,19 +727,19 @@ bool Renderer::createSkyboxPipeline()
 * 3. BRDF 查找表（BRDF LUT）：用于镜面反射的积分近似
 *
 * 执行步骤：
-* - 将加载的 HDR 环境贴图转换为立方体贴图
-* - 生成辐照度立方体贴图（漫反射部分）
-* - 生成预过滤环境立方体贴图（镜面反射部分，带 mipmap 层级）
-* - 生成 BRDF 查找纹理
-* - 创建对应的图像视图和采样器
+*  将加载的 HDR 环境贴图转换为立方体贴图
+*  生成辐照度立方体贴图（漫反射部分）
+*  生成预过滤环境立方体贴图（镜面反射部分，带 mipmap 层级）
+*  生成 BRDF 查找纹理
+*  创建对应的图像视图和采样器
 */
 void Renderer::generateIBLResources()
 {
- // TODO: 实现 IBL 资源生成逻辑
- // 1. 将 HDR 环境贴图转换为立方体贴图
- // 2. 生成辐照度图（漫反射 IBL）
- // 3. 生成预过滤环境图（镜面反射 IBL，不同粗糙度）
- // 4. 生成 BRDF LUT
+	// TODO: 实现 IBL 资源生成逻辑
+	// 1. 将 HDR 环境贴图转换为立方体贴图
+	// 2. 生成辐照度图（漫反射 IBL）
+	// 3. 生成预过滤环境图（镜面反射 IBL，不同粗糙度）
+	// 4. 生成 BRDF LUT
 	if (resourceManager->textures.empty())
 	{
 		throw std::runtime_error("HDR texture not loaded (resourceManager->textures is empty)");
@@ -747,6 +752,8 @@ void Renderer::generateIBLResources()
 	const uint32_t prefilterMipLevels = static_cast<uint32_t>(std::floor(std::log2(prefilterDim))) + 1u;
 	const uint32_t brdfDim = 512u;
 
+	// 3个cube(vk::ImageCreateFlagBits::eCubeCompatible)
+	// 6个面(arrayLayers = 6)
 	createImage(envDim, envDim, 1, 6, vk::ImageCreateFlagBits::eCubeCompatible, envFormat, vk::ImageTiling::eOptimal,
 		vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, envCubemapData);
 	createImage(irradianceDim, irradianceDim, 1, 6, vk::ImageCreateFlagBits::eCubeCompatible, envFormat, vk::ImageTiling::eOptimal,
@@ -791,8 +798,8 @@ void Renderer::generateIBLResources()
 		.mipLodBias = 0.0f,
 		.anisotropyEnable = vk::False,
 		.maxAnisotropy = 1.0f,
-		.compareEnable = vk::False,
-		.compareOp = vk::CompareOp::eAlways,
+		.compareEnable = vk::False,			// 禁用比较模式提高性能
+		.compareOp = vk::CompareOp::eAlways,// 都不是深度纹理，不需要比较
 		.minLod = 0.0f,
 		.maxLod = static_cast<float>(prefilterMipLevels)
 	};
@@ -836,12 +843,14 @@ void Renderer::generateIBLResources()
 	// - 为每个面设置渲染目标
 	// - 使用专门的着色器将等距柱状图 (equirectangular) 映射到立方体
 	auto bindingDescription = Vertex::getBindingDescription();
-	auto attributeDescriptions = Vertex::getAttributeDescriptions();
-	vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
+	std::array<vk::VertexInputAttributeDescription, 1> posOnlyAttributeDescriptions = {
+		vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos))
+	};
+	vk::PipelineVertexInputStateCreateInfo posOnlyVertexInputInfo{
 		.vertexBindingDescriptionCount = 1,
 		.pVertexBindingDescriptions = &bindingDescription,
-		.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
-		.pVertexAttributeDescriptions = attributeDescriptions.data()
+		.vertexAttributeDescriptionCount = static_cast<uint32_t>(posOnlyAttributeDescriptions.size()),
+		.pVertexAttributeDescriptions = posOnlyAttributeDescriptions.data()
 	};
 	vk::PipelineInputAssemblyStateCreateInfo inputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = vk::False };
 	vk::PipelineViewportStateCreateInfo viewportState{ .viewportCount = 1, .scissorCount = 1 };
@@ -863,8 +872,14 @@ void Renderer::generateIBLResources()
 		.pPushConstantRanges = &equirectPushConstantRange
 		});
 
+	// 把hdr文件放进描述符
 	vk::DescriptorPoolSize equirectPoolSize{ .type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1 };
-	vk::raii::DescriptorPool equirectPool(device, vk::DescriptorPoolCreateInfo{ .maxSets = 1, .poolSizeCount = 1, .pPoolSizes = &equirectPoolSize });
+	vk::raii::DescriptorPool equirectPool(device, vk::DescriptorPoolCreateInfo{
+		.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+		.maxSets = 1,
+		.poolSizeCount = 1,
+		.pPoolSizes = &equirectPoolSize
+		});
 	vk::raii::DescriptorSet equirectSet = std::move(device.allocateDescriptorSets(vk::DescriptorSetAllocateInfo{ .descriptorPool = *equirectPool, .descriptorSetCount = 1, .pSetLayouts = &*equirectSetLayout }).front());
 	vk::DescriptorImageInfo hdrInfo{ .sampler = resourceManager->textures[0].textureSampler, .imageView = resourceManager->textures[0].textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
 	device.updateDescriptorSets(vk::WriteDescriptorSet{ .dstSet = *equirectSet, .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &hdrInfo }, nullptr);
@@ -877,7 +892,7 @@ void Renderer::generateIBLResources()
 		{
 			.stageCount = 2,
 			.pStages = equirectStages.data(),
-			.pVertexInputState = &vertexInputInfo,
+			.pVertexInputState = &posOnlyVertexInputInfo,
 			.pInputAssemblyState = &inputAssembly,
 			.pViewportState = &viewportState,
 			.pRasterizationState = &rasterizer,
@@ -894,9 +909,13 @@ void Renderer::generateIBLResources()
 	// 步骤2: 生成辐照度贴图 (Irradiance Map)
 	// - 创建低分辨率立方体贴图 (通常 32x32)
 	// - 使用卷积着色器计算漫反射辐照度
+	// 步骤3: 生成预过滤环境贴图 (Prefiltered Environment Map)
+	// - 创建多级渐远纹理 (mip chain)
+	// - 使用重要性采样 (importance sampling) 生成不同粗糙度级别的预过滤环境
 	vk::DescriptorSetLayoutBinding cubeBinding{ .binding = 0, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment };
 	vk::raii::DescriptorSetLayout cubeSetLayout(device, vk::DescriptorSetLayoutCreateInfo{ .bindingCount = 1, .pBindings = &cubeBinding });
 
+	// 同一个贴图，不同的pushConstant
 	vk::PushConstantRange irradiancePushConstantRange{ vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, sizeof(PushConstIrradiance) };
 	vk::raii::PipelineLayout irradiancePipelineLayout(device, vk::PipelineLayoutCreateInfo{
 		.setLayoutCount = 1,
@@ -912,12 +931,22 @@ void Renderer::generateIBLResources()
 		.pPushConstantRanges = &prefilterPushConstantRange
 		});
 
+	// 因为同一个贴图，所以描述符分配2个一样的
 	vk::DescriptorPoolSize cubePoolSize{ .type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 2 };
-	vk::raii::DescriptorPool cubePool(device, vk::DescriptorPoolCreateInfo{ .maxSets = 2, .poolSizeCount = 1, .pPoolSizes = &cubePoolSize });
+	// .maxSets = 2: 最多分配2个描述符集
+	vk::raii::DescriptorPool cubePool(device, vk::DescriptorPoolCreateInfo{
+		.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+		.maxSets = 2,
+		.poolSizeCount = 1,
+		.pPoolSizes = &cubePoolSize
+		});
+	// 分配2个描述符集（都使用相同的布局）
 	std::array<vk::DescriptorSetLayout, 2> cubeLayouts = { *cubeSetLayout, *cubeSetLayout };
 	vk::raii::DescriptorSets cubeSets(device, vk::DescriptorSetAllocateInfo{ .descriptorPool = *cubePool, .descriptorSetCount = 2, .pSetLayouts = cubeLayouts.data() });
+	// 2个相同的描述符集：辐照度图生成时使用 cubeSets[0]，预过滤图生成时使用 cubeSets[1]  
 	vk::DescriptorImageInfo envCubeInfo{ .sampler = envCubemapData.textureSampler, .imageView = envCubemapData.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
 	vk::DescriptorImageInfo envCubeInfo2{ .sampler = envCubemapData.textureSampler, .imageView = envCubemapData.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
+	// 两个描述符集都绑定到同一个环境立方体贴图
 	device.updateDescriptorSets(vk::WriteDescriptorSet{ .dstSet = *cubeSets[0], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &envCubeInfo }, nullptr);
 	device.updateDescriptorSets(vk::WriteDescriptorSet{ .dstSet = *cubeSets[1], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &envCubeInfo2 }, nullptr);
 
@@ -929,7 +958,7 @@ void Renderer::generateIBLResources()
 		{
 			.stageCount = 2,
 			.pStages = irradianceStages.data(),
-			.pVertexInputState = &vertexInputInfo,
+			.pVertexInputState = &posOnlyVertexInputInfo,
 			.pInputAssemblyState = &inputAssembly,
 			.pViewportState = &viewportState,
 			.pRasterizationState = &rasterizer,
@@ -951,7 +980,7 @@ void Renderer::generateIBLResources()
 		{
 			.stageCount = 2,
 			.pStages = prefilterStages.data(),
-			.pVertexInputState = &vertexInputInfo,
+			.pVertexInputState = &posOnlyVertexInputInfo,
 			.pInputAssemblyState = &inputAssembly,
 			.pViewportState = &viewportState,
 			.pRasterizationState = &rasterizer,
@@ -965,9 +994,6 @@ void Renderer::generateIBLResources()
 	};
 	vk::raii::Pipeline prefilterPipeline(device, nullptr, prefilterPipelineInfo.get<vk::GraphicsPipelineCreateInfo>());
 
-	// 步骤3: 生成预过滤环境贴图 (Prefiltered Environment Map)
-	// - 创建多级渐远纹理 (mip chain)
-	// - 使用重要性采样 (importance sampling) 生成不同粗糙度级别的预过滤环境
 	vk::raii::PipelineLayout brdfPipelineLayout(device, vk::PipelineLayoutCreateInfo{});
 	vk::PipelineVertexInputStateCreateInfo emptyVertexInput{};
 	std::array<vk::PipelineShaderStageCreateInfo, 2> brdfStages = {
@@ -990,9 +1016,10 @@ void Renderer::generateIBLResources()
 		},
 		{.colorAttachmentCount = 1, .pColorAttachmentFormats = &envFormat }
 	};
-	// 这里出问题
+
 	vk::raii::Pipeline brdfPipeline(device, nullptr, brdfPipelineInfo.get<vk::GraphicsPipelineCreateInfo>());
 
+	// 步骤1: 将 HDR 纹理转换为立方体贴图
 	glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
 	captureProjection[1][1] *= -1;
 	std::array<glm::mat4, 6> captureViews = {
@@ -1010,7 +1037,7 @@ void Renderer::generateIBLResources()
 			.image = envCubemapData.textureImage,
 			.viewType = vk::ImageViewType::e2D,
 			.format = envFormat,
-			.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, face, 1 }
+			.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, face, 1 }// 指定具体的面索引 (face) 和 mip 级别 (0)
 			});
 
 		vk::RenderingAttachmentInfo colorAttachment{
@@ -1033,6 +1060,7 @@ void Renderer::generateIBLResources()
 		cmd->bindPipeline(vk::PipelineBindPoint::eGraphics, *equirectPipeline);
 		cmd->bindVertexBuffers(0, *cubeMesh.vertexBuffer, { 0 });
 		cmd->bindIndexBuffer(*cubeMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(cubeMesh.indices)::value_type>::value);
+		// 传入hrd所在的描述符
 		cmd->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *equirectPipelineLayout, 0, *equirectSet, {});
 
 		PushConstMat4 pc{ .mvp = captureProjection * captureViews[face] };

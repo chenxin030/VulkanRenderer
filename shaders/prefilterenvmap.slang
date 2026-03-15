@@ -101,15 +101,11 @@ float3 prefilterEnvMap(float3 R, float roughness)
         if (dotNL > 0.0)
         {
             // Filtering based on https://placeholderart.wordpress.com/2015/07/28/implementation-notes-runtime-environment-map-filtering-for-image-based-lighting/
-
             float dotNH = clamp(dot(N, H), 0.0, 1.0);
             float dotVH = clamp(dot(V, H), 0.0, 1.0);
 
-            // Probability Distribution Function
             float pdf = D_GGX(dotNH, roughness) * dotNH / (4.0 * dotVH) + 0.0001;
-            // Slid angle of current smple
             float omegaS = 1.0 / (float(consts.numSamples) * pdf);
-            // Solid angle of 1 pixel across all cube faces
             float omegaP = 4.0 * PI / (6.0 * envMapDim * envMapDim);
             // Biased (+1.0) mip level for better result
             float mipLevel = roughness == 0.0 ? 0.0 : max(0.5 * log2(omegaS / omegaP) + 1.0, 0.0f);

@@ -21,7 +21,6 @@ Renderer::Renderer() {
 
 bool Renderer::createInstance(const std::string& appName) {
 	try {
-		// Create application info
 		vk::ApplicationInfo appInfo{
 		  .pApplicationName = appName.c_str(),
 		  .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
@@ -30,7 +29,6 @@ bool Renderer::createInstance(const std::string& appName) {
 		  .apiVersion = VK_API_VERSION_1_3
 		};
 
-		// Get required extensions
 		std::vector<const char*> extensions;
 
 		// Add required extensions for GLFW
@@ -45,7 +43,6 @@ bool Renderer::createInstance(const std::string& appName) {
 			extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 		}
 
-		// Create instance info
 		vk::InstanceCreateInfo createInfo{
 		  .pApplicationInfo = &appInfo,
 		  .enabledExtensionCount = static_cast<uint32_t>(extensions.size()),
@@ -65,16 +62,12 @@ bool Renderer::createInstance(const std::string& appName) {
 			createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
 			createInfo.ppEnabledLayerNames = validationLayers.data();
 
-			// Keep validation output quiet by default (no DebugPrintf feature).
-			// Ray Query debugPrintf/printf diagnostics are intentionally removed.
-
 			validationFeatures.enabledValidationFeatureCount = static_cast<uint32_t>(enabledValidationFeatures.size());
 			validationFeatures.pEnabledValidationFeatures = enabledValidationFeatures.data();
 
 			createInfo.pNext = &validationFeatures;
 		}
 
-		// Create instance
 		instance = vk::raii::Instance(context, createInfo);
 		return true;
 	}
@@ -130,7 +123,6 @@ bool Renderer::createSurface() {
 
 bool Renderer::pickPhysicalDevice() {
 	try {
-		// Get available physical devices
 		std::vector<vk::raii::PhysicalDevice> devices = instance.enumeratePhysicalDevices();
 
 		if (devices.empty()) {
@@ -138,7 +130,6 @@ bool Renderer::pickPhysicalDevice() {
 			return false;
 		}
 
-		// 优先使用独立显卡（如 NVIDIA RTX 2080），而不是集成显卡（如 Intel UHD Graphics）
 		// First, collect all suitable devices with their suitability scores
 		std::multimap<int, vk::raii::PhysicalDevice> suitableDevices;
 
@@ -155,7 +146,6 @@ bool Renderer::pickPhysicalDevice() {
 				continue;
 			}
 
-			// Check queue families
 			QueueFamilyIndices indices = findQueueFamilies(_device);
 			bool supportsGraphics = indices.isComplete();
 			if (!supportsGraphics) {
@@ -163,14 +153,12 @@ bool Renderer::pickPhysicalDevice() {
 				continue;
 			}
 
-			// Check device extensions
 			bool supportsAllRequiredExtensions = checkDeviceExtensionSupport(_device);
 			if (!supportsAllRequiredExtensions) {
 				std::cout << "  - Missing required extensions" << std::endl;
 				continue;
 			}
 
-			// Check swap chain support
 			SwapChainSupportDetails swapChainSupport = querySwapChainSupport(_device);
 			bool swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
 			if (!swapChainAdequate) {
@@ -178,7 +166,6 @@ bool Renderer::pickPhysicalDevice() {
 				continue;
 			}
 
-			// Check for required features
 			auto features = _device.getFeatures2<vk::PhysicalDeviceFeatures2,
 				vk::PhysicalDeviceVulkan11Features,
 				vk::PhysicalDeviceVulkan13Features,
@@ -269,21 +256,20 @@ bool Renderer::createLogicalDevice() {
 		if (!supportedFeatures.samplerAnisotropy) {  // 纹理
 			std::cout << "Warning: samplerAnisotropy not supported" << std::endl;
 		}
-		// 基础特性配置
 		vk::StructureChain<
 			vk::PhysicalDeviceFeatures2,
 			vk::PhysicalDeviceVulkan11Features,
 			vk::PhysicalDeviceVulkan13Features,
 			vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
 			featureChain = {
-				{.features = {.samplerAnisotropy = true}},		// vk::PhysicalDeviceFeatures2，textureSampler
-				{.shaderDrawParameters = VK_TRUE },			// vk::PhysicalDeviceVulkan11Features
-				{.synchronization2 = VK_TRUE, .dynamicRendering = VK_TRUE },				// vk::PhysicalDeviceVulkan13Features
-				{.extendedDynamicState = VK_TRUE}				// vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
+				{.features = {.samplerAnisotropy = true}},						// vk::PhysicalDeviceFeatures2，textureSampler
+				{.shaderDrawParameters = VK_TRUE },								// vk::PhysicalDeviceVulkan11Features
+				{.synchronization2 = VK_TRUE, .dynamicRendering = VK_TRUE },	// vk::PhysicalDeviceVulkan13Features
+				{.extendedDynamicState = VK_TRUE}								// vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
 		};
 
         vk::DeviceCreateInfo createInfo{
-          .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),	// 不能直接用.pNext = &featureChain（很神秘）
+          .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
           .queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size()),
           .pQueueCreateInfos = queueCreateInfos.data(),
           .enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size()),
@@ -392,23 +378,16 @@ bool Renderer::createGraphicsPipeline() {
 bool Renderer::createSyncObjects()
 {
 	try {
-		// Resize semaphores and fences vectors
 		presentCompleteSemaphores.clear();
 		renderFinishedSemaphores.clear();
 		inFlightFences.clear();
 
-		// Semaphores per swapchain image (indexed by imageIndex from acquireNextImage)
-		// The presentation engine holds semaphores until the image is re-acquired, so we need
-		// one semaphore per swapchain image to avoid reuse conflicts. See Vulkan spec:
-		// https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html
 		const auto semaphoreCount = static_cast<uint32_t>(swapChainImages.size());
 		presentCompleteSemaphores.reserve(semaphoreCount);
 		renderFinishedSemaphores.reserve(semaphoreCount);
 
-		// Fences per frame-in-flight for CPU-GPU synchronization (indexed by currentFrame)
 		inFlightFences.reserve(MAX_FRAMES_IN_FLIGHT);
 
-		// Create semaphore info
 		vk::SemaphoreCreateInfo semaphoreInfo{};
 
 		// Create semaphores per swapchain image (indexed by imageIndex for presentation sync)

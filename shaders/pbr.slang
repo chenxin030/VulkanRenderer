@@ -4,7 +4,8 @@ struct SceneUBO
     float4x4 view;
     float3 camPos;
 };
-ConstantBuffer<SceneUBO> sceneUbo : register(b0);
+[[vk::binding(0, 0)]]
+ConstantBuffer<SceneUBO> sceneUbo;
 
 struct PBRInstanceData
 {
@@ -13,7 +14,8 @@ struct PBRInstanceData
     float roughness;
     float3 color;
 };
-StructuredBuffer<PBRInstanceData> instanceData : register(t1);
+[[vk::binding(1, 0)]]
+StructuredBuffer<PBRInstanceData> instanceData;
 
 struct PointLight
 {
@@ -25,7 +27,8 @@ struct LightUBO
 {
     PointLight lights[4];
 };
-ConstantBuffer<LightUBO> lightUbo : register(b2);
+[[vk::binding(2, 0)]]
+ConstantBuffer<LightUBO> lightUbo;
 
 struct VSInput
 {

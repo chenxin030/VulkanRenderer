@@ -1,6 +1,6 @@
 #pragma once
 
-#define RENDERING_LEVEL 4 // 1: Multi-draw, 2: Instanced, 3: PBR Instanced, 4: IBL_PBR
+#define RENDERING_LEVEL 2 // 1: Multi-draw, 2: Instanced, 3: PBR Instanced, 4: IBL_PBR
 
 #include "ResourceManager.h"
 #include "Platform.h"
@@ -75,8 +75,6 @@ struct Renderer {
 	vk::Format						 swapChainImageFormat = vk::Format::eUndefined;
 	vk::Extent2D                     swapChainExtent;
 	std::vector<vk::raii::ImageView> swapChainImageViews;
-	// Tracked layouts for swapchain images (VVL requires correct oldLayout in barriers).
-	// Initialized at swapchain creation and updated as we transition.
 	std::vector<vk::ImageLayout> swapChainImageLayouts;
 
 	vk::raii::CommandPool    commandPool = nullptr;
@@ -140,8 +138,11 @@ struct Renderer {
 	bool framebufferResized = false;
 
 	TextureData depthData;
-
+#if RENDERING_LEVEL < 3
+	Camera camera = Camera(glm::vec3(0.0f, 0.0f, 5.0f));
+#else
 	Camera camera = Camera(glm::vec3(0.0f, -1.0f, 13.0f));
+#endif
 
 	void initialize(Platform* _platform, ResourceManager* _resourceManager) {
 		platform = _platform;
@@ -310,7 +311,6 @@ struct Renderer {
 	void render()
 	{
 		try {
-			// prepareFrame
 			auto fenceResult = device.waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
 			if (fenceResult != vk::Result::eSuccess)
 			{
@@ -342,7 +342,6 @@ struct Renderer {
 			commandBuffers[currentFrame].reset();
 			recordCommandBuffer(imageIndex);
 
-			// submitFrame()
 			vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
 			const vk::SubmitInfo   submitInfo{ .waitSemaphoreCount = 1,
 											  .pWaitSemaphores = &*presentCompleteSemaphores[currentFrame],
@@ -367,7 +366,6 @@ struct Renderer {
 			}
 			else
 			{
-				// There are no other success codes than eSuccess; on any error code, presentKHR already threw an exception.
 				assert(result == vk::Result::eSuccess);
 			}
 			currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -536,4 +534,4 @@ struct Renderer {
 	Platform* platform;
 	ResourceManager* resourceManager;
 
-	};
+};

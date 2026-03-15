@@ -54,6 +54,7 @@ float4 fragMain(VSOutput input) : SV_TARGET
 
     float3 color = float3(0.0, 0.0, 0.0);
     uint sampleCount = 0u;
+
     for (float phi = 0.0; phi < TWO_PI; phi += consts.deltaPhi)
     {
         for (float theta = 0.0; theta < HALF_PI; theta += consts.deltaTheta)
