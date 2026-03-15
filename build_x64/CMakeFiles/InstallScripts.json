@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"E:/vsProject/project/VulkanRenderer/build_x64/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

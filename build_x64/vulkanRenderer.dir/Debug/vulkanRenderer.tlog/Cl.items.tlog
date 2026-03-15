@@ -1,0 +1,13 @@
+E:\vsProject\project\VulkanRenderer\src\Core\Mesh.cpp;E:\vsProject\project\VulkanRenderer\build_x64\vulkanRenderer.dir\Debug\Mesh.obj
+E:\vsProject\project\VulkanRenderer\src\Core\Renderer_Pipeline.cpp;E:\vsProject\project\VulkanRenderer\build_x64\vulkanRenderer.dir\Debug\Renderer_Pipeline.obj
+E:\vsProject\project\VulkanRenderer\src\Core\Renderer_Resouces.cpp;E:\vsProject\project\VulkanRenderer\build_x64\vulkanRenderer.dir\Debug\Renderer_Resouces.obj
+E:\vsProject\project\VulkanRenderer\src\Core\Renderer_core.cpp;E:\vsProject\project\VulkanRenderer\build_x64\vulkanRenderer.dir\Debug\Renderer_core.obj
+E:\vsProject\project\VulkanRenderer\src\Core\Renderer_instanced.cpp;E:\vsProject\project\VulkanRenderer\build_x64\vulkanRenderer.dir\Debug\Renderer_instanced.obj
+E:\vsProject\project\VulkanRenderer\src\Core\Renderer_pbr.cpp;E:\vsProject\project\VulkanRenderer\build_x64\vulkanRenderer.dir\Debug\Renderer_pbr.obj
+E:\vsProject\project\VulkanRenderer\src\Core\Renderer_rendering.cpp;E:\vsProject\project\VulkanRenderer\build_x64\vulkanRenderer.dir\Debug\Renderer_rendering.obj
+E:\vsProject\project\VulkanRenderer\src\Core\Renderer_utils.cpp;E:\vsProject\project\VulkanRenderer\build_x64\vulkanRenderer.dir\Debug\Renderer_utils.obj
+E:\vsProject\project\VulkanRenderer\src\Core\main.cpp;E:\vsProject\project\VulkanRenderer\build_x64\vulkanRenderer.dir\Debug\main.obj
+E:\vsProject\project\VulkanRenderer\external\imgui\imgui.cpp;E:\vsProject\project\VulkanRenderer\build_x64\vulkanRenderer.dir\Debug\imgui.obj
+E:\vsProject\project\VulkanRenderer\external\imgui\imgui_demo.cpp;E:\vsProject\project\VulkanRenderer\build_x64\vulkanRenderer.dir\Debug\imgui_demo.obj
+E:\vsProject\project\VulkanRenderer\external\imgui\imgui_draw.cpp;E:\vsProject\project\VulkanRenderer\build_x64\vulkanRenderer.dir\Debug\imgui_draw.obj
+E:\vsProject\project\VulkanRenderer\external\imgui\imgui_widgets.cpp;E:\vsProject\project\VulkanRenderer\build_x64\vulkanRenderer.dir\Debug\imgui_widgets.obj

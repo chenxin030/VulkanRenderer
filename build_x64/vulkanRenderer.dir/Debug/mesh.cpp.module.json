@@ -1,0 +1,14 @@
+{
+    "version": 1,
+    "revision": 0,
+    "rules": [
+        {
+            "primary-output": "vulkanRenderer.dir\\Debug\\Mesh.obj",
+            "outputs": [
+                "E:\\vsProject\\project\\VulkanRenderer\\build_x64\\vulkanRenderer.dir\\Debug\\vc143.pdb",
+                "vulkanRenderer.dir\\Debug\\"
+            ],
+            "requires": []
+        }
+    ]
+}

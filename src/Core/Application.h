@@ -26,6 +26,8 @@ struct Application {
 #elif RENDERING_LEVEL == 4
 		renderer.createIBLPBRDescriptorSets();
 		renderer.createSkyboxDescriptorSets();
+#elif RENDERING_LEVEL == 5
+		renderer.createShadowDescriptorSets();
 #endif
 	}
 	void run()

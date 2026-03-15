@@ -1,6 +1,6 @@
 #pragma once
 
-#define RENDERING_LEVEL 1 // 1: Multi-draw, 2: Instanced, 3: PBR Instanced, 4: IBL_PBR
+#define RENDERING_LEVEL 5 // 1: Multi-draw, 2: Instanced, 3: PBR Instanced, 4: IBL_PBR, 5: ShadowMap
 
 #include "ResourceManager.h"
 #include "Platform.h"
@@ -133,12 +133,63 @@ struct Renderer {
 	TextureData irradianceCubemapData;
 	TextureData prefilteredEnvMapData;
 	TextureData brdfLutData;
+#elif RENDERING_LEVEL == 5
+	// Shadow mapping resources (Level 5)
+	vk::raii::DescriptorSetLayout shadowDescriptorSetLayout = nullptr;
+	vk::raii::DescriptorPool      shadowDescriptorPool = nullptr;
+	vk::raii::PipelineLayout      shadowPipelineLayout = nullptr;
+	vk::raii::Pipeline            shadowDepthPipeline = nullptr;
+	vk::raii::Pipeline            shadowLitPipeline = nullptr;
+
+	MeshBuffer shadowInstanceBufferResources;
+	MeshBuffer sceneUboResources;
+	MeshBuffer shadowUboResources;
+	MeshBuffer shadowParamsUboResources;
+
+	TextureData shadowMapData;
+	vk::Extent2D shadowMapExtent{ 2048u, 2048u };
+	vk::ImageLayout shadowMapLayout = vk::ImageLayout::eUndefined;
+
+	uint32_t cubeInstanceCount = 0;
+	uint32_t sphereInstanceCount = 0;
+
+	int shadowFilterMode = 2;
+	float pcfRadiusTexels = 2.0f;
+	float pcssLightSizeTexels = 25.0f;
+
+	float dirLightIntensity = 0.5f;
+	float pointLightIntensity = 3.5f;
+	float areaLightIntensity = 2.5f;
+
+	bool uiEnabled = true;
+
+	vk::raii::DescriptorSetLayout uiDescriptorSetLayout = nullptr;
+	vk::raii::DescriptorPool uiDescriptorPool = nullptr;
+	vk::raii::PipelineLayout uiPipelineLayout = nullptr;
+	vk::raii::Pipeline uiPipeline = nullptr;
+	vk::raii::DescriptorSets uiDescriptorSets = nullptr;
+	TextureData uiFontTexture;
+
+	struct UiFrameBuffers
+	{
+		vk::raii::Buffer vertexBuffer = nullptr;
+		vk::raii::DeviceMemory vertexBufferMemory = nullptr;
+		void* vertexMapped = nullptr;
+		size_t vertexSize = 0;
+
+		vk::raii::Buffer indexBuffer = nullptr;
+		vk::raii::DeviceMemory indexBufferMemory = nullptr;
+		void* indexMapped = nullptr;
+		size_t indexSize = 0;
+	};
+	std::vector<UiFrameBuffers> uiFrameBuffers;
 #endif
 
 	bool framebufferResized = false;
 
 	TextureData depthData;
-#if RENDERING_LEVEL < 3
+	vk::ImageLayout depthImageLayout = vk::ImageLayout::eUndefined;
+#if RENDERING_LEVEL < 3 || RENDERING_LEVEL == 5
 	Camera camera = Camera(glm::vec3(0.0f, 0.0f, 5.0f));
 #else
 	Camera camera = Camera(glm::vec3(0.0f, -1.0f, 13.0f));
@@ -280,11 +331,36 @@ struct Renderer {
 			std::cerr << "Failed to create Skybox Pipeline" << std::endl;
 			return false;
 		}
+#elif RENDERING_LEVEL == 5
+		// Initialize Shadow Mapping rendering
+		createShadowBuffers();
+		if (!createShadowDescriptorSetLayout()) {
+			std::cerr << "Failed to create Shadow DescriptorSetLayout" << std::endl;
+			return false;
+		}
+		if (!createShadowDescriptorPool()) {
+			std::cerr << "Failed to create Shadow DescriptorPool" << std::endl;
+			return false;
+		}
+		if (!createShadowMapResources()) {
+			std::cerr << "Failed to create ShadowMap resources" << std::endl;
+			return false;
+		}
+		if (!createShadowPipelines()) {
+			std::cerr << "Failed to create Shadow pipelines" << std::endl;
+			return false;
+		}
 #endif
 		if (!createCommandPool()) {
 			std::cerr << "Failed to create command pool" << std::endl;
 			return false;
 		}
+#if RENDERING_LEVEL == 5
+		if (!initUI()) {
+			std::cerr << "Failed to init UI" << std::endl;
+			return false;
+		}
+#endif
 		if (!createDepthResources()) {
 			std::cerr << "Failed to create depth resources" << std::endl;
 			return false;
@@ -335,6 +411,9 @@ struct Renderer {
 			updatePBRInstanceBuffers(currentFrame);
 #elif RENDERING_LEVEL == 4
 			updateIBLPBRBuffers(currentFrame);
+#elif RENDERING_LEVEL == 5
+			updateUIFrame();
+			updateShadowBuffers(currentFrame);
 #endif
 
 			device.resetFences(*inFlightFences[currentFrame]);
@@ -378,6 +457,9 @@ struct Renderer {
 		}
 
 	void cleanup() {
+#if RENDERING_LEVEL == 5
+		shutdownUI();
+#endif
 		cleanupUBO();
 	}
 
@@ -439,6 +521,20 @@ struct Renderer {
 	bool createIBLPBRPipeline();
 	void createIBLPBRBuffers();
 	void updateIBLPBRBuffers(uint32_t currentImage);
+
+	// Shadow mapping rendering functions (Level 5)
+	bool createShadowDescriptorSetLayout();
+	bool createShadowDescriptorPool();
+	void createShadowDescriptorSets();
+	bool createShadowMapResources();
+	bool createShadowPipelines();
+	void createShadowBuffers();
+	void updateShadowBuffers(uint32_t currentImage);
+	bool initUI();
+	void shutdownUI();
+	void updateUIFrame();
+	void recordUI(vk::raii::CommandBuffer& commandBuffer);
+
 
 	bool createSkyboxDescriptorSetLayout();
 	bool createSkyboxDescriptorPool();

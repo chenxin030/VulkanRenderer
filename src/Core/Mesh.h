@@ -25,6 +25,19 @@ struct Vertex {
         };
     }
 
+    static std::array<vk::VertexInputAttributeDescription, 1> getPositionOnlyAttributeDescriptions() {
+        return {
+            vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos))
+        };
+    }
+
+    static std::array<vk::VertexInputAttributeDescription, 2> getPositionNormalAttributeDescriptions() {
+        return {
+            vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos)),
+            vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal))
+        };
+    }
+
     bool operator==(const Vertex& other) const
     {
         return pos == other.pos && normal == other.normal && texCoord == other.texCoord;

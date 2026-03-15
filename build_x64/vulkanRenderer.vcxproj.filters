@@ -1,0 +1,131 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="E:\vsProject\project\VulkanRenderer\src\Core\Mesh.cpp">
+      <Filter>Core\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="E:\vsProject\project\VulkanRenderer\src\Core\Renderer_Pipeline.cpp">
+      <Filter>Core\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="E:\vsProject\project\VulkanRenderer\src\Core\Renderer_Resouces.cpp">
+      <Filter>Core\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="E:\vsProject\project\VulkanRenderer\src\Core\Renderer_core.cpp">
+      <Filter>Core\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="E:\vsProject\project\VulkanRenderer\src\Core\Renderer_instanced.cpp">
+      <Filter>Core\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="E:\vsProject\project\VulkanRenderer\src\Core\Renderer_pbr.cpp">
+      <Filter>Core\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="E:\vsProject\project\VulkanRenderer\src\Core\Renderer_rendering.cpp">
+      <Filter>Core\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="E:\vsProject\project\VulkanRenderer\src\Core\Renderer_utils.cpp">
+      <Filter>Core\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="E:\vsProject\project\VulkanRenderer\src\Core\main.cpp">
+      <Filter>Core\Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="E:\vsProject\project\VulkanRenderer\external\imgui\imgui.cpp">
+      <Filter>External\ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="E:\vsProject\project\VulkanRenderer\external\imgui\imgui_demo.cpp">
+      <Filter>External\ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="E:\vsProject\project\VulkanRenderer\external\imgui\imgui_draw.cpp">
+      <Filter>External\ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="E:\vsProject\project\VulkanRenderer\external\imgui\imgui_widgets.cpp">
+      <Filter>External\ImGui</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="E:\vsProject\project\VulkanRenderer\src\Core\Application.h">
+      <Filter>Core\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="E:\vsProject\project\VulkanRenderer\src\Core\Camera.h">
+      <Filter>Core\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="E:\vsProject\project\VulkanRenderer\src\Core\Mesh.h">
+      <Filter>Core\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="E:\vsProject\project\VulkanRenderer\src\Core\Platform.h">
+      <Filter>Core\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="E:\vsProject\project\VulkanRenderer\src\Core\Renderer.h">
+      <Filter>Core\Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="E:\vsProject\project\VulkanRenderer\src\Core\ResourceManager.h">
+      <Filter>Core\Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="E:\vsProject\project\VulkanRenderer\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="E:\vsProject\project\VulkanRenderer\shaders\filtercube.slang">
+      <Filter>Shaders\Source Files</Filter>
+    </None>
+    <None Include="E:\vsProject\project\VulkanRenderer\shaders\genbrdflut.slang">
+      <Filter>Shaders\Source Files</Filter>
+    </None>
+    <None Include="E:\vsProject\project\VulkanRenderer\shaders\imgui.slang">
+      <Filter>Shaders\Source Files</Filter>
+    </None>
+    <None Include="E:\vsProject\project\VulkanRenderer\shaders\instanced.slang">
+      <Filter>Shaders\Source Files</Filter>
+    </None>
+    <None Include="E:\vsProject\project\VulkanRenderer\shaders\irradiancecube.slang">
+      <Filter>Shaders\Source Files</Filter>
+    </None>
+    <None Include="E:\vsProject\project\VulkanRenderer\shaders\pbr.slang">
+      <Filter>Shaders\Source Files</Filter>
+    </None>
+    <None Include="E:\vsProject\project\VulkanRenderer\shaders\pbribl.slang">
+      <Filter>Shaders\Source Files</Filter>
+    </None>
+    <None Include="E:\vsProject\project\VulkanRenderer\shaders\prefilterenvmap.slang">
+      <Filter>Shaders\Source Files</Filter>
+    </None>
+    <None Include="E:\vsProject\project\VulkanRenderer\shaders\shader.slang">
+      <Filter>Shaders\Source Files</Filter>
+    </None>
+    <None Include="E:\vsProject\project\VulkanRenderer\shaders\shadow_depth.slang">
+      <Filter>Shaders\Source Files</Filter>
+    </None>
+    <None Include="E:\vsProject\project\VulkanRenderer\shaders\shadow_lit.slang">
+      <Filter>Shaders\Source Files</Filter>
+    </None>
+    <None Include="E:\vsProject\project\VulkanRenderer\shaders\skybox.slang">
+      <Filter>Shaders\Source Files</Filter>
+    </None>
+    <None Include="E:\vsProject\project\VulkanRenderer\shaders\slang.slang">
+      <Filter>Shaders\Source Files</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Core">
+      <UniqueIdentifier>{8CFE8ADD-5295-33D4-AC4E-FA01B75CB186}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Core\Header Files">
+      <UniqueIdentifier>{2AB8564B-E4DD-300C-BBDA-4885438538E2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Core\Source Files">
+      <UniqueIdentifier>{81EBB875-0FE9-374F-8D8D-C20AE3687085}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="External">
+      <UniqueIdentifier>{0DA3BA2C-DEB2-3B3D-98E8-D2F5AF01D092}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="External\ImGui">
+      <UniqueIdentifier>{43BA01C4-82A2-368F-9524-CBCE8C415789}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders">
+      <UniqueIdentifier>{7A20189F-E27D-3694-9AED-4166B9EAC97B}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders\Source Files">
+      <UniqueIdentifier>{FA295CF1-69BD-35C1-9494-B3A323AA5F8B}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

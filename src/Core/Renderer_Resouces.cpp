@@ -207,9 +207,19 @@ void Renderer::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuff
 
 void Renderer::loadModels() {
     auto& meshes = resourceManager->meshes;
-    generateSphere(meshes[0], 1, 100);
+#if RENDERING_LEVEL == 5
+    generateCube(meshes[0]);
     createVertexBuffer(meshes[0]);
     createIndexBuffer(meshes[0]);
+
+    generateSphere(meshes[1], 1.0f, 64);
+    createVertexBuffer(meshes[1]);
+    createIndexBuffer(meshes[1]);
+#elif RENDERING_LEVEL >= 3
+    generateSphere(meshes[0], 1.0f, 100);
+    createVertexBuffer(meshes[0]);
+    createIndexBuffer(meshes[0]);
+#endif
 #if RENDERING_LEVEL == 4
     skyboxTriangleMesh.vertices = {
         { { -1.0f, -1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f } },
@@ -338,6 +348,27 @@ void Renderer::cleanupUBO() {
         ubo.BuffersMapped.clear();
         ubo.descriptorSets.clear();
     }
+
+#if RENDERING_LEVEL == 5
+	auto unmapMeshBuffer = [](MeshBuffer& buffer) {
+		for (size_t i = 0; i < buffer.BuffersMemory.size(); i++)
+		{
+			if (i < buffer.BuffersMapped.size() && buffer.BuffersMapped[i] != nullptr)
+			{
+				buffer.BuffersMemory[i].unmapMemory();
+			}
+		}
+		buffer.Buffers.clear();
+		buffer.BuffersMemory.clear();
+		buffer.BuffersMapped.clear();
+		buffer.descriptorSets.clear();
+	};
+
+	unmapMeshBuffer(sceneUboResources);
+	unmapMeshBuffer(shadowUboResources);
+	unmapMeshBuffer(shadowParamsUboResources);
+	unmapMeshBuffer(shadowInstanceBufferResources);
+#endif
 }
 
 void Renderer::createImage(uint32_t width, uint32_t height, uint32_t mipLevels, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, TextureData& texData)

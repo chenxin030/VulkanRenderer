@@ -75,6 +75,28 @@ struct SkyboxUBO {
 	glm::mat4 invView;
 };
 
+struct ShadowUBO {
+	glm::mat4 lightViewProj;
+	glm::vec4 dirLightDirIntensity;
+	glm::vec4 dirLightColor;
+	glm::vec4 pointLightPosIntensity;
+	glm::vec4 pointLightColor;
+	glm::vec4 areaLightPosIntensity;
+	glm::vec4 areaLightColor;
+	glm::vec4 areaLightU;
+	glm::vec4 areaLightV;
+};
+
+struct ShadowParamsUBO {
+	int shadowFilterMode;
+	float pcfRadiusTexels;
+	float pcssLightSizeTexels;
+	float shadowBiasMin;
+
+	glm::vec2 invShadowMapSize;
+	glm::vec2 padding0;
+};
+
 struct ResourceManager {
 	std::vector<Mesh> meshes;
 	std::vector<TextureData> textures;
@@ -103,6 +125,36 @@ struct ResourceManager {
 		textures.resize(texPath.size());
 		meshUniformBuffer.resize(modelCount);
 		transforms.resize(modelCount);
+#elif RENDERING_LEVEL == 5
+		meshes.resize(2);
+		meshUniformBuffer.resize(modelCount);
+		transforms.resize(modelCount);
+
+		if (modelCount > 0) {
+			transforms[0].position = { 0.0f, -1.0f, 0.0f };
+			transforms[0].rotation = { 0.0f, 0.0f, 0.0f };
+			transforms[0].scale = { 6.0f, 0.05f, 6.0f };
+		}
+		if (modelCount > 1) {
+			transforms[1].position = { -2.0f, 0.25f, 0.0f };
+			transforms[1].scale = { 0.25f, 1.20f, 0.25f };
+		}
+		if (modelCount > 2) {
+			transforms[2].position = { -2.0f, 1.95f, 0.0f };
+			transforms[2].scale = { 0.50f, 0.50f, 0.50f };
+		}
+		if (modelCount > 3) {
+			transforms[3].position = { 0.0f, -0.92f, -1.5f };
+			transforms[3].scale = { 0.30f, 0.03f, 0.30f };
+		}
+		if (modelCount > 4) {
+			transforms[4].position = { 0.0f, -0.43f, -1.5f };
+			transforms[4].scale = { 0.50f, 0.50f, 0.50f };
+		}
+		if (modelCount > 5) {
+			transforms[5].position = { 2.0f, -0.45f, 0.8f };
+			transforms[5].scale = { 0.50f, 0.50f, 0.50f };
+		}
 #endif
 #if RENDERING_LEVEL == 1 || RENDERING_LEVEL == 2
 		meshes.resize(modelPath.size());
