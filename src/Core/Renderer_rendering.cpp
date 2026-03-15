@@ -72,6 +72,7 @@ void Renderer::cleanupSwapChain() {
 	depthData.textureImageView = vk::raii::ImageView(nullptr);
 	depthData.textureImage = vk::raii::Image(nullptr);
 	depthData.textureImageMemory = vk::raii::DeviceMemory(nullptr);
+	depthImageLayout = vk::ImageLayout::eUndefined;
 
 	swapChain = vk::raii::SwapchainKHR(nullptr);
 }
@@ -162,27 +163,29 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 {
 	auto& commandBuffer = commandBuffers[currentFrame];
 	commandBuffer.begin({});
-	// Before starting rendering, transition the swapchain image to COLOR_ATTACHMENT_OPTIMAL
 	transition_image_layout(
 		swapChainImages[imageIndex],
-		vk::ImageLayout::eUndefined,
+		swapChainImageLayouts[imageIndex],
 		vk::ImageLayout::eColorAttachmentOptimal,
-		{},                                                        // srcAccessMask (no need to wait for previous operations)
-		vk::AccessFlagBits2::eColorAttachmentWrite,                // dstAccessMask
-		vk::PipelineStageFlagBits2::eColorAttachmentOutput,        // srcStage
-		vk::PipelineStageFlagBits2::eColorAttachmentOutput,         // dstStage
+		{},
+		vk::AccessFlagBits2::eColorAttachmentWrite,
+		vk::PipelineStageFlagBits2::eAllCommands,
+		vk::PipelineStageFlagBits2::eColorAttachmentOutput,
 		vk::ImageAspectFlagBits::eColor
 	);
+	swapChainImageLayouts[imageIndex] = vk::ImageLayout::eColorAttachmentOptimal;
+
 	transition_image_layout(
 		depthData.textureImage,
-		vk::ImageLayout::eUndefined,
+		depthImageLayout,
 		vk::ImageLayout::eDepthAttachmentOptimal,
+		{},
 		vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-		vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-		vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+		vk::PipelineStageFlagBits2::eAllCommands,
 		vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
 		vk::ImageAspectFlagBits::eDepth
 	);
+	depthImageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
 	vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
 	vk::RenderingAttachmentInfo attachmentInfo = {
 		.imageView = swapChainImageViews[imageIndex],
@@ -247,6 +250,90 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 	commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
 	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *iblPbrPipelineLayout, 0, *pbrInstanceBufferResources.descriptorSets[currentFrame], nullptr);
 	commandBuffer.drawIndexed(static_cast<uint32_t>(mesh.indices.size()), MAX_OBJECTS, 0, 0, 0);
+#elif RENDERING_LEVEL == 5
+	commandBuffer.endRendering();
+
+	transition_image_layout(
+		shadowMapData.textureImage,
+		shadowMapLayout,
+		vk::ImageLayout::eDepthAttachmentOptimal,
+		{},
+		vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+		vk::PipelineStageFlagBits2::eAllCommands,
+		vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+		vk::ImageAspectFlagBits::eDepth
+	);
+	shadowMapLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+
+	vk::ClearValue shadowClearDepth = vk::ClearDepthStencilValue(1.0f, 0);
+	vk::RenderingAttachmentInfo shadowDepthAttachmentInfo = {
+		.imageView = shadowMapData.textureImageView,
+		.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+		.loadOp = vk::AttachmentLoadOp::eClear,
+		.storeOp = vk::AttachmentStoreOp::eStore,
+		.clearValue = shadowClearDepth
+	};
+	vk::RenderingInfo shadowRenderingInfo = {
+		.renderArea = {.offset = {0, 0}, .extent = shadowMapExtent},
+		.layerCount = 1,
+		.colorAttachmentCount = 0,
+		.pColorAttachments = nullptr,
+		.pDepthAttachment = &shadowDepthAttachmentInfo
+	};
+
+	commandBuffer.beginRendering(shadowRenderingInfo);
+	commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(shadowMapExtent.width), static_cast<float>(shadowMapExtent.height), 0.0f, 1.0f));
+	commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), shadowMapExtent));
+	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *shadowDepthPipeline);
+	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *shadowPipelineLayout, 0, *shadowInstanceBufferResources.descriptorSets[currentFrame], nullptr);
+
+	{
+		auto& cubeMesh = resourceManager->meshes[0];
+		commandBuffer.bindVertexBuffers(0, *cubeMesh.vertexBuffer, { 0 });
+		commandBuffer.bindIndexBuffer(*cubeMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(cubeMesh.indices)::value_type>::value);
+		commandBuffer.drawIndexed(static_cast<uint32_t>(cubeMesh.indices.size()), cubeInstanceCount, 0, 0, 0);
+	}
+	{
+		auto& sphereMesh = resourceManager->meshes[1];
+		commandBuffer.bindVertexBuffers(0, *sphereMesh.vertexBuffer, { 0 });
+		commandBuffer.bindIndexBuffer(*sphereMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(sphereMesh.indices)::value_type>::value);
+		commandBuffer.drawIndexed(static_cast<uint32_t>(sphereMesh.indices.size()), sphereInstanceCount, 0, 0, cubeInstanceCount);
+	}
+
+	commandBuffer.endRendering();
+
+	transition_image_layout(
+		shadowMapData.textureImage,
+		vk::ImageLayout::eDepthAttachmentOptimal,
+		vk::ImageLayout::eShaderReadOnlyOptimal,
+		vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+		vk::AccessFlagBits2::eShaderSampledRead,
+		vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+		vk::PipelineStageFlagBits2::eFragmentShader,
+		vk::ImageAspectFlagBits::eDepth
+	);
+	shadowMapLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+
+	commandBuffer.beginRendering(renderingInfo);
+	commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+	commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *shadowLitPipeline);
+	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *shadowPipelineLayout, 0, *shadowInstanceBufferResources.descriptorSets[currentFrame], nullptr);
+
+	{
+		auto& cubeMesh = resourceManager->meshes[0];
+		commandBuffer.bindVertexBuffers(0, *cubeMesh.vertexBuffer, { 0 });
+		commandBuffer.bindIndexBuffer(*cubeMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(cubeMesh.indices)::value_type>::value);
+		commandBuffer.drawIndexed(static_cast<uint32_t>(cubeMesh.indices.size()), cubeInstanceCount, 0, 0, 0);
+	}
+	{
+		auto& sphereMesh = resourceManager->meshes[1];
+		commandBuffer.bindVertexBuffers(0, *sphereMesh.vertexBuffer, { 0 });
+		commandBuffer.bindIndexBuffer(*sphereMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(sphereMesh.indices)::value_type>::value);
+		commandBuffer.drawIndexed(static_cast<uint32_t>(sphereMesh.indices.size()), sphereInstanceCount, 0, 0, cubeInstanceCount);
+	}
+
+	recordUI(commandBuffer);
 #endif
 
 	commandBuffer.endRendering();
@@ -261,6 +348,7 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 		vk::PipelineStageFlagBits2::eBottomOfPipe,                  // dstStage
 		vk::ImageAspectFlagBits::eColor
 	);
+	swapChainImageLayouts[imageIndex] = vk::ImageLayout::ePresentSrcKHR;
 	commandBuffer.end();
 }
 
@@ -299,6 +387,7 @@ bool Renderer::createDepthResources() {
 
 		createImage(swapChainExtent.width, swapChainExtent.height, 1, depthFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, depthData);
 		depthData.textureImageView = createImageView(depthData.textureImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
+		depthImageLayout = vk::ImageLayout::eUndefined;
 
 		return true;
 	}
