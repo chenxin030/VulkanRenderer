@@ -1,6 +1,6 @@
 #pragma once
 
-#define RENDERING_LEVEL 5 // 1: Multi-draw, 2: Instanced, 3: PBR Instanced, 4: IBL_PBR, 5: ShadowMap
+#define RENDERING_LEVEL 6 // 1: Multi-draw, 2: Instanced, 3: PBR Instanced, 4: IBL_PBR, 5: ShadowMap, 6: TAAU
 
 #include "ResourceManager.h"
 #include "Platform.h"
@@ -133,8 +133,8 @@ struct Renderer {
 	TextureData irradianceCubemapData;
 	TextureData prefilteredEnvMapData;
 	TextureData brdfLutData;
-#elif RENDERING_LEVEL == 5
-	// Shadow mapping resources (Level 5)
+#elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
+	// Shadow mapping resources (Level 5) + TAAU base (Level 6)
 	vk::raii::DescriptorSetLayout shadowDescriptorSetLayout = nullptr;
 	vk::raii::DescriptorPool      shadowDescriptorPool = nullptr;
 	vk::raii::PipelineLayout      shadowPipelineLayout = nullptr;
@@ -189,7 +189,7 @@ struct Renderer {
 
 	TextureData depthData;
 	vk::ImageLayout depthImageLayout = vk::ImageLayout::eUndefined;
-#if RENDERING_LEVEL < 3 || RENDERING_LEVEL == 5
+#if RENDERING_LEVEL < 3 || RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
 	Camera camera = Camera(glm::vec3(0.0f, 0.0f, 5.0f));
 #else
 	Camera camera = Camera(glm::vec3(0.0f, -1.0f, 13.0f));
@@ -331,7 +331,7 @@ struct Renderer {
 			std::cerr << "Failed to create Skybox Pipeline" << std::endl;
 			return false;
 		}
-#elif RENDERING_LEVEL == 5
+#elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
 		// Initialize Shadow Mapping rendering
 		createShadowBuffers();
 		if (!createShadowDescriptorSetLayout()) {
@@ -346,6 +346,7 @@ struct Renderer {
 			std::cerr << "Failed to create ShadowMap resources" << std::endl;
 			return false;
 		}
+		createShadowDescriptorSets();
 		if (!createShadowPipelines()) {
 			std::cerr << "Failed to create Shadow pipelines" << std::endl;
 			return false;
@@ -355,7 +356,7 @@ struct Renderer {
 			std::cerr << "Failed to create command pool" << std::endl;
 			return false;
 		}
-#if RENDERING_LEVEL == 5
+#if RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
 		if (!initUI()) {
 			std::cerr << "Failed to init UI" << std::endl;
 			return false;
@@ -412,6 +413,9 @@ struct Renderer {
 #elif RENDERING_LEVEL == 4
 			updateIBLPBRBuffers(currentFrame);
 #elif RENDERING_LEVEL == 5
+			updateUIFrame();
+			updateShadowBuffers(currentFrame);
+#elif RENDERING_LEVEL == 6
 			updateUIFrame();
 			updateShadowBuffers(currentFrame);
 #endif
@@ -530,6 +534,9 @@ struct Renderer {
 	bool createShadowPipelines();
 	void createShadowBuffers();
 	void updateShadowBuffers(uint32_t currentImage);
+	void updateTAAUScene(float deltaTime);
+	void updateTAAUHistory(const glm::mat4& currentViewProj);
+	void updateTAAUUI();
 	bool initUI();
 	void shutdownUI();
 	void updateUIFrame();

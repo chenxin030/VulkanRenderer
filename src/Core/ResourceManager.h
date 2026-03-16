@@ -155,6 +155,54 @@ struct ResourceManager {
 			transforms[5].position = { 2.0f, -0.45f, 0.8f };
 			transforms[5].scale = { 0.50f, 0.50f, 0.50f };
 		}
+#elif RENDERING_LEVEL == 6
+		meshes.resize(2);
+		meshUniformBuffer.resize(modelCount);
+		transforms.resize(modelCount);
+
+		// TAAU test scene (ghosting / thin-line shimmer / fast motion / edge & high-frequency texture)
+		if (modelCount > 0) {
+			// Ground plane to expose edge shimmer
+			transforms[0].position = { 0.0f, -1.1f, 0.0f };
+			transforms[0].rotation = { 0.0f, 0.0f, 0.0f };
+			transforms[0].scale = { 7.5f, 0.03f, 7.5f };
+		}
+		if (modelCount > 1) {
+			// Thin pillar group for thin-line flicker
+			transforms[1].position = { -3.0f, -0.2f, 0.0f };
+			transforms[1].scale = { 0.08f, 2.8f, 0.08f };
+		}
+		if (modelCount > 2) {
+			transforms[2].position = { -2.6f, 0.2f, 0.3f };
+			transforms[2].scale = { 0.10f, 2.2f, 0.10f };
+		}
+		if (modelCount > 3) {
+			// Fast moving probe (to be animated in Renderer_TAAU)
+			transforms[3].position = { 2.5f, 0.35f, -1.6f };
+			transforms[3].scale = { 0.35f, 0.35f, 0.35f };
+		}
+		if (modelCount > 4) {
+			// Edge clipping probe near screen edge
+			transforms[4].position = { 3.7f, -0.35f, -2.8f };
+			transforms[4].scale = { 0.22f, 1.6f, 0.22f };
+		}
+		if (modelCount > 5) {
+			// High-frequency alternating bars (dense array)
+			transforms[5].position = { 0.0f, -0.45f, 2.8f };
+			transforms[5].scale = { 0.12f, 0.9f, 0.12f };
+		}
+		if (modelCount > 6) {
+			transforms[6].position = { 0.25f, -0.45f, 2.8f };
+			transforms[6].scale = { 0.10f, 0.9f, 0.10f };
+		}
+		if (modelCount > 7) {
+			transforms[7].position = { -0.25f, -0.45f, 2.8f };
+			transforms[7].scale = { 0.14f, 0.9f, 0.14f };
+		}
+		if (modelCount > 8) {
+			transforms[8].position = { 0.55f, -0.45f, 2.8f };
+			transforms[8].scale = { 0.08f, 0.9f, 0.08f };
+		}
 #endif
 #if RENDERING_LEVEL == 1 || RENDERING_LEVEL == 2
 		meshes.resize(modelPath.size());

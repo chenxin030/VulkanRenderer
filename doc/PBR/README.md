@@ -2,6 +2,8 @@
 
 This document covers two stages:
 
+- Back to root: [README.md](../../README.md)
+
 - Chinese version: [README.zh-CN.md](README.zh-CN.md)
 
 - **Level 3: PBR Instanced (direct lighting)**
@@ -46,9 +48,9 @@ Level 4 extends Level 3 with IBL:
    - generate/load the sphere mesh
    - load HDR `assets/textures/newport_loft.hdr` (2D float texture)
 2. IBL precomputation (`generateIBLResources`)
-   - equirectangular (2D HDR) ¡ú environment cubemap
-   - environment cubemap ¡ú irradiance cubemap (diffuse convolution)
-   - environment cubemap ¡ú prefiltered cubemap (specular prefilter + mip chain)
+   - equirectangular (2D HDR)  environment cubemap
+   - environment cubemap  irradiance cubemap (diffuse convolution)
+   - environment cubemap  prefiltered cubemap (specular prefilter + mip chain)
    - generate BRDF LUT (2D)
 3. Create descriptor set layout / pool / set
 4. Create pipelines

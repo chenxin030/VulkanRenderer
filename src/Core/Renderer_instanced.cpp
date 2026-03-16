@@ -242,7 +242,7 @@ void Renderer::updateInstancedBuffers(uint32_t currentImage) {
     memcpy(instancedBufferResources.BuffersMapped[currentImage], instanceData.data(), sizeof(InstanceData) * MAX_OBJECTS);
 }
 
-#elif RENDERING_LEVEL == 5
+#elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
 
 struct ShadowInstanceData
 {
@@ -540,10 +540,15 @@ void Renderer::createShadowBuffers()
     createUniformBuffers(shadowUboResources, sizeof(ShadowUBO));
     createUniformBuffers(shadowParamsUboResources, sizeof(ShadowParamsUBO));
     createStorageBuffers(shadowInstanceBufferResources, sizeof(ShadowInstanceData) * MAX_OBJECTS);
+#if RENDERING_LEVEL == 6
+    cubeInstanceCount = 9;
+#else
     cubeInstanceCount = 6;
+#endif
     sphereInstanceCount = 0;
 }
 
+#if RENDERING_LEVEL == 5
 void Renderer::updateShadowBuffers(uint32_t currentImage)
 {
     SceneUBO sceneUbo{
@@ -604,6 +609,7 @@ void Renderer::updateShadowBuffers(uint32_t currentImage)
 
     memcpy(shadowInstanceBufferResources.BuffersMapped[currentImage], instanceData.data(), sizeof(ShadowInstanceData) * MAX_OBJECTS);
 }
+#endif
 
 bool Renderer::initUI()
 {
@@ -840,6 +846,10 @@ void Renderer::updateUIFrame()
     io.MouseDown[2] = glfwGetMouseButton(platform->window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
 
     ImGui::NewFrame();
+
+#if RENDERING_LEVEL == 6
+    updateTAAUUI();
+#endif
 
     ImGui::Begin("Shadows & Lights");
     const char* modes[] = { "Hard", "PCF", "PCSS" };

@@ -12,7 +12,8 @@ Chinese version: [README.zh-CN.md](README.zh-CN.md)
 - **Level 2 (Instanced)**: instanced rendering (per-instance transform data).
 - **Level 3 (PBR Instanced)**: instanced PBR shading (direct lighting).
 - **Level 4 (IBL PBR + Skybox)**: HDR IBL precomputation + IBL PBR + skybox.
-- **Level 5 (Shadow / PCF / PCSS)**: shadow map + PCF + PCSS + adjustable lights + runtime UI (current default).
+- **Level 5 (Shadow / PCF / PCSS)**: shadow map + PCF + PCSS + adjustable lights + runtime UI.
+- **Level 6 (TAAU)**: TAAU test path (ghosting / thin-line shimmer / fast motion / edge & high-frequency stress).
 
 ## Quick Start (Windows / Visual Studio)
 
@@ -54,4 +55,5 @@ All `.slang` files under `shaders/` are compiled to SPIR-V during the build and 
 
 - Instanced rendering (Level 2): [doc/Instanced/README.md](doc/Instanced/README.md)
 - PBR / IBL (Level 3/4): [doc/PBR/README.md](doc/PBR/README.md)
-- Shadow / PCF / PCSS / lights & UI (Level 5/6/7): [doc/Shadow/README.md](doc/Shadow/README.md)
+- Shadow / PCF / PCSS / lights & UI (Level 5): [doc/Shadow/README.md](doc/Shadow/README.md)
+- TAAU (Level 6): [doc/TAAU/README.md](doc/TAAU/README.md)

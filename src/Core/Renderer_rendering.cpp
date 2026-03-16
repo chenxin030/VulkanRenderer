@@ -250,7 +250,7 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 	commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
 	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *iblPbrPipelineLayout, 0, *pbrInstanceBufferResources.descriptorSets[currentFrame], nullptr);
 	commandBuffer.drawIndexed(static_cast<uint32_t>(mesh.indices.size()), MAX_OBJECTS, 0, 0, 0);
-#elif RENDERING_LEVEL == 5
+#elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
 	commandBuffer.endRendering();
 
 	transition_image_layout(

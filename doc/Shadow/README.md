@@ -1,16 +1,18 @@
-# Shadow (Level 5/6/7)
+# Shadow (Level 5)
 
 This document describes the shadow-related rendering path:
+
+- Back to root: [README.md](../../README.md)
 
 - Chinese version: [README.zh-CN.md](README.zh-CN.md)
 
 - **Level 5: Shadow Map (hard shadows)**
-- **Level 6: PCF (Percentage Closer Filtering)**
-- **Level 7: PCSS (Percentage Closer Soft Shadows)**
 
 In this project, these techniques are implemented in one path and can be switched at runtime via UI:
 
 - Hard / PCF / PCSS
+
+> Note: Only `RENDERING_LEVEL == 5` is the shadow path. `RENDERING_LEVEL >= 6` is reserved for TAAU.
 
 ## Test Scene
 
@@ -44,7 +46,7 @@ Lighting data is packed in `ShadowUBO` (see `src/Core/ResourceManager.h`).
 - Shadow map image usage: `DepthAttachment | Sampled`
 - After the shadow pass, transition the shadow map layout to `ShaderReadOnlyOptimal`
 
-## PCF (Level 6)
+## PCF
 
 ### Core Idea
 
@@ -58,7 +60,7 @@ Replace a single comparison with multiple samples and average the visibility:
 
 - `pcfRadiusTexels`: filter radius (in texels)
 
-## PCSS (Level 7)
+## PCSS
 
 ### Core Idea
 
@@ -67,7 +69,7 @@ Two-stage approach:
 1. **Blocker Search**
    - Sample a larger search radius and estimate average blocker depth (`avgBlockerDepth`)
 2. **Penumbra Size**
-   - Estimate penumbra size based on receiver depth and blocker depth (farther ¡ú softer)
+   - Estimate penumbra size based on receiver depth and blocker depth (farther ?? softer)
 3. **Filtering**
    - Perform PCF using the estimated filter radius
 
@@ -92,7 +94,7 @@ UI implementation lives in `src/Core/Renderer_instanced.cpp`:
 
 UI shader: `shaders/imgui.slang`
 
-## Shader Binding Contract (Level 5/6/7)
+## Shader Binding Contract
 
 See `shaders/shadow_lit.slang` (explicit `[[vk::binding(x, 0)]]`):
 

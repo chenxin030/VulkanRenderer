@@ -207,7 +207,7 @@ void Renderer::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuff
 
 void Renderer::loadModels() {
     auto& meshes = resourceManager->meshes;
-#if RENDERING_LEVEL == 5
+#if RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
     generateCube(meshes[0]);
     createVertexBuffer(meshes[0]);
     createIndexBuffer(meshes[0]);
@@ -349,7 +349,7 @@ void Renderer::cleanupUBO() {
         ubo.descriptorSets.clear();
     }
 
-#if RENDERING_LEVEL == 5
+#if RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
 	auto unmapMeshBuffer = [](MeshBuffer& buffer) {
 		for (size_t i = 0; i < buffer.BuffersMemory.size(); i++)
 		{
