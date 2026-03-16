@@ -1,4 +1,0 @@
-E:/vsProject/project/VulkanRenderer/build_x64/CMakeFiles/vulkanRenderer.dir
-E:/vsProject/project/VulkanRenderer/build_x64/CMakeFiles/ShaderCompileTarget.dir
-E:/vsProject/project/VulkanRenderer/build_x64/CMakeFiles/ALL_BUILD.dir
-E:/vsProject/project/VulkanRenderer/build_x64/CMakeFiles/ZERO_CHECK.dir
