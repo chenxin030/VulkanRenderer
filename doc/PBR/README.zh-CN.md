@@ -1,0 +1,91 @@
+# PBR（Level 3/4）
+
+English version: [README.md](README.md)
+
+本文覆盖两个阶段：
+
+- **Level 3：PBR Instanced（直接光照）**
+- **Level 4：IBL PBR + Skybox（HDR IBL 预计算 + 天空盒）**
+
+## Level 3：PBR Instanced（直接光照）
+
+### 目标
+
+- 保持实例化渲染（SSBO 存 per-instance 数据）
+- fragment 中做基础的金属/粗糙度 PBR（由点光等直接光照驱动）
+
+### 资源与绑定（概念）
+
+- binding 0：`SceneUBO`（projection/view/camPos）
+- binding 1：`PBRInstanceData[]` SSBO（model/metallic/roughness/color）
+- binding 2：`LightUBO`（点光数组）
+
+### 数据结构
+
+数据结构定义在：
+
+- `src/Core/ResourceManager.h`
+
+关键类型：
+
+- `SceneUBO`
+- `PBRInstanceData`
+- `LightUBO`
+
+## Level 4：IBL PBR + Skybox
+
+Level 4 在 Level 3 基础上加入 IBL：
+
+- 漫反射 IBL：irradiance cubemap
+- 镜面反射 IBL：prefiltered environment cubemap + BRDF LUT
+- 额外 skybox pass
+
+### 高级运行时流程
+
+1. 加载资源
+   - 生成/加载球体网格
+   - 加载 HDR `assets/textures/newport_loft.hdr`（2D float texture）
+2. IBL 预计算（`generateIBLResources`）
+   - 等距柱状图（2D HDR）→ 环境 cubemap
+   - 环境 cubemap → irradiance cubemap（diffuse convolution）
+   - 环境 cubemap → prefiltered cubemap（specular prefilter + mip chain）
+   - 生成 BRDF LUT（2D）
+3. 创建 descriptor set layout / pool / set
+4. 创建 pipelines
+   - `pbribl`（实例化球体）
+   - `skybox`（天空盒）
+5. 每帧更新
+   - Scene / Light / Instance / Params / Skybox UBO
+6. 录制与提交
+   - 先画 skybox，再画实例化球体
+
+### IBL 预计算细节
+
+IBL 生成使用 Dynamic Rendering，渲染到离屏颜色附件：
+
+- `envCubemapData`（6 layers，cube-compatible）
+- `irradianceCubemapData`（6 layers，cube-compatible）
+- `prefilteredEnvMapData`（6 layers，cube-compatible，带 mip chain）
+- `brdfLutData`（2D image）
+
+每个 cubemap face 通常通过创建临时 2D view（指定 layer/mip），然后调用 `beginRendering()` / `endRendering()` 输出。
+
+### Descriptor bindings（IBL PBR）
+
+参见 `createIBLPBRDescriptorSetLayout` 与 `shaders/pbribl.slang`：
+
+- binding 0：`SceneUBO`
+- binding 1：`PBRInstanceData[]`
+- binding 2：`LightUBO`
+- binding 3：irradiance cubemap sampler
+- binding 4：prefiltered cubemap sampler
+- binding 5：BRDF LUT（2D）
+- binding 6：`ParamsUBO`（exposure/gamma）
+
+### Descriptor bindings（Skybox）
+
+参见 `createSkyboxDescriptorSetLayout` 与 `shaders/skybox.slang`：
+
+- binding 0：`SkyboxUBO`（invProjection / invView）
+- binding 1：`ParamsUBO`
+- binding 2：environment cubemap sampler
