@@ -1,18 +1,12 @@
 #pragma once
 
-#define RENDERING_LEVEL 6 // 1: Multi-draw, 2: Instanced, 3: PBR Instanced, 4: IBL_PBR, 5: ShadowMap, 6: TAAU
+#define RENDERING_LEVEL  6 // 1: Multi-draw, 2: Instanced, 3: PBR Instanced, 4: IBL_PBR, 5: ShadowMap, 6: TAAU, 7: SSR
 
 #include "ResourceManager.h"
 #include "Platform.h"
 #include "Camera.h"
 
 #include <map>
-
-#if RENDERING_LEVEL < 3
-constexpr int MAX_OBJECTS = 3;
-#else
-constexpr int MAX_OBJECTS = 49;
-#endif
 
 const std::vector<char const*> validationLayers = {
 	"VK_LAYER_KHRONOS_validation"
@@ -133,8 +127,8 @@ struct Renderer {
 	TextureData irradianceCubemapData;
 	TextureData prefilteredEnvMapData;
 	TextureData brdfLutData;
-#elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
-	// Shadow mapping resources (Level 5) + TAAU base (Level 6)
+#elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7
+	// Shadow mapping resources (Level 5) + TAAU base (Level 6) + SSR base (Level 7)
 	vk::raii::DescriptorSetLayout shadowDescriptorSetLayout = nullptr;
 	vk::raii::DescriptorPool      shadowDescriptorPool = nullptr;
 	vk::raii::PipelineLayout      shadowPipelineLayout = nullptr;
@@ -184,12 +178,33 @@ struct Renderer {
 	};
 	std::vector<UiFrameBuffers> uiFrameBuffers;
 #endif
+#if RENDERING_LEVEL == 7
+	// Screen-space reflection resources (Level 7)
+	vk::raii::DescriptorSetLayout ssrDescriptorSetLayout = nullptr;
+	vk::raii::DescriptorPool ssrDescriptorPool = nullptr;
+	vk::raii::PipelineLayout ssrPipelineLayout = nullptr;
+	vk::raii::Pipeline ssrPipeline = nullptr;
+	vk::raii::DescriptorSets ssrDescriptorSets = nullptr;
+	MeshBuffer ssrSceneUboResources;
+	MeshBuffer ssrParamsUboResources;
+	TextureData ssrColorData;
+	vk::ImageLayout ssrColorLayout = vk::ImageLayout::eUndefined;
+	vk::raii::Sampler ssrColorSampler = nullptr;
+	vk::raii::Sampler ssrDepthSampler = nullptr;
+	int ssrDebugMode = 0;
+	int ssrMaxSteps = 64;
+	float ssrMaxRayDistance = 18.0f;
+	float ssrThickness = 0.15f;
+	float ssrStride = 0.25f;
+	float ssrIntensity = 0.55f;
+	bool ssrEnabled = true;
+#endif
 
 	bool framebufferResized = false;
 
 	TextureData depthData;
 	vk::ImageLayout depthImageLayout = vk::ImageLayout::eUndefined;
-#if RENDERING_LEVEL < 3 || RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
+#if RENDERING_LEVEL < 3 || RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7
 	Camera camera = Camera(glm::vec3(0.0f, 0.0f, 5.0f));
 #else
 	Camera camera = Camera(glm::vec3(0.0f, -1.0f, 13.0f));
@@ -331,8 +346,8 @@ struct Renderer {
 			std::cerr << "Failed to create Skybox Pipeline" << std::endl;
 			return false;
 		}
-#elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
-		// Initialize Shadow Mapping rendering
+#elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7
+		// Initialize Shadow Mapping rendering (Level 5/6/7 base)
 		createShadowBuffers();
 		if (!createShadowDescriptorSetLayout()) {
 			std::cerr << "Failed to create Shadow DescriptorSetLayout" << std::endl;
@@ -346,7 +361,6 @@ struct Renderer {
 			std::cerr << "Failed to create ShadowMap resources" << std::endl;
 			return false;
 		}
-		createShadowDescriptorSets();
 		if (!createShadowPipelines()) {
 			std::cerr << "Failed to create Shadow pipelines" << std::endl;
 			return false;
@@ -366,6 +380,26 @@ struct Renderer {
 			std::cerr << "Failed to create depth resources" << std::endl;
 			return false;
 		}
+#if RENDERING_LEVEL == 7
+		// SSR initialization depends on depth image/view
+		if (!createSSRResources()) {
+			std::cerr << "Failed to create SSR resources" << std::endl;
+			return false;
+		}
+		if (!createSSRDescriptorSetLayout()) {
+			std::cerr << "Failed to create SSR DescriptorSetLayout" << std::endl;
+			return false;
+		}
+		if (!createSSRDescriptorPool()) {
+			std::cerr << "Failed to create SSR DescriptorPool" << std::endl;
+			return false;
+		}
+		createSSRDescriptorSets();
+		if (!createSSRPipeline()) {
+			std::cerr << "Failed to create SSR Pipeline" << std::endl;
+			return false;
+		}
+#endif
 		if (!createCommandBuffers()) {
 			std::cerr << "Failed to create command buffers" << std::endl;
 			return false;
@@ -412,12 +446,11 @@ struct Renderer {
 			updatePBRInstanceBuffers(currentFrame);
 #elif RENDERING_LEVEL == 4
 			updateIBLPBRBuffers(currentFrame);
-#elif RENDERING_LEVEL == 5
+#elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
 			updateUIFrame();
 			updateShadowBuffers(currentFrame);
-#elif RENDERING_LEVEL == 6
-			updateUIFrame();
-			updateShadowBuffers(currentFrame);
+#elif RENDERING_LEVEL == 7
+			updateSSRBuffers(currentFrame);
 #endif
 
 			device.resetFences(*inFlightFences[currentFrame]);
@@ -458,10 +491,10 @@ struct Renderer {
 			recreateSwapChain();
 		}
 
-		}
+	}
 
 	void cleanup() {
-#if RENDERING_LEVEL == 5
+#if RENDERING_LEVEL > 5
 		shutdownUI();
 #endif
 		cleanupUBO();
@@ -526,7 +559,7 @@ struct Renderer {
 	void createIBLPBRBuffers();
 	void updateIBLPBRBuffers(uint32_t currentImage);
 
-	// Shadow mapping rendering functions (Level 5)
+	// Shadow mapping rendering functions (Level 5-7)
 	bool createShadowDescriptorSetLayout();
 	bool createShadowDescriptorPool();
 	void createShadowDescriptorSets();
@@ -541,6 +574,15 @@ struct Renderer {
 	void shutdownUI();
 	void updateUIFrame();
 	void recordUI(vk::raii::CommandBuffer& commandBuffer);
+
+	// SSR (Level 7)
+	bool createSSRResources();
+	bool createSSRDescriptorSetLayout();
+	bool createSSRDescriptorPool();
+	void createSSRDescriptorSets();
+	bool createSSRPipeline();
+	void updateSSRBuffers(uint32_t currentImage);
+	void recordSSR(vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex);
 
 
 	bool createSkyboxDescriptorSetLayout();

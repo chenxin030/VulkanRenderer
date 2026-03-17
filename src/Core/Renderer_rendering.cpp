@@ -74,6 +74,13 @@ void Renderer::cleanupSwapChain() {
 	depthData.textureImageMemory = vk::raii::DeviceMemory(nullptr);
 	depthImageLayout = vk::ImageLayout::eUndefined;
 
+#if RENDERING_LEVEL == 7
+	ssrColorData.textureImageView = vk::raii::ImageView(nullptr);
+	ssrColorData.textureImage = vk::raii::Image(nullptr);
+	ssrColorData.textureImageMemory = vk::raii::DeviceMemory(nullptr);
+	ssrColorLayout = vk::ImageLayout::eUndefined;
+#endif
+
 	swapChain = vk::raii::SwapchainKHR(nullptr);
 }
 void Renderer::recreateSwapChain() {
@@ -92,6 +99,10 @@ void Renderer::recreateSwapChain() {
 	createSwapChain();
 	createImageViews();
 	createDepthResources();
+#if RENDERING_LEVEL == 7
+	createSSRResources();
+	createSSRDescriptorSets();
+#endif
 }
 bool Renderer::createImageViews() {
 	try {
@@ -250,6 +261,13 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 	commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
 	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *iblPbrPipelineLayout, 0, *pbrInstanceBufferResources.descriptorSets[currentFrame], nullptr);
 	commandBuffer.drawIndexed(static_cast<uint32_t>(mesh.indices.size()), MAX_OBJECTS, 0, 0, 0);
+#elif RENDERING_LEVEL == 7
+	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *shadowLitPipeline);
+	auto& mesh = resourceManager->meshes[0];
+	commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
+	commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
+	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *shadowPipelineLayout, 0, *shadowInstanceBufferResources.descriptorSets[currentFrame], nullptr);
+	commandBuffer.drawIndexed(static_cast<uint32_t>(mesh.indices.size()), MAX_OBJECTS, 0, 0, 0);
 #elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
 	commandBuffer.endRendering();
 
@@ -337,6 +355,10 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 #endif
 
 	commandBuffer.endRendering();
+
+#if RENDERING_LEVEL == 7
+	recordSSR(commandBuffer, imageIndex);
+#endif
 	// After rendering, transition the swapchain image to PRESENT_SRC
 	transition_image_layout(
 		swapChainImages[imageIndex],
@@ -384,8 +406,11 @@ void Renderer::updateUniformBuffer(uint32_t currentImage) {
 bool Renderer::createDepthResources() {
 	try {
 		vk::Format depthFormat = findDepthFormat();
-
-		createImage(swapChainExtent.width, swapChainExtent.height, 1, depthFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, depthData);
+		vk::ImageUsageFlags depthUsage = vk::ImageUsageFlagBits::eDepthStencilAttachment;
+#if RENDERING_LEVEL == 7
+		depthUsage |= vk::ImageUsageFlagBits::eSampled;
+#endif
+		createImage(swapChainExtent.width, swapChainExtent.height, 1, depthFormat, vk::ImageTiling::eOptimal, depthUsage, vk::MemoryPropertyFlagBits::eDeviceLocal, depthData);
 		depthData.textureImageView = createImageView(depthData.textureImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
 		depthImageLayout = vk::ImageLayout::eUndefined;
 

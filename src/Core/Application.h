@@ -13,8 +13,8 @@ struct Application {
 	Application() : running(true) {}
 	void init() {
 		platform.initWindow();
-		resourceManager.initResource(MAX_OBJECTS);
 		renderer.initialize(&platform, &resourceManager);
+		resourceManager.initResource(renderer.getWorld());
 		renderer.initVulkan();
 		renderer.loadResource();
 #if RENDERING_LEVEL == 1
@@ -26,7 +26,7 @@ struct Application {
 #elif RENDERING_LEVEL == 4
 		renderer.createIBLPBRDescriptorSets();
 		renderer.createSkyboxDescriptorSets();
-#elif RENDERING_LEVEL == 5
+#elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7
 		renderer.createShadowDescriptorSets();
 #endif
 	}

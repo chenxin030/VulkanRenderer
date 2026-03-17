@@ -86,7 +86,7 @@ A lightweight UI panel provides runtime switching and tuning:
 - PCSS Light Size (texels)
 - Three light intensities (Dir / Point / Area)
 
-UI implementation lives in `src/Core/Renderer_instanced.cpp`:
+UI implementation lives in `src/Core/Renderer_Shadow.cpp`:
 
 - `initUI()`
 - `updateUIFrame()`

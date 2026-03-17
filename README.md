@@ -14,6 +14,7 @@ Chinese version: [README.zh-CN.md](README.zh-CN.md)
 - **Level 4 (IBL PBR + Skybox)**: HDR IBL precomputation + IBL PBR + skybox.
 - **Level 5 (Shadow / PCF / PCSS)**: shadow map + PCF + PCSS + adjustable lights + runtime UI.
 - **Level 6 (TAAU)**: TAAU test path (ghosting / thin-line shimmer / fast motion / edge & high-frequency stress).
+- **Level 7 (SSR)**: screen-space reflections (planned path).
 
 ## Quick Start (Windows / Visual Studio)
 

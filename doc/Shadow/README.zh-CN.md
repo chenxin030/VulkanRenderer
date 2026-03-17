@@ -86,7 +86,7 @@ UI 面板支持运行时切换与调参：
 - PCSS Light Size（texels）
 - 三种光源强度（Dir / Point / Area）
 
-UI 实现位置：`src/Core/Renderer_instanced.cpp`
+UI 实现位置：`src/Core/Renderer_Shadow.cpp`
 
 - `initUI()`
 - `updateUIFrame()`

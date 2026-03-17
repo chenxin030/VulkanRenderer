@@ -207,7 +207,7 @@ void Renderer::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuff
 
 void Renderer::loadModels() {
     auto& meshes = resourceManager->meshes;
-#if RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
+#if RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7
     generateCube(meshes[0]);
     createVertexBuffer(meshes[0]);
     createIndexBuffer(meshes[0]);
@@ -215,7 +215,7 @@ void Renderer::loadModels() {
     generateSphere(meshes[1], 1.0f, 64);
     createVertexBuffer(meshes[1]);
     createIndexBuffer(meshes[1]);
-#elif RENDERING_LEVEL >= 3
+#elif RENDERING_LEVEL == 3 || RENDERING_LEVEL == 4
     generateSphere(meshes[0], 1.0f, 100);
     createVertexBuffer(meshes[0]);
     createIndexBuffer(meshes[0]);
