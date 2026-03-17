@@ -2,6 +2,11 @@
 
 一个使用 C++ / Vulkan-Hpp RAII 编写的小型 Vulkan 渲染器项目，通过 `RENDERING_LEVEL` 切换不同的渲染路径。
 
+## 亮点
+
+- **SSR（Level 7）**：屏幕空间反射（见 [doc/SSR/README.zh-CN.md](doc/SSR/README.zh-CN.md)）。
+- **ECS**：轻量实体组件系统的渲染场景组织（见 [doc/ECS/README.zh-CN.md](doc/ECS/README.zh-CN.md)）。
+
 English version: [README.md](README.md)
 
 ## 渲染级别
@@ -14,7 +19,7 @@ English version: [README.md](README.md)
 - **Level 4 (IBL PBR + Skybox)**：HDR IBL 预计算 + IBL PBR + 天空盒。
 - **Level 5 (Shadow / PCF / PCSS)**：ShadowMap + PCF + PCSS + 可调光源与运行时 UI（当前默认）。
 - **Level 6 (TAAU)**：TAAU 测试路径（拖影 / 细线闪烁 / 快速运动 / 边缘与高频压力测试）。
-- **Level 7（SSR）**：屏幕空间反射（计划路径）
+- **Level 7（SSR）**：屏幕空间反射（见 [doc/SSR/README.zh-CN.md](doc/SSR/README.zh-CN.md)）
 
 ## 快速开始（Windows / Visual Studio）
 
@@ -58,4 +63,6 @@ cmake --build build_x64 --config Debug -j
 - PBR / IBL（Level 3/4）：[doc/PBR/README.zh-CN.md](doc/PBR/README.zh-CN.md)
 - 阴影 / PCF / PCSS / 光源与 UI（Level 5）：[doc/Shadow/README.zh-CN.md](doc/Shadow/README.zh-CN.md)
 - TAAU（Level 6）：[doc/TAAU/README.zh-CN.md](doc/TAAU/README.zh-CN.md)
+- SSR（Level 7）：[doc/SSR/README.zh-CN.md](doc/SSR/README.zh-CN.md)
+- ECS 概述：[doc/ECS/README.zh-CN.md](doc/ECS/README.zh-CN.md)
 

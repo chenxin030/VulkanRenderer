@@ -1,6 +1,8 @@
 # TAAU (Level 6)
 
-Back to docs index: [README.md](../../README.md)
+Back to root: [README.md](../../README.md)
+
+Chinese version: [README.zh-CN.md](README.zh-CN.md)
 
 This level provides a **TAAU test path** built on top of the existing shadow rendering pipeline. It focuses on exposing typical temporal accumulation weaknesses so you can iterate on TAAU heuristics without changing the whole renderer.
 

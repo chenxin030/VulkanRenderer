@@ -1,6 +1,8 @@
 # TAAU（Level 6）
 
-返回文档目录：[README.zh-CN.md](../../README.zh-CN.md)
+返回目录：[README.zh-CN.md](../../README.zh-CN.md)
+
+英文版本：[README.md](README.md)
 
 该 Level 提供 **TAAU 测试路径**，复用现有的 shadow 渲染管线，用于暴露时域累积常见弱点，便于在不改动整体架构的情况下迭代 TAAU 策略。
 

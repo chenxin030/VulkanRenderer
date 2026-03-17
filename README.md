@@ -2,6 +2,11 @@
 
 A small Vulkan renderer project (C++ / Vulkan-Hpp RAII) that demonstrates multiple rendering paths controlled by `RENDERING_LEVEL`.
 
+## Highlights
+
+- **SSR (Level 7)**: screen-space reflections composited after lighting (see [doc/SSR/README.md](doc/SSR/README.md)).
+- **ECS**: lightweight entity/component scene organization for rendering (see [doc/ECS/README.md](doc/ECS/README.md)).
+
 Chinese version: [README.zh-CN.md](README.zh-CN.md)
 
 ## Rendering Levels
@@ -14,7 +19,7 @@ Chinese version: [README.zh-CN.md](README.zh-CN.md)
 - **Level 4 (IBL PBR + Skybox)**: HDR IBL precomputation + IBL PBR + skybox.
 - **Level 5 (Shadow / PCF / PCSS)**: shadow map + PCF + PCSS + adjustable lights + runtime UI.
 - **Level 6 (TAAU)**: TAAU test path (ghosting / thin-line shimmer / fast motion / edge & high-frequency stress).
-- **Level 7 (SSR)**: screen-space reflections (planned path).
+- **Level 7 (SSR)**: screen-space reflections (see [doc/SSR/README.md](doc/SSR/README.md)).
 
 ## Quick Start (Windows / Visual Studio)
 
@@ -58,3 +63,5 @@ All `.slang` files under `shaders/` are compiled to SPIR-V during the build and 
 - PBR / IBL (Level 3/4): [doc/PBR/README.md](doc/PBR/README.md)
 - Shadow / PCF / PCSS / lights & UI (Level 5): [doc/Shadow/README.md](doc/Shadow/README.md)
 - TAAU (Level 6): [doc/TAAU/README.md](doc/TAAU/README.md)
+- SSR (Level 7): [doc/SSR/README.md](doc/SSR/README.md)
+- ECS overview: [doc/ECS/README.md](doc/ECS/README.md)
