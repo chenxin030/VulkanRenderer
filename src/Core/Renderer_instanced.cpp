@@ -96,7 +96,7 @@ void Renderer::createInstancedDescriptorSets() {
         vk::DescriptorBufferInfo instanceBufferInfo{
             .buffer = *instancedBufferResources.Buffers[i],
             .offset = 0,
-            .range = sizeof(InstanceData) * MAX_OBJECTS
+            .range = sizeof(InstanceData) * maxInstances
         };
 
         vk::DescriptorImageInfo imageInfo{
@@ -216,7 +216,10 @@ bool Renderer::createInstancedPipeline() {
 
 void Renderer::createInstancedBuffers() {
     createUniformBuffers(globalUboResources, sizeof(GlobalUBO));
-    createStorageBuffers(instancedBufferResources, sizeof(InstanceData) * MAX_OBJECTS);
+    if (scene != nullptr) {
+        maxInstances = scene->getMaxInstances();
+    }
+    createStorageBuffers(instancedBufferResources, sizeof(InstanceData) * maxInstances);
 }
 
 void Renderer::updateInstancedBuffers(uint32_t currentImage) {
@@ -232,14 +235,30 @@ void Renderer::updateInstancedBuffers(uint32_t currentImage) {
 
     // Instance Data
     float deltaTime = platform->frameTimer;
-    std::vector<InstanceData> instanceData(MAX_OBJECTS);
-    for (uint32_t i = 0; i < MAX_OBJECTS; ++i) {
-        auto& transform = resourceManager->transforms[i];
-        const float rotationSpeed = 0.5f;
-        transform.rotation.y += rotationSpeed * deltaTime;
-        instanceData[i].model = resourceManager->transforms[i].getModelMatrix();
+    if (scene == nullptr) {
+        return;
     }
-    memcpy(instancedBufferResources.BuffersMapped[currentImage], instanceData.data(), sizeof(InstanceData) * MAX_OBJECTS);
+
+    std::vector<glm::mat4> models;
+    scene->world.collectModels(MeshTag::Cube, models, maxInstances);
+    if (models.empty()) {
+        return;
+    }
+
+    std::vector<InstanceData> instanceData;
+    instanceData.reserve(models.size());
+    for (const auto& model : models) {
+        instanceData.push_back(InstanceData{ model });
+    }
+
+    for (auto& instance : instanceData) {
+        const float rotationSpeed = 0.5f;
+        glm::mat4 model = instance.model;
+        model = glm::rotate(model, rotationSpeed * deltaTime, glm::vec3(0.0f, 1.0f, 0.0f));
+        instance.model = model;
+    }
+
+    memcpy(instancedBufferResources.BuffersMapped[currentImage], instanceData.data(), sizeof(InstanceData) * instanceData.size());
 }
 
 #endif

@@ -86,7 +86,7 @@ void Renderer::createPBRDescriptorSets() {
 		vk::DescriptorBufferInfo instanceBufferInfo{
 			.buffer = *pbrInstanceBufferResources.Buffers[i],
 			.offset = 0,
-			.range = sizeof(PBRInstanceData) * MAX_OBJECTS
+			.range = sizeof(PBRInstanceData) * maxInstances
 		};
 
 		vk::DescriptorBufferInfo lightBufferInfo{
@@ -207,7 +207,10 @@ bool Renderer::createPBRPipeline() {
 void Renderer::createPBRBuffers() {
 	createUniformBuffers(sceneUboResources, sizeof(SceneUBO));
 	createUniformBuffers(lightUboResources, sizeof(LightUBO));
-	createStorageBuffers(pbrInstanceBufferResources, sizeof(PBRInstanceData) * MAX_OBJECTS);
+	if (scene != nullptr) {
+		maxInstances = scene->getMaxInstances();
+	}
+	createStorageBuffers(pbrInstanceBufferResources, sizeof(PBRInstanceData) * maxInstances);
 }
 
 void Renderer::updatePBRInstanceBuffers(uint32_t currentImage) {
@@ -222,22 +225,23 @@ void Renderer::updatePBRInstanceBuffers(uint32_t currentImage) {
 	sceneUbo.projection[1][1] *= -1;
 	memcpy(sceneUboResources.BuffersMapped[currentImage], &sceneUbo, sizeof(sceneUbo));
 
-	// Instance Data (7*7 grid)
-	std::vector<PBRInstanceData> instanceData(MAX_OBJECTS);
-	uint32_t gridSize = sqrt(MAX_OBJECTS);
-	for (uint32_t y = 0; y < gridSize; ++y) {
-		for (uint32_t x = 0; x < gridSize; ++x) {
-			uint32_t index = y * gridSize + x;
-			glm::mat4 model = glm::mat4(1.0f);
-			model = glm::translate(model, glm::vec3(float(x - (gridSize / 2.0f)) * 1.5f, float(y - (gridSize / 2.0f)) * 1.5f, 0.0f));
-			model = glm::scale(model, glm::vec3(0.7f));
-			instanceData[index].model = model;
-			instanceData[index].metallic = glm::clamp((float)x / (float)(gridSize - 1), 0.1f, 1.0f);
-			instanceData[index].roughness = glm::clamp((float)y / (float)(gridSize - 1), 0.05f, 1.0f);
-			instanceData[index].color = glm::vec3(1.0f, 0.765557f, 0.336057f);  // gold
-		}
+	if (scene == nullptr || scene->getActiveInstanceCount() == 0) {
+		return;
 	}
-	memcpy(pbrInstanceBufferResources.BuffersMapped[currentImage], instanceData.data(), sizeof(PBRInstanceData) * MAX_OBJECTS);
+
+	std::vector<PBRInstance> ecsInstances;
+	scene->world.collectPBRInstances(MeshTag::Sphere, ecsInstances, maxInstances);
+	if (ecsInstances.empty()) {
+		return;
+	}
+
+	std::vector<PBRInstanceData> instanceData;
+	instanceData.reserve(ecsInstances.size());
+	for (const auto& instance : ecsInstances) {
+		instanceData.push_back(PBRInstanceData{ instance.model, instance.metallic, instance.roughness, instance.color });
+	}
+
+	memcpy(pbrInstanceBufferResources.BuffersMapped[currentImage], instanceData.data(), sizeof(PBRInstanceData) * instanceData.size());
 
 	// Light Animation
 	static auto startTime = std::chrono::high_resolution_clock::now();
@@ -327,10 +331,10 @@ bool Renderer::createIBLPBRDescriptorSetLayout()
 			{.binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment },	// sceneUbo
 			{.binding = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment },	// instanceData
 			{.binding = 2, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },										// lightUbo
-			{.binding = 3, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },								// irradianceCubemapData（irradiance cubemap，用于 diffuse IBL）
-			{.binding = 4, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },								// prefilteredMapSampler （prefiltered env cubemap，用于 specular IBL）
-			{.binding = 5, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },								// samplerBRDFLUT （2D BRDF LUT，用于 specular 分项的 DFG）	
-			{.binding = 6, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },										// paramsUbo （曝光/伽马）
+			{.binding = 3, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },								// irradianceCubemapData??irradiance cubemap?????? diffuse IBL??
+			{.binding = 4, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },								// prefilteredMapSampler ??prefiltered env cubemap?????? specular IBL??
+			{.binding = 5, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },								// samplerBRDFLUT ??2D BRDF LUT?????? specular ????? DFG??	
+			{.binding = 6, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },										// paramsUbo ?????/?????
 		};
 
 		vk::DescriptorSetLayoutCreateInfo layoutInfo{
@@ -389,7 +393,7 @@ void Renderer::createIBLPBRDescriptorSets()
 	for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
 	{
 		vk::DescriptorBufferInfo sceneBufferInfo{ .buffer = *sceneUboResources.Buffers[i], .offset = 0, .range = sizeof(SceneUBO) };
-		vk::DescriptorBufferInfo instanceBufferInfo{ .buffer = *pbrInstanceBufferResources.Buffers[i], .offset = 0, .range = sizeof(PBRInstanceData) * MAX_OBJECTS };
+		vk::DescriptorBufferInfo instanceBufferInfo{ .buffer = *pbrInstanceBufferResources.Buffers[i], .offset = 0, .range = sizeof(PBRInstanceData) * maxInstances };
 		vk::DescriptorBufferInfo lightBufferInfo{ .buffer = *lightUboResources.Buffers[i], .offset = 0, .range = sizeof(LightUBO) };
 		vk::DescriptorBufferInfo paramsBufferInfo{ .buffer = *paramsUboResources.Buffers[i], .offset = 0, .range = sizeof(ParamsUBO) };
 
@@ -505,7 +509,10 @@ void Renderer::createIBLPBRBuffers()
 	createUniformBuffers(lightUboResources, sizeof(LightUBO));
 	createUniformBuffers(paramsUboResources, sizeof(ParamsUBO));
 	createUniformBuffers(skyboxUboResources, sizeof(SkyboxUBO));
-	createStorageBuffers(pbrInstanceBufferResources, sizeof(PBRInstanceData) * MAX_OBJECTS);
+	if (scene != nullptr) {
+		maxInstances = scene->getMaxInstances();
+	}
+	createStorageBuffers(pbrInstanceBufferResources, sizeof(PBRInstanceData) * maxInstances);
 }
 
 void Renderer::updateIBLPBRBuffers(uint32_t currentImage)
@@ -520,21 +527,22 @@ void Renderer::updateIBLPBRBuffers(uint32_t currentImage)
 	sceneUbo.projection[1][1] *= -1;
 	memcpy(sceneUboResources.BuffersMapped[currentImage], &sceneUbo, sizeof(sceneUbo));
 
-	std::vector<PBRInstanceData> instanceData(MAX_OBJECTS);
-	uint32_t gridSize = static_cast<uint32_t>(sqrt(MAX_OBJECTS));
-	for (uint32_t y = 0; y < gridSize; ++y) {
-		for (uint32_t x = 0; x < gridSize; ++x) {
-			uint32_t index = y * gridSize + x;
-			glm::mat4 model = glm::mat4(1.0f);
-			model = glm::translate(model, glm::vec3(float(x - (gridSize / 2.0f)) * 1.5f, float(y - (gridSize / 2.0f)) * 1.5f, 0.0f));
-			model = glm::scale(model, glm::vec3(0.7f));
-			instanceData[index].model = model;
-			instanceData[index].metallic = glm::clamp((float)x / (float)(gridSize - 1), 0.1f, 1.0f);
-			instanceData[index].roughness = glm::clamp((float)y / (float)(gridSize - 1), 0.05f, 1.0f);
-			instanceData[index].color = glm::vec3(1.0f, 0.765557f, 0.336057f);
-		}
+	if (scene == nullptr || scene->getActiveInstanceCount() == 0) {
+		return;
 	}
-	memcpy(pbrInstanceBufferResources.BuffersMapped[currentImage], instanceData.data(), sizeof(PBRInstanceData) * MAX_OBJECTS);
+
+	std::vector<PBRInstance> ecsInstances;
+	scene->world.collectPBRInstances(MeshTag::Sphere, ecsInstances, maxInstances);
+	if (ecsInstances.empty()) {
+		return;
+	}
+
+	std::vector<PBRInstanceData> instanceData;
+	instanceData.reserve(ecsInstances.size());
+	for (const auto& instance : ecsInstances) {
+		instanceData.push_back(PBRInstanceData{ instance.model, instance.metallic, instance.roughness, instance.color });
+	}
+	memcpy(pbrInstanceBufferResources.BuffersMapped[currentImage], instanceData.data(), sizeof(PBRInstanceData) * instanceData.size());
 
 	static auto startTime = std::chrono::high_resolution_clock::now();
 	auto currentTime = std::chrono::high_resolution_clock::now();
@@ -719,27 +727,27 @@ bool Renderer::createSkyboxPipeline()
 }
 
 /**
-* 生成基于图像的光照（IBL）所需的资源
+* ???????????????IBL??????????
 *
-* IBL 使用预计算的环境贴图来实现基于图像的光照，包括：
-* 1. 辐照度图（Irradiance Map）：用于漫反射光照，是环境贴图的卷积结果
-* 2. 预过滤环境图（Prefiltered Environment Map）：用于镜面反射光照，根据不同粗糙度进行卷积
-* 3. BRDF 查找表（BRDF LUT）：用于镜面反射的积分近似
+* IBL ?????????????????????????????????????
+* 1. ????????Irradiance Map??????????????????????????????????
+* 2. ???????????Prefiltered Environment Map???????????X???????????????????????
+* 3. BRDF ???????BRDF LUT???????????X?????????
 *
-* 执行步骤：
-*  将加载的 HDR 环境贴图转换为立方体贴图
-*  生成辐照度立方体贴图（漫反射部分）
-*  生成预过滤环境立方体贴图（镜面反射部分，带 mipmap 层级）
-*  生成 BRDF 查找纹理
-*  创建对应的图像视图和采样器
+* ???????s
+*  ??????? HDR ????????????????????
+*  ????????????????????????????
+*  ???????????????????????????X??????? mipmap ????
+*  ???? BRDF ????????
+*  ??????????????????????
 */
 void Renderer::generateIBLResources()
 {
-	// TODO: 实现 IBL 资源生成逻辑
-	// 1. 将 HDR 环境贴图转换为立方体贴图
-	// 2. 生成辐照度图（漫反射 IBL）
-	// 3. 生成预过滤环境图（镜面反射 IBL，不同粗糙度）
-	// 4. 生成 BRDF LUT
+	// TODO: ??? IBL ??????????
+	// 1. ?? HDR ????????????????????
+	// 2. ????????????????? IBL??
+	// 3. ???????????????????X?? IBL??????????
+	// 4. ???? BRDF LUT
 	if (resourceManager->textures.empty())
 	{
 		throw std::runtime_error("HDR texture not loaded (resourceManager->textures is empty)");
@@ -752,8 +760,8 @@ void Renderer::generateIBLResources()
 	const uint32_t prefilterMipLevels = static_cast<uint32_t>(std::floor(std::log2(prefilterDim))) + 1u;
 	const uint32_t brdfDim = 512u;
 
-	// 3个cube(vk::ImageCreateFlagBits::eCubeCompatible)
-	// 6个面(arrayLayers = 6)
+	// 3??cube(vk::ImageCreateFlagBits::eCubeCompatible)
+	// 6????(arrayLayers = 6)
 	createImage(envDim, envDim, 1, 6, vk::ImageCreateFlagBits::eCubeCompatible, envFormat, vk::ImageTiling::eOptimal,
 		vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, envCubemapData);
 	createImage(irradianceDim, irradianceDim, 1, 6, vk::ImageCreateFlagBits::eCubeCompatible, envFormat, vk::ImageTiling::eOptimal,
@@ -798,8 +806,8 @@ void Renderer::generateIBLResources()
 		.mipLodBias = 0.0f,
 		.anisotropyEnable = vk::False,
 		.maxAnisotropy = 1.0f,
-		.compareEnable = vk::False,			// 禁用比较模式提高性能
-		.compareOp = vk::CompareOp::eAlways,// 都不是深度纹理，不需要比较
+		.compareEnable = vk::False,			// ???????????????
+		.compareOp = vk::CompareOp::eAlways,// ???????????????????????
 		.minLod = 0.0f,
 		.maxLod = static_cast<float>(prefilterMipLevels)
 	};
@@ -838,10 +846,10 @@ void Renderer::generateIBLResources()
 	vk::raii::ShaderModule prefilterModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "prefilterenvmap.spv"));
 	vk::raii::ShaderModule brdfModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "genbrdflut.spv"));
 
-	// 步骤1: 将 HDR 纹理转换为立方体贴图
-	// - 创建 6 个面的立方体贴图图像
-	// - 为每个面设置渲染目标
-	// - 使用专门的着色器将等距柱状图 (equirectangular) 映射到立方体
+	// ????1: ?? HDR ?????????????????
+	// - ???? 6 ?????????????????
+	// - ????????????????
+	// - ????????????????????? (equirectangular) ?????????
 	auto bindingDescription = Vertex::getBindingDescription();
 	std::array<vk::VertexInputAttributeDescription, 1> posOnlyAttributeDescriptions = {
 		vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos))
@@ -872,7 +880,7 @@ void Renderer::generateIBLResources()
 		.pPushConstantRanges = &equirectPushConstantRange
 		});
 
-	// 把hdr文件放进描述符
+	// ??hdr????????????
 	vk::DescriptorPoolSize equirectPoolSize{ .type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1 };
 	vk::raii::DescriptorPool equirectPool(device, vk::DescriptorPoolCreateInfo{
 		.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
@@ -906,16 +914,16 @@ void Renderer::generateIBLResources()
 	};
 	vk::raii::Pipeline equirectPipeline(device, nullptr, equirectPipelineInfo.get<vk::GraphicsPipelineCreateInfo>());
 
-	// 步骤2: 生成辐照度贴图 (Irradiance Map)
-	// - 创建低分辨率立方体贴图 (通常 32x32)
-	// - 使用卷积着色器计算漫反射辐照度
-	// 步骤3: 生成预过滤环境贴图 (Prefiltered Environment Map)
-	// - 创建多级渐远纹理 (mip chain)
-	// - 使用重要性采样 (importance sampling) 生成不同粗糙度级别的预过滤环境
+	// ????2: ??????????? (Irradiance Map)
+	// - ??????????????????? (??? 32x32)
+	// - ?????????????????????????
+	// ????3: ??????????????? (Prefiltered Environment Map)
+	// - ????????????? (mip chain)
+	// - ??????????? (importance sampling) ??????????????????????
 	vk::DescriptorSetLayoutBinding cubeBinding{ .binding = 0, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment };
 	vk::raii::DescriptorSetLayout cubeSetLayout(device, vk::DescriptorSetLayoutCreateInfo{ .bindingCount = 1, .pBindings = &cubeBinding });
 
-	// 同一个贴图，不同的pushConstant
+	// ??????????????pushConstant
 	vk::PushConstantRange irradiancePushConstantRange{ vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, sizeof(PushConstIrradiance) };
 	vk::raii::PipelineLayout irradiancePipelineLayout(device, vk::PipelineLayoutCreateInfo{
 		.setLayoutCount = 1,
@@ -931,22 +939,22 @@ void Renderer::generateIBLResources()
 		.pPushConstantRanges = &prefilterPushConstantRange
 		});
 
-	// 因为同一个贴图，所以描述符分配2个一样的
+	// ??????????????????????????2???????
 	vk::DescriptorPoolSize cubePoolSize{ .type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 2 };
-	// .maxSets = 2: 最多分配2个描述符集
+	// .maxSets = 2: ??????2??????????
 	vk::raii::DescriptorPool cubePool(device, vk::DescriptorPoolCreateInfo{
 		.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
 		.maxSets = 2,
 		.poolSizeCount = 1,
 		.pPoolSizes = &cubePoolSize
 		});
-	// 分配2个描述符集（都使用相同的布局）
+	// ????2??????????????????????????
 	std::array<vk::DescriptorSetLayout, 2> cubeLayouts = { *cubeSetLayout, *cubeSetLayout };
 	vk::raii::DescriptorSets cubeSets(device, vk::DescriptorSetAllocateInfo{ .descriptorPool = *cubePool, .descriptorSetCount = 2, .pSetLayouts = cubeLayouts.data() });
-	// 2个相同的描述符集：辐照度图生成时使用 cubeSets[0]，预过滤图生成时使用 cubeSets[1]  
+	// 2??????????????????????????????? cubeSets[0]???????????????? cubeSets[1]  
 	vk::DescriptorImageInfo envCubeInfo{ .sampler = envCubemapData.textureSampler, .imageView = envCubemapData.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
 	vk::DescriptorImageInfo envCubeInfo2{ .sampler = envCubemapData.textureSampler, .imageView = envCubemapData.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
-	// 两个描述符集都绑定到同一个环境立方体贴图
+	// ??????????????????????????????????
 	device.updateDescriptorSets(vk::WriteDescriptorSet{ .dstSet = *cubeSets[0], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &envCubeInfo }, nullptr);
 	device.updateDescriptorSets(vk::WriteDescriptorSet{ .dstSet = *cubeSets[1], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &envCubeInfo2 }, nullptr);
 
@@ -1019,7 +1027,7 @@ void Renderer::generateIBLResources()
 
 	vk::raii::Pipeline brdfPipeline(device, nullptr, brdfPipelineInfo.get<vk::GraphicsPipelineCreateInfo>());
 
-	// 步骤1: 将 HDR 纹理转换为立方体贴图
+	// ????1: ?? HDR ?????????????????
 	glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
 	captureProjection[1][1] *= -1;
 	std::array<glm::mat4, 6> captureViews = {
@@ -1037,7 +1045,7 @@ void Renderer::generateIBLResources()
 			.image = envCubemapData.textureImage,
 			.viewType = vk::ImageViewType::e2D,
 			.format = envFormat,
-			.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, face, 1 }// 指定具体的面索引 (face) 和 mip 级别 (0)
+			.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, face, 1 }// ?????????????? (face) ?? mip ???? (0)
 			});
 
 		vk::RenderingAttachmentInfo colorAttachment{
@@ -1060,7 +1068,7 @@ void Renderer::generateIBLResources()
 		cmd->bindPipeline(vk::PipelineBindPoint::eGraphics, *equirectPipeline);
 		cmd->bindVertexBuffers(0, *cubeMesh.vertexBuffer, { 0 });
 		cmd->bindIndexBuffer(*cubeMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(cubeMesh.indices)::value_type>::value);
-		// 传入hrd所在的描述符
+		// ????hrd???????????
 		cmd->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *equirectPipelineLayout, 0, *equirectSet, {});
 
 		PushConstMat4 pc{ .mvp = captureProjection * captureViews[face] };

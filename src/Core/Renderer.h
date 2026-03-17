@@ -1,12 +1,13 @@
 #pragma once
 
-#define RENDERING_LEVEL  6 // 1: Multi-draw, 2: Instanced, 3: PBR Instanced, 4: IBL_PBR, 5: ShadowMap, 6: TAAU, 7: SSR
-
+#include "RenderConfig.h"
 #include "ResourceManager.h"
+#include "Scene.h"
 #include "Platform.h"
 #include "Camera.h"
 
 #include <map>
+#include <vector>
 
 const std::vector<char const*> validationLayers = {
 	"VK_LAYER_KHRONOS_validation"
@@ -144,8 +145,6 @@ struct Renderer {
 	vk::Extent2D shadowMapExtent{ 2048u, 2048u };
 	vk::ImageLayout shadowMapLayout = vk::ImageLayout::eUndefined;
 
-	uint32_t cubeInstanceCount = 0;
-	uint32_t sphereInstanceCount = 0;
 
 	int shadowFilterMode = 2;
 	float pcfRadiusTexels = 2.0f;
@@ -179,7 +178,7 @@ struct Renderer {
 	std::vector<UiFrameBuffers> uiFrameBuffers;
 #endif
 #if RENDERING_LEVEL == 7
-	// Screen-space reflection resources (Level 7)
+	// Screen-space reflection resources
 	vk::raii::DescriptorSetLayout ssrDescriptorSetLayout = nullptr;
 	vk::raii::DescriptorPool ssrDescriptorPool = nullptr;
 	vk::raii::PipelineLayout ssrPipelineLayout = nullptr;
@@ -191,12 +190,11 @@ struct Renderer {
 	vk::ImageLayout ssrColorLayout = vk::ImageLayout::eUndefined;
 	vk::raii::Sampler ssrColorSampler = nullptr;
 	vk::raii::Sampler ssrDepthSampler = nullptr;
-	int ssrDebugMode = 0;
 	int ssrMaxSteps = 64;
-	float ssrMaxRayDistance = 18.0f;
-	float ssrThickness = 0.15f;
+	float ssrMaxRayDistance = 16.0f;
+	float ssrThickness = 0.12f;
 	float ssrStride = 0.25f;
-	float ssrIntensity = 0.55f;
+	float ssrIntensity = 0.5f;
 	bool ssrEnabled = true;
 #endif
 
@@ -210,9 +208,11 @@ struct Renderer {
 	Camera camera = Camera(glm::vec3(0.0f, -1.0f, 13.0f));
 #endif
 
-	void initialize(Platform* _platform, ResourceManager* _resourceManager) {
+	void initialize(Platform* _platform, ResourceManager* _resourceManager, Scene* _scene) {
 		platform = _platform;
 		resourceManager = _resourceManager;
+		scene = _scene;
+		maxInstances = _scene ? _scene->getMaxInstances() : 0;
 
 		platform->resizeCallback = [this](int width, int height) {
 			framebufferResized = true;
@@ -274,8 +274,9 @@ struct Renderer {
 			return false;
 		}
 #if RENDERING_LEVEL == 1
+		const uint32_t instanceCount = scene ? scene->getActiveInstanceCount() : 0;
 		for (auto& meshUniformBuffer : resourceManager->meshUniformBuffer) {
-			createUniformBuffers(meshUniformBuffer, sizeof(MVP) * MAX_OBJECTS);
+			createUniformBuffers(meshUniformBuffer, sizeof(MVP) * instanceCount);
 		}
 		if (!createDescriptorSetLayout()) {
 			std::cerr << "Failed to create descriptor set layout" << std::endl;
@@ -370,7 +371,7 @@ struct Renderer {
 			std::cerr << "Failed to create command pool" << std::endl;
 			return false;
 		}
-#if RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
+#if RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7
 		if (!initUI()) {
 			std::cerr << "Failed to init UI" << std::endl;
 			return false;
@@ -381,7 +382,6 @@ struct Renderer {
 			return false;
 		}
 #if RENDERING_LEVEL == 7
-		// SSR initialization depends on depth image/view
 		if (!createSSRResources()) {
 			std::cerr << "Failed to create SSR resources" << std::endl;
 			return false;
@@ -446,10 +446,11 @@ struct Renderer {
 			updatePBRInstanceBuffers(currentFrame);
 #elif RENDERING_LEVEL == 4
 			updateIBLPBRBuffers(currentFrame);
-#elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
+#elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7
 			updateUIFrame();
 			updateShadowBuffers(currentFrame);
-#elif RENDERING_LEVEL == 7
+#endif
+#if RENDERING_LEVEL == 7
 			updateSSRBuffers(currentFrame);
 #endif
 
@@ -583,7 +584,7 @@ struct Renderer {
 	bool createSSRPipeline();
 	void updateSSRBuffers(uint32_t currentImage);
 	void recordSSR(vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex);
-
+	void updateSSRUI();
 
 	bool createSkyboxDescriptorSetLayout();
 	bool createSkyboxDescriptorPool();
@@ -678,5 +679,7 @@ struct Renderer {
 
 	Platform* platform;
 	ResourceManager* resourceManager;
+	Scene* scene = nullptr;
+	uint32_t maxInstances = 0;
 
 };

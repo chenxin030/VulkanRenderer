@@ -1,7 +1,7 @@
 #include "Renderer.h"
 #include <imgui.h>
 
-
+#if RENDERING_LEVEL >= 5
 bool Renderer::initUI()
 {
     if (!uiEnabled)
@@ -241,6 +241,9 @@ void Renderer::updateUIFrame()
 #if RENDERING_LEVEL == 6
     updateTAAUUI();
 #endif
+#if RENDERING_LEVEL == 7
+    updateSSRUI();
+#endif
 
     ImGui::Begin("Shadows & Lights");
     const char* modes[] = { "Hard", "PCF", "PCSS" };
@@ -375,3 +378,4 @@ void Renderer::recordUI(vk::raii::CommandBuffer& commandBuffer)
         globalVertexOffset += cmdList->VtxBuffer.Size;
     }
 }
+#endif

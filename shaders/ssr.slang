@@ -2,16 +2,16 @@ struct SceneUBO
 {
     float4x4 projection;
     float4x4 view;
-    float3 camPos;
+    float4x4 invProjection;
+    float4 cameraPosNear;
+    float4 cameraFarPadding;
 };
 [[vk::binding(0, 0)]]
 ConstantBuffer<SceneUBO> sceneUbo;
 
-// Current frame depth (normalized device depth 0..1, Vulkan style)
 [[vk::binding(1, 0)]]
 Sampler2D depthTex;
 
-// Current frame color (swapchain color after lighting pass)
 [[vk::binding(2, 0)]]
 Sampler2D colorTex;
 
@@ -23,7 +23,7 @@ struct SSRParams
     float intensity;
 
     float2 invResolution;
-    int debugMode; // 0=off, 1=mask
+    int debugMode;
     int maxSteps;
     float padding0;
 };
@@ -40,7 +40,6 @@ struct VSOut
 VSOut vertMain(uint vertexId : SV_VertexID)
 {
     VSOut o;
-    // Fullscreen triangle (flip Y for Vulkan)
     float2 pos;
     pos.x = (vertexId == 2) ? 3.0 : -1.0;
     pos.y = (vertexId == 1) ? -3.0 : 1.0;
@@ -50,35 +49,15 @@ VSOut vertMain(uint vertexId : SV_VertexID)
     return o;
 }
 
-static float linearizeDepth(float z, float nearZ, float farZ)
-{
-    // Vulkan NDC depth is 0..1
-    return (nearZ * farZ) / (farZ + z * (nearZ - farZ));
-}
-
 static float3 reconstructViewPos(float2 uv, float depth)
 {
-    // Reconstruct view position using inverse projection derived from projection matrix.
-    // NOTE: This is an approximation: we solve clip->view using projection components.
-    float4x4 P = sceneUbo.projection;
-    float x = uv.x * 2.0 - 1.0;
-    float y = uv.y * 2.0 - 1.0;
-
-    // For a standard perspective matrix:
-    // clip.x = view.x * P[0][0]
-    // clip.y = view.y * P[1][1]
-    // clip.z = view.z * P[2][2] + P[3][2]
-    // clip.w = view.z
-    // NDC = clip/clip.w
-    float viewZ = P[3][2] / (depth - P[2][2]);
-    float viewX = x * viewZ / P[0][0];
-    float viewY = y * viewZ / P[1][1];
-    return float3(viewX, viewY, viewZ);
+    float4 clip = float4(uv * 2.0 - 1.0, depth, 1.0);
+    float4 view = mul(sceneUbo.invProjection, clip);
+    return view.xyz / max(view.w, 1e-6);
 }
 
 static float3 estimateNormal(float2 uv)
 {
-    // Derive a normal from depth gradients in view space (cheap, noisy but ok for Level 7 baseline)
     float2 texel = ssrParams.invResolution;
 
     float dC = depthTex.Sample(uv).x;
@@ -97,41 +76,58 @@ static float3 estimateNormal(float2 uv)
 static float2 projectToUV(float3 viewPos)
 {
     float4 clip = mul(sceneUbo.projection, float4(viewPos, 1.0));
-    float2 ndc = clip.xy / max(clip.w, 1e-5);
+    float2 ndc = clip.xy / max(clip.w, 1e-6);
     return ndc * 0.5 + 0.5;
 }
 
-static float raymarchSSR(float3 originVS, float3 dirVS, out float2 hitUV)
+static bool raymarchSSR(float3 originVS, float3 dirVS, out float2 hitUV, out float hitSteps)
 {
     float t = ssrParams.stride;
     float maxT = ssrParams.maxRayDistance;
+    float lastT = 0.0;
 
-    // Step along the reflection ray in view space, compare projected depth.
     for (int i = 0; i < ssrParams.maxSteps; ++i)
     {
-
         float3 p = originVS + dirVS * t;
         float2 uv = projectToUV(p);
 
         if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
-            return 0.0;
+            return false;
 
         float sceneDepth = depthTex.Sample(uv).x;
         float3 scenePos = reconstructViewPos(uv, sceneDepth);
-
-        // In view space, z is negative forward typically. Compare along z.
         float dz = scenePos.z - p.z;
+
         if (abs(dz) < ssrParams.thickness)
         {
-            hitUV = uv;
-            return 1.0;
+            float refineStart = lastT;
+            float refineEnd = t;
+            for (int r = 0; r < 4; ++r)
+            {
+                float mid = 0.5 * (refineStart + refineEnd);
+                float3 mp = originVS + dirVS * mid;
+                float2 muv = projectToUV(mp);
+                float md = depthTex.Sample(muv).x;
+                float3 mpos = reconstructViewPos(muv, md);
+                float mdz = mpos.z - mp.z;
+                if (mdz > 0.0)
+                    refineStart = mid;
+                else
+                    refineEnd = mid;
+            }
+            float3 fp = originVS + dirVS * refineEnd;
+            hitUV = projectToUV(fp);
+            hitSteps = (float)i / max(1.0f, (float)ssrParams.maxSteps);
+            return true;
         }
 
+        lastT = t;
         t += ssrParams.stride;
-        if (t > maxT) break;
+        if (t > maxT)
+            break;
     }
 
-    return 0.0;
+    return false;
 }
 
 [shader("fragment")]
@@ -140,7 +136,6 @@ float4 fragMain(VSOut i) : SV_TARGET
     float2 uv = i.uv;
     float depth = depthTex.Sample(uv).x;
 
-    // background / sky
     if (depth >= 0.9999)
     {
         return float4(0.0, 0.0, 0.0, 0.0);
@@ -148,30 +143,32 @@ float4 fragMain(VSOut i) : SV_TARGET
 
     float3 posVS = reconstructViewPos(uv, depth);
     float3 N = estimateNormal(uv);
-
-    // View direction (from point to camera) in view space points towards origin
     float3 V = normalize(-posVS);
     float3 R = normalize(reflect(-V, N));
 
     float2 hitUV = uv;
-    float hit = raymarchSSR(posVS, R, hitUV);
-
-    float3 refl = 0.0;
-    if (hit > 0.5)
-    {
-        refl = colorTex.Sample(hitUV).xyz;
-    }
-
-    float edge = max(abs(uv.x - 0.5) * 2.0, abs(uv.y - 0.5) * 2.0);
-    float fade = smoothstep(1.0, 0.85, edge);
-    float3 outColor = refl * (ssrParams.intensity * fade);
+    float hitSteps = 0.0;
+    bool hit = raymarchSSR(posVS, R, hitUV, hitSteps);
 
     if (ssrParams.debugMode == 1)
     {
-        return float4(hit.xxx, 1.0);
+        return float4(hit ? 1.0 : 0.0, 0.0, 0.0, 1.0);
+    }
+    if (ssrParams.debugMode == 2)
+    {
+        return float4(hitSteps, hitSteps, hitSteps, 1.0);
+    }
+    if (ssrParams.debugMode == 3)
+    {
+        return float4(depth.xxx, 1.0);
     }
 
     float3 baseColor = colorTex.Sample(uv).xyz;
-    float3 finalColor = baseColor + outColor;
+    float3 refl = hit ? colorTex.Sample(hitUV).xyz : 0.0;
+
+    float edge = max(abs(uv.x - 0.5) * 2.0, abs(uv.y - 0.5) * 2.0);
+    float fade = smoothstep(1.0, 0.85, edge);
+
+    float3 finalColor = baseColor + refl * (ssrParams.intensity * fade);
     return float4(finalColor, 1.0);
 }

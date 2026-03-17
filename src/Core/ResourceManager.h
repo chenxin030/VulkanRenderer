@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Mesh.h"
-#include <unordered_map>
+#include "RenderConfig.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -10,22 +10,6 @@ struct MVP {
 	alignas(16) glm::mat4 model;
 	alignas(16) glm::mat4 view;
 	alignas(16) glm::mat4 proj;
-};
-
-struct Transform {
-	glm::vec3 position = { 0.0f, 0.0f, 0.0f };
-	glm::vec3 rotation = { 0.0f, 0.0f, 0.0f };
-	glm::vec3 scale = { 1.0f, 1.0f, 1.0f };
-
-	glm::mat4 getModelMatrix() const {
-		glm::mat4 model = glm::mat4(1.0f);
-		model = glm::translate(model, position);
-		model = glm::rotate(model, rotation.x, glm::vec3(1.0f, 0.0f, 0.0f));
-		model = glm::rotate(model, rotation.y, glm::vec3(0.0f, 1.0f, 0.0f));
-		model = glm::rotate(model, rotation.z, glm::vec3(0.0f, 0.0f, 1.0f));
-		model = glm::scale(model, scale);
-		return model;
-	}
 };
 
 struct MeshBuffer {
@@ -101,9 +85,6 @@ struct ResourceManager {
 	std::vector<Mesh> meshes;
 	std::vector<TextureData> textures;
 	std::vector<MeshBuffer> meshUniformBuffer;
-	std::vector<Transform> transforms;
-
-	void initResource(unsigned int modelCount);
 
 	std::vector<std::string> modelPath{
 #if RENDERING_LEVEL < 3
@@ -117,4 +98,29 @@ struct ResourceManager {
 		"newport_loft.hdr"
 #endif
 	};
+
+	void initResource(unsigned int modelCount) {
+#if RENDERING_LEVEL == 3
+		meshes.resize(1);
+		meshUniformBuffer.resize(modelCount);
+#elif RENDERING_LEVEL == 4
+		meshes.resize(1);
+		textures.resize(texPath.size());
+		meshUniformBuffer.resize(modelCount);
+#elif RENDERING_LEVEL == 5
+		meshes.resize(2);
+		meshUniformBuffer.resize(modelCount);
+#elif RENDERING_LEVEL == 6
+		meshes.resize(2);
+		meshUniformBuffer.resize(modelCount);
+#elif RENDERING_LEVEL == 7
+		meshes.resize(2);
+		meshUniformBuffer.resize(modelCount);
+#endif
+#if RENDERING_LEVEL == 1 || RENDERING_LEVEL == 2
+		meshes.resize(modelPath.size());
+		textures.resize(texPath.size());
+		meshUniformBuffer.resize(modelCount);
+#endif
+	}
 };

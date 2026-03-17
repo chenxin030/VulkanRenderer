@@ -7,14 +7,17 @@ struct Application {
 	Platform platform;
 	Renderer renderer;
 	ResourceManager resourceManager;
+	Scene scene;
 
 	bool running;
 
 	Application() : running(true) {}
 	void init() {
 		platform.initWindow();
-		renderer.initialize(&platform, &resourceManager);
-		resourceManager.initResource(renderer.getWorld());
+		const uint32_t sceneMax = Scene::getDefaultMaxInstances();
+		scene.initScene(resourceManager, sceneMax);
+		resourceManager.initResource(sceneMax);
+		renderer.initialize(&platform, &resourceManager, &scene);
 		renderer.initVulkan();
 		renderer.loadResource();
 #if RENDERING_LEVEL == 1

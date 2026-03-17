@@ -15,7 +15,7 @@ bool Renderer::createSwapChain() {
 
 		std::vector<vk::PresentModeKHR> availablePresentModes = physicalDevice.getSurfacePresentModesKHR(*surface);
 		vk::PresentModeKHR              presentMode = chooseSwapPresentMode(availablePresentModes);
-
+		
 		// Create swap chain info
 		vk::SwapchainCreateInfoKHR createInfo{
 		  .surface = *surface,
@@ -219,6 +219,20 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 		.pDepthAttachment = &depthAttachmentInfo
 	};
 
+	if (depthImageLayout != vk::ImageLayout::eDepthAttachmentOptimal) {
+		transition_image_layout(
+			depthData.textureImage,
+			depthImageLayout,
+			vk::ImageLayout::eDepthAttachmentOptimal,
+			{},
+			vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+			vk::PipelineStageFlagBits2::eTopOfPipe,
+			vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+			vk::ImageAspectFlagBits::eDepth
+		);
+		depthImageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+	}
+
 	commandBuffer.beginRendering(renderingInfo);
 	commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
 	commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
@@ -226,28 +240,31 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 	// in recordCommandBuffer function
 #if RENDERING_LEVEL == 1
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
-	auto& mesh = resourceManager->meshes[0];
+	auto& mesh = resourceManager->meshes[scene->cubeMeshIndex];
 	commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
 	commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
-	for (int i = 0; i < MAX_OBJECTS; ++i) {
+	const uint32_t instanceCount = scene ? scene->getMeshInstanceCount(MeshTag::Cube) : 0;
+	for (uint32_t i = 0; i < instanceCount; ++i) {
 		auto& descriptorSets = resourceManager->meshUniformBuffer[i].descriptorSets;
 		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelineLayout, 0, *descriptorSets[currentFrame], nullptr);
 		commandBuffer.drawIndexed(mesh.indices.size(), 1, 0, 0, 0);
 	}
 #elif RENDERING_LEVEL == 2
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *instancedPipeline);
-	auto& mesh = resourceManager->meshes[0];
+	auto& mesh = resourceManager->meshes[scene->cubeMeshIndex];
 	commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
 	commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
 	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *instancedPipelineLayout, 0, *instancedBufferResources.descriptorSets[currentFrame], nullptr);
-	commandBuffer.drawIndexed(mesh.indices.size(), MAX_OBJECTS, 0, 0, 0);
+	const uint32_t instanceCount = scene ? scene->getMeshInstanceCount(MeshTag::Cube) : 0;
+	commandBuffer.drawIndexed(mesh.indices.size(), instanceCount, 0, 0, 0);
 #elif RENDERING_LEVEL == 3
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *pbrPipeline);
-	auto& mesh = resourceManager->meshes[0];
+	auto& mesh = resourceManager->meshes[scene->sphereMeshIndex];
 	commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
 	commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
 	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pbrPipelineLayout, 0, *pbrInstanceBufferResources.descriptorSets[currentFrame], nullptr);
-	commandBuffer.drawIndexed(mesh.indices.size(), MAX_OBJECTS, 0, 0, 0);
+	const uint32_t instanceCount = scene ? scene->getMeshInstanceCount(MeshTag::Sphere) : 0;
+	commandBuffer.drawIndexed(mesh.indices.size(), instanceCount, 0, 0, 0);
 #elif RENDERING_LEVEL == 4
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *skyboxPipeline);
 	commandBuffer.bindVertexBuffers(0, *skyboxTriangleMesh.vertexBuffer, { 0 });
@@ -256,18 +273,92 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 	commandBuffer.drawIndexed(static_cast<uint32_t>(skyboxTriangleMesh.indices.size()), 1, 0, 0, 0);
 
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *iblPbrPipeline);
-	auto& mesh = resourceManager->meshes[0];
+	auto& mesh = resourceManager->meshes[scene->sphereMeshIndex];
 	commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
 	commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
 	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *iblPbrPipelineLayout, 0, *pbrInstanceBufferResources.descriptorSets[currentFrame], nullptr);
-	commandBuffer.drawIndexed(static_cast<uint32_t>(mesh.indices.size()), MAX_OBJECTS, 0, 0, 0);
+	const uint32_t instanceCount = scene ? scene->getMeshInstanceCount(MeshTag::Sphere) : 0;
+	commandBuffer.drawIndexed(static_cast<uint32_t>(mesh.indices.size()), instanceCount, 0, 0, 0);
 #elif RENDERING_LEVEL == 7
-	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *shadowLitPipeline);
-	auto& mesh = resourceManager->meshes[0];
-	commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
-	commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
+	commandBuffer.endRendering();
+
+	transition_image_layout(
+		shadowMapData.textureImage,
+		shadowMapLayout,
+		vk::ImageLayout::eDepthAttachmentOptimal,
+		{},
+		vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+		vk::PipelineStageFlagBits2::eAllCommands,
+		vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+		vk::ImageAspectFlagBits::eDepth
+	);
+	shadowMapLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+
+	vk::ClearValue shadowClearDepth = vk::ClearDepthStencilValue(1.0f, 0);
+	vk::RenderingAttachmentInfo shadowDepthAttachmentInfo = {
+		.imageView = shadowMapData.textureImageView,
+		.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+		.loadOp = vk::AttachmentLoadOp::eClear,
+		.storeOp = vk::AttachmentStoreOp::eStore,
+		.clearValue = shadowClearDepth
+	};
+	vk::RenderingInfo shadowRenderingInfo = {
+		.renderArea = {.offset = {0, 0}, .extent = shadowMapExtent},
+		.layerCount = 1,
+		.colorAttachmentCount = 0,
+		.pColorAttachments = nullptr,
+		.pDepthAttachment = &shadowDepthAttachmentInfo
+	};
+
+	commandBuffer.beginRendering(shadowRenderingInfo);
+	commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(shadowMapExtent.width), static_cast<float>(shadowMapExtent.height), 0.0f, 1.0f));
+	commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), shadowMapExtent));
+	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *shadowDepthPipeline);
 	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *shadowPipelineLayout, 0, *shadowInstanceBufferResources.descriptorSets[currentFrame], nullptr);
-	commandBuffer.drawIndexed(static_cast<uint32_t>(mesh.indices.size()), MAX_OBJECTS, 0, 0, 0);
+
+	{
+		const uint32_t cubeCount = scene ? scene->getMeshInstanceCount(MeshTag::Cube) : 0;
+		if (cubeCount > 0) {
+			auto& cubeMesh = resourceManager->meshes[scene->cubeMeshIndex];
+			commandBuffer.bindVertexBuffers(0, *cubeMesh.vertexBuffer, { 0 });
+			commandBuffer.bindIndexBuffer(*cubeMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(cubeMesh.indices)::value_type>::value);
+			commandBuffer.drawIndexed(static_cast<uint32_t>(cubeMesh.indices.size()), cubeCount, 0, 0, 0);
+		}
+	}
+
+	commandBuffer.endRendering();
+
+	transition_image_layout(
+		shadowMapData.textureImage,
+		vk::ImageLayout::eDepthAttachmentOptimal,
+		vk::ImageLayout::eShaderReadOnlyOptimal,
+		vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+		vk::AccessFlagBits2::eShaderSampledRead,
+		vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+		vk::PipelineStageFlagBits2::eFragmentShader,
+		vk::ImageAspectFlagBits::eDepth
+	);
+	shadowMapLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+
+	commandBuffer.beginRendering(renderingInfo);
+	commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+	commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *shadowLitPipeline);
+	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *shadowPipelineLayout, 0, *shadowInstanceBufferResources.descriptorSets[currentFrame], nullptr);
+
+	{
+		const uint32_t cubeCount = scene ? scene->getMeshInstanceCount(MeshTag::Cube) : 0;
+		if (cubeCount > 0) {
+			auto& cubeMesh = resourceManager->meshes[scene->cubeMeshIndex];
+			commandBuffer.bindVertexBuffers(0, *cubeMesh.vertexBuffer, { 0 });
+			commandBuffer.bindIndexBuffer(*cubeMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(cubeMesh.indices)::value_type>::value);
+			commandBuffer.drawIndexed(static_cast<uint32_t>(cubeMesh.indices.size()), cubeCount, 0, 0, 0);
+		}
+	}
+
+#if RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
+	recordUI(commandBuffer);
+#endif
 #elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6
 	commandBuffer.endRendering();
 
@@ -306,16 +397,13 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *shadowPipelineLayout, 0, *shadowInstanceBufferResources.descriptorSets[currentFrame], nullptr);
 
 	{
-		auto& cubeMesh = resourceManager->meshes[0];
-		commandBuffer.bindVertexBuffers(0, *cubeMesh.vertexBuffer, { 0 });
-		commandBuffer.bindIndexBuffer(*cubeMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(cubeMesh.indices)::value_type>::value);
-		commandBuffer.drawIndexed(static_cast<uint32_t>(cubeMesh.indices.size()), cubeInstanceCount, 0, 0, 0);
-	}
-	{
-		auto& sphereMesh = resourceManager->meshes[1];
-		commandBuffer.bindVertexBuffers(0, *sphereMesh.vertexBuffer, { 0 });
-		commandBuffer.bindIndexBuffer(*sphereMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(sphereMesh.indices)::value_type>::value);
-		commandBuffer.drawIndexed(static_cast<uint32_t>(sphereMesh.indices.size()), sphereInstanceCount, 0, 0, cubeInstanceCount);
+		const uint32_t cubeCount = scene ? scene->getMeshInstanceCount(MeshTag::Cube) : 0;
+		if (cubeCount > 0) {
+			auto& cubeMesh = resourceManager->meshes[scene->cubeMeshIndex];
+			commandBuffer.bindVertexBuffers(0, *cubeMesh.vertexBuffer, { 0 });
+			commandBuffer.bindIndexBuffer(*cubeMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(cubeMesh.indices)::value_type>::value);
+			commandBuffer.drawIndexed(static_cast<uint32_t>(cubeMesh.indices.size()), cubeCount, 0, 0, 0);
+		}
 	}
 
 	commandBuffer.endRendering();
@@ -339,16 +427,13 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *shadowPipelineLayout, 0, *shadowInstanceBufferResources.descriptorSets[currentFrame], nullptr);
 
 	{
-		auto& cubeMesh = resourceManager->meshes[0];
-		commandBuffer.bindVertexBuffers(0, *cubeMesh.vertexBuffer, { 0 });
-		commandBuffer.bindIndexBuffer(*cubeMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(cubeMesh.indices)::value_type>::value);
-		commandBuffer.drawIndexed(static_cast<uint32_t>(cubeMesh.indices.size()), cubeInstanceCount, 0, 0, 0);
-	}
-	{
-		auto& sphereMesh = resourceManager->meshes[1];
-		commandBuffer.bindVertexBuffers(0, *sphereMesh.vertexBuffer, { 0 });
-		commandBuffer.bindIndexBuffer(*sphereMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(sphereMesh.indices)::value_type>::value);
-		commandBuffer.drawIndexed(static_cast<uint32_t>(sphereMesh.indices.size()), sphereInstanceCount, 0, 0, cubeInstanceCount);
+		const uint32_t cubeCount = scene ? scene->getMeshInstanceCount(MeshTag::Cube) : 0;
+		if (cubeCount > 0) {
+			auto& cubeMesh = resourceManager->meshes[scene->cubeMeshIndex];
+			commandBuffer.bindVertexBuffers(0, *cubeMesh.vertexBuffer, { 0 });
+			commandBuffer.bindIndexBuffer(*cubeMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(cubeMesh.indices)::value_type>::value);
+			commandBuffer.drawIndexed(static_cast<uint32_t>(cubeMesh.indices.size()), cubeCount, 0, 0, 0);
+		}
 	}
 
 	recordUI(commandBuffer);
@@ -358,11 +443,30 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 
 #if RENDERING_LEVEL == 7
 	recordSSR(commandBuffer, imageIndex);
+
+	vk::RenderingAttachmentInfo uiAttachmentInfo{
+		.imageView = swapChainImageViews[imageIndex],
+		.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+		.loadOp = vk::AttachmentLoadOp::eLoad,
+		.storeOp = vk::AttachmentStoreOp::eStore
+	};
+	vk::RenderingInfo uiRenderingInfo{
+		.renderArea = { .offset = {0, 0}, .extent = swapChainExtent },
+		.layerCount = 1,
+		.colorAttachmentCount = 1,
+		.pColorAttachments = &uiAttachmentInfo
+	};
+
+	commandBuffer.beginRendering(uiRenderingInfo);
+	commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+	commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+	recordUI(commandBuffer);
+	commandBuffer.endRendering();
 #endif
 	// After rendering, transition the swapchain image to PRESENT_SRC
 	transition_image_layout(
 		swapChainImages[imageIndex],
-		vk::ImageLayout::eColorAttachmentOptimal,
+		swapChainImageLayouts[imageIndex],
 		vk::ImageLayout::ePresentSrcKHR,
 		vk::AccessFlagBits2::eColorAttachmentWrite,                // srcAccessMask
 		{},                                                        // dstAccessMask
@@ -384,13 +488,18 @@ void Renderer::updateUniformBuffer(uint32_t currentImage) {
 		0.1f, 100.0f);
 	proj[1][1] *= -1; // Flip Y for Vulkan
 
-	for (size_t i = 0; i < resourceManager->transforms.size(); ++i) {
+	if (scene == nullptr) {
+		return;
+	}
+
+	std::vector<glm::mat4> models;
+	scene->world.collectModels(MeshTag::Cube, models, resourceManager->meshUniformBuffer.size());
+
+	for (size_t i = 0; i < models.size(); ++i) {
 		auto& resource = resourceManager->meshUniformBuffer[i];
-		auto& transform = resourceManager->transforms[i];
 
 		const float rotationSpeed = 0.5f;
-		transform.rotation.y += rotationSpeed * deltaTime;
-		glm::mat4 model = transform.getModelMatrix();
+		glm::mat4 model = glm::rotate(models[i], rotationSpeed * deltaTime, glm::vec3(0.0f, 1.0f, 0.0f));
 
 		MVP ubo{
 			.model = model,

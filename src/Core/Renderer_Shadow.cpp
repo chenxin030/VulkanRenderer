@@ -76,7 +76,7 @@ void Renderer::createShadowDescriptorSets()
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
         vk::DescriptorBufferInfo sceneBufferInfo{ .buffer = *sceneUboResources.Buffers[i], .offset = 0, .range = sizeof(SceneUBO) };
-        vk::DescriptorBufferInfo instanceBufferInfo{ .buffer = *shadowInstanceBufferResources.Buffers[i], .offset = 0, .range = sizeof(ShadowInstanceData) * MAX_OBJECTS };
+        vk::DescriptorBufferInfo instanceBufferInfo{ .buffer = *shadowInstanceBufferResources.Buffers[i], .offset = 0, .range = sizeof(ShadowInstanceData) * maxInstances };
         vk::DescriptorBufferInfo shadowBufferInfo{ .buffer = *shadowUboResources.Buffers[i], .offset = 0, .range = sizeof(ShadowUBO) };
         vk::DescriptorBufferInfo shadowParamsBufferInfo{ .buffer = *shadowParamsUboResources.Buffers[i], .offset = 0, .range = sizeof(ShadowParamsUBO) };
 
@@ -291,25 +291,27 @@ bool Renderer::createShadowPipelines()
         return false;
     }
 }
-#endif
 
 void Renderer::createShadowBuffers()
 {
     createUniformBuffers(sceneUboResources, sizeof(SceneUBO));
     createUniformBuffers(shadowUboResources, sizeof(ShadowUBO));
     createUniformBuffers(shadowParamsUboResources, sizeof(ShadowParamsUBO));
-    createStorageBuffers(shadowInstanceBufferResources, sizeof(ShadowInstanceData) * MAX_OBJECTS);
-#if RENDERING_LEVEL == 6
-    cubeInstanceCount = 9;
-#else
-    cubeInstanceCount = 6;
-#endif
-    sphereInstanceCount = 0;
+    if (scene != nullptr) {
+        maxInstances = scene->getMaxInstances();
+    }
+    createStorageBuffers(shadowInstanceBufferResources, sizeof(ShadowInstanceData) * maxInstances);
 }
 
-#if RENDERING_LEVEL == 5
+#endif
+
 void Renderer::updateShadowBuffers(uint32_t currentImage)
 {
+    float deltaTime = platform->frameTimer;
+#if RENDERING_LEVEL == 6
+    updateTAAUScene(deltaTime);
+#endif
+
     SceneUBO sceneUbo{
         .projection = glm::perspective(glm::radians(camera.Zoom),
             static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height),
@@ -321,7 +323,7 @@ void Renderer::updateShadowBuffers(uint32_t currentImage)
     memcpy(sceneUboResources.BuffersMapped[currentImage], &sceneUbo, sizeof(sceneUbo));
 
     static float lightAngle = 0.0f;
-    lightAngle += platform->frameTimer * 0.35f;
+    lightAngle += deltaTime * 0.35f;
     glm::vec3 lightDir = glm::normalize(glm::vec3(std::cos(lightAngle) * 0.6f, -1.0f, std::sin(lightAngle) * 0.6f));
     glm::vec3 lightPos = -lightDir * 12.0f;
     glm::vec3 target = glm::vec3(0.0f, -0.5f, 0.0f);
@@ -353,19 +355,29 @@ void Renderer::updateShadowBuffers(uint32_t currentImage)
     };
     memcpy(shadowParamsUboResources.BuffersMapped[currentImage], &shadowParams, sizeof(shadowParams));
 
-    std::vector<ShadowInstanceData> instanceData(MAX_OBJECTS);
-    for (uint32_t i = 0; i < cubeInstanceCount; ++i)
+    if (scene == nullptr || scene->getActiveInstanceCount() == 0)
     {
-        instanceData[i].model = resourceManager->transforms[i].getModelMatrix();
+        return;
     }
 
-    instanceData[0].color = glm::vec4(0.78f, 0.78f, 0.80f, 1.0f);
-    if (cubeInstanceCount > 1) instanceData[1].color = glm::vec4(0.35f, 0.35f, 0.35f, 1.0f);
-    if (cubeInstanceCount > 2) instanceData[2].color = glm::vec4(0.90f, 0.25f, 0.20f, 1.0f);
-    if (cubeInstanceCount > 3) instanceData[3].color = glm::vec4(0.35f, 0.35f, 0.35f, 1.0f);
-    if (cubeInstanceCount > 4) instanceData[4].color = glm::vec4(0.25f, 0.85f, 0.30f, 1.0f);
-    if (cubeInstanceCount > 5) instanceData[5].color = glm::vec4(0.20f, 0.35f, 0.95f, 1.0f);
+    std::vector<RenderInstance> renderInstances;
+    scene->world.collectRenderInstances(MeshTag::Cube, renderInstances, maxInstances);
 
-    memcpy(shadowInstanceBufferResources.BuffersMapped[currentImage], instanceData.data(), sizeof(ShadowInstanceData) * MAX_OBJECTS);
-}
+    if (renderInstances.empty())
+    {
+        return;
+    }
+
+    std::vector<ShadowInstanceData> instanceData;
+    instanceData.reserve(renderInstances.size());
+    for (const auto& instance : renderInstances)
+    {
+        instanceData.push_back(ShadowInstanceData{ instance.model, instance.color });
+    }
+
+    memcpy(shadowInstanceBufferResources.BuffersMapped[currentImage], instanceData.data(), sizeof(ShadowInstanceData) * instanceData.size());
+
+#if RENDERING_LEVEL == 6
+    updateTAAUHistory(sceneUbo.projection * sceneUbo.view);
 #endif
+}
