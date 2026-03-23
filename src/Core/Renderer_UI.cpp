@@ -238,31 +238,18 @@ void Renderer::updateUIFrame()
 
     ImGui::NewFrame();
 
+#if RENDERING_LEVEL == 5 
+    updateShadowUI();
+#endif
 #if RENDERING_LEVEL == 6
     updateTAAUUI();
 #endif
 #if RENDERING_LEVEL == 7
     updateSSRUI();
 #endif
-
-    ImGui::Begin("Shadows & Lights");
-    const char* modes[] = { "Hard", "PCF", "PCSS" };
-    ImGui::Combo("Shadow Filter", &shadowFilterMode, modes, 3);
-
-    if (shadowFilterMode == 1)
-    {
-        ImGui::SliderFloat("PCF Radius (texels)", &pcfRadiusTexels, 0.0f, 12.0f);
-    }
-    if (shadowFilterMode == 2)
-    {
-        ImGui::SliderFloat("Light Size (texels)", &pcssLightSizeTexels, 1.0f, 80.0f);
-    }
-
-    ImGui::Separator();
-    ImGui::SliderFloat("Dir Light Intensity", &dirLightIntensity, 0.0f, 20.0f);
-    ImGui::SliderFloat("Point Light Intensity", &pointLightIntensity, 0.0f, 80.0f);
-    ImGui::SliderFloat("Area Light Intensity", &areaLightIntensity, 0.0f, 80.0f);
-    ImGui::End();
+#if RENDERING_LEVEL == 8
+    updateCullingUI();
+#endif
 
     ImGui::Render();
 }

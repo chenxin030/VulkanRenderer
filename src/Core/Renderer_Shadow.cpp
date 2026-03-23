@@ -1,6 +1,8 @@
 #include "Renderer.h"
+#include <array>
+#include <imgui.h>
 
-#if RENDERING_LEVEL >= 5
+#if RENDERING_LEVEL >= 5 && RENDERING_LEVEL < 8
 
 struct ShadowInstanceData
 {
@@ -176,7 +178,7 @@ bool Renderer::createShadowPipelines()
             .depthClampEnable = vk::False,
             .rasterizerDiscardEnable = vk::False,
             .polygonMode = vk::PolygonMode::eFill,
-            .cullMode = vk::CullModeFlagBits::eBack,
+            .cullMode = vk::CullModeFlagBits::eNone,
             .frontFace = vk::FrontFace::eCounterClockwise,
             .depthBiasEnable = vk::True,
             .depthBiasConstantFactor = 1.25f,
@@ -189,7 +191,7 @@ bool Renderer::createShadowPipelines()
             .depthClampEnable = vk::False,
             .rasterizerDiscardEnable = vk::False,
             .polygonMode = vk::PolygonMode::eFill,
-            .cullMode = vk::CullModeFlagBits::eBack,
+            .cullMode = vk::CullModeFlagBits::eNone,
             .frontFace = vk::FrontFace::eCounterClockwise,
             .depthBiasEnable = vk::False,
             .lineWidth = 1.0f
@@ -247,16 +249,33 @@ bool Renderer::createShadowPipelines()
         }
 
         {
+#if RENDERING_LEVEL == 6
+            vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "shadow_lit_taau.spv"));
+#elif RENDERING_LEVEL == 7
+            vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "shadow_lit_ssr.spv"));
+#else
             vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "shadow_lit.spv"));
+#endif
             vk::PipelineShaderStageCreateInfo vertShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain" };
             vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain" };
             vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
             vk::PipelineColorBlendAttachmentState colorBlendAttachment{ .blendEnable = vk::False,
                                                                         .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA };
+#if RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7
+            std::array<vk::PipelineColorBlendAttachmentState, 2> colorBlendAttachments = { colorBlendAttachment, colorBlendAttachment };
+            vk::PipelineColorBlendStateCreateInfo colorBlending{ .logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = static_cast<uint32_t>(colorBlendAttachments.size()), .pAttachments = colorBlendAttachments.data() };
+#else
             vk::PipelineColorBlendStateCreateInfo colorBlending{ .logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 1, .pAttachments = &colorBlendAttachment };
+#endif
 
             vk::Format depthFormat = findDepthFormat();
+
+#if RENDERING_LEVEL == 6
+            std::array<vk::Format, 2> shadowLitColorFormats = { swapChainImageFormat, vk::Format::eR16G16Sfloat };
+#elif RENDERING_LEVEL == 7
+            std::array<vk::Format, 2> shadowLitColorFormats = { swapChainImageFormat, vk::Format::eR16G16B16A16Sfloat };
+#endif
 
             vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipelineCreateInfoChain = {
                 {
@@ -274,8 +293,13 @@ bool Renderer::createShadowPipelines()
                     .renderPass = nullptr
                 },
                 {
+#if RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7
+                    .colorAttachmentCount = static_cast<uint32_t>(shadowLitColorFormats.size()),
+                    .pColorAttachmentFormats = shadowLitColorFormats.data(),
+#else
                     .colorAttachmentCount = 1,
                     .pColorAttachmentFormats = &swapChainImageFormat,
+#endif
                     .depthAttachmentFormat = depthFormat
                 }
             };
@@ -303,8 +327,6 @@ void Renderer::createShadowBuffers()
     createStorageBuffers(shadowInstanceBufferResources, sizeof(ShadowInstanceData) * maxInstances);
 }
 
-#endif
-
 void Renderer::updateShadowBuffers(uint32_t currentImage)
 {
     float deltaTime = platform->frameTimer;
@@ -320,6 +342,10 @@ void Renderer::updateShadowBuffers(uint32_t currentImage)
         .camPos = camera.Position
     };
     sceneUbo.projection[1][1] *= -1;
+#if RENDERING_LEVEL == 6
+    sceneUbo.projection[2][0] += taauJitterCurrent.x * 2.0f;
+    sceneUbo.projection[2][1] += taauJitterCurrent.y * 2.0f;
+#endif
     memcpy(sceneUboResources.BuffersMapped[currentImage], &sceneUbo, sizeof(sceneUbo));
 
     static float lightAngle = 0.0f;
@@ -332,11 +358,18 @@ void Renderer::updateShadowBuffers(uint32_t currentImage)
     glm::mat4 lightProj = glm::ortho(-7.0f, 7.0f, -7.0f, 7.0f, 0.1f, 30.0f);
     lightProj[1][1] *= -1;
 
+#if RENDERING_LEVEL == 6
+    const glm::mat4 prevViewProjForShadow = taauPrevViewProj;
+#else
+    const glm::mat4 prevViewProjForShadow = glm::mat4(1.0f);
+#endif
+
     ShadowUBO shadowUbo{
         .lightViewProj = lightProj * lightView,
+        .prevViewProj = prevViewProjForShadow,
         .dirLightDirIntensity = glm::vec4(lightDir, dirLightIntensity),
         .dirLightColor = glm::vec4(1.0f),
-        .pointLightPosIntensity = glm::vec4(2.5f, 1.2f, 2.0f, pointLightIntensity),
+        .pointLightPosIntensity = glm::vec4(0.0f, 2.0f, 2.0f, pointLightIntensity),
         .pointLightColor = glm::vec4(1.0f),
         .areaLightPosIntensity = glm::vec4(-2.5f, 2.5f, -1.2f, areaLightIntensity),
         .areaLightColor = glm::vec4(1.0f, 0.95f, 0.85f, 1.0f),
@@ -378,6 +411,29 @@ void Renderer::updateShadowBuffers(uint32_t currentImage)
     memcpy(shadowInstanceBufferResources.BuffersMapped[currentImage], instanceData.data(), sizeof(ShadowInstanceData) * instanceData.size());
 
 #if RENDERING_LEVEL == 6
-    updateTAAUHistory(sceneUbo.projection * sceneUbo.view);
+    glm::mat4 currentViewProj = sceneUbo.projection * sceneUbo.view;
+    updateTAAUHistory(currentViewProj);
 #endif
 }
+
+void Renderer::updateShadowUI() {
+    ImGui::Begin("Shadows & Lights");
+    const char* modes[] = { "Hard", "PCF", "PCSS" };
+    ImGui::Combo("Shadow Filter", &shadowFilterMode, modes, 3);
+
+    if (shadowFilterMode == 1)
+    {
+        ImGui::SliderFloat("PCF Radius (texels)", &pcfRadiusTexels, 0.0f, 12.0f);
+    }
+    if (shadowFilterMode == 2)
+    {
+        ImGui::SliderFloat("Light Size (texels)", &pcssLightSizeTexels, 1.0f, 80.0f);
+    }
+
+    ImGui::Separator();
+    ImGui::SliderFloat("Dir Light Intensity", &dirLightIntensity, 0.0f, 20.0f);
+    ImGui::SliderFloat("Point Light Intensity", &pointLightIntensity, 0.0f, 80.0f);
+    ImGui::SliderFloat("Area Light Intensity", &areaLightIntensity, 0.0f, 80.0f);
+    ImGui::End();
+}
+#endif

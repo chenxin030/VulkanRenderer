@@ -33,6 +33,7 @@ struct MeshTagHash {
 };
 
 struct InstanceColor {
+	// w 通道：SSR 材质反射权重（地板高反射）
 	glm::vec4 color = glm::vec4(1.0f);
 };
 
@@ -225,6 +226,8 @@ struct Scene {
 		return 3;
 #elif RENDERING_LEVEL == 3 || RENDERING_LEVEL == 4
 		return 49;
+#elif RENDERING_LEVEL == 8
+		return 10000;
 #else
 		return 9;
 #endif

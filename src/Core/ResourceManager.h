@@ -61,6 +61,7 @@ struct SkyboxUBO {
 
 struct ShadowUBO {
 	glm::mat4 lightViewProj;
+	glm::mat4 prevViewProj;
 	glm::vec4 dirLightDirIntensity;
 	glm::vec4 dirLightColor;
 	glm::vec4 pointLightPosIntensity;
@@ -79,6 +80,17 @@ struct ShadowParamsUBO {
 
 	glm::vec2 invShadowMapSize;
 	glm::vec2 padding0;
+};
+
+struct CullingParamsUBO {
+	glm::vec4 frustumPlanes[6];
+	glm::vec4 aabbMin;
+	glm::vec4 aabbMax;
+	glm::vec4 hiZInfo; // x: width, y: height, z: mipCount, w: depthBias
+	uint32_t totalInstances;
+	uint32_t useCulling;
+	uint32_t padding0;
+	uint32_t padding1;
 };
 
 struct ResourceManager {
@@ -100,7 +112,11 @@ struct ResourceManager {
 	};
 
 	void initResource(unsigned int modelCount) {
-#if RENDERING_LEVEL == 3
+#if RENDERING_LEVEL == 1 || RENDERING_LEVEL == 2
+		meshes.resize(modelPath.size());
+		textures.resize(texPath.size());
+		meshUniformBuffer.resize(modelCount);
+#elif RENDERING_LEVEL == 3
 		meshes.resize(1);
 		meshUniformBuffer.resize(modelCount);
 #elif RENDERING_LEVEL == 4
@@ -116,10 +132,8 @@ struct ResourceManager {
 #elif RENDERING_LEVEL == 7
 		meshes.resize(2);
 		meshUniformBuffer.resize(modelCount);
-#endif
-#if RENDERING_LEVEL == 1 || RENDERING_LEVEL == 2
-		meshes.resize(modelPath.size());
-		textures.resize(texPath.size());
+#elif RENDERING_LEVEL == 8
+		meshes.resize(2);
 		meshUniformBuffer.resize(modelCount);
 #endif
 	}

@@ -82,6 +82,26 @@ void Renderer::createStorageBuffers(MeshBuffer& meshResource, vk::DeviceSize siz
     }
 }
 
+void Renderer::createStorageBuffers(MeshBuffer& meshResource, vk::DeviceSize size, vk::BufferUsageFlags usage)
+{
+    auto& uniformBuffers = meshResource.Buffers;
+    auto& uniformBuffersMemory = meshResource.BuffersMemory;
+    auto& uniformBuffersMapped = meshResource.BuffersMapped;
+
+    uniformBuffers.clear();
+    uniformBuffersMemory.clear();
+    uniformBuffersMapped.clear();
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vk::raii::Buffer buffer({});
+        vk::raii::DeviceMemory bufferMem({});
+        createBuffer(size, usage, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, buffer, bufferMem);
+        uniformBuffers.emplace_back(std::move(buffer));
+        uniformBuffersMemory.emplace_back(std::move(bufferMem));
+        uniformBuffersMapped.emplace_back(uniformBuffersMemory[i].mapMemory(0, size));
+    }
+}
+
 #if RENDERING_LEVEL == 1
 bool Renderer::createDescriptorPool() {
     try
@@ -205,9 +225,19 @@ void Renderer::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuff
     }
 }
 
-void Renderer::loadModels() {
+void Renderer::createMeshes() {
     auto& meshes = resourceManager->meshes;
-#if RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7
+#if RENDERING_LEVEL < 3
+    for (int i = 0; i < resourceManager->modelPath.size(); ++i) {
+        loadModel(resourceManager->modelPath[i], meshes[i]);
+        createVertexBuffer(meshes[i]);
+        createIndexBuffer(meshes[i]);
+    }
+#elif RENDERING_LEVEL == 3 || RENDERING_LEVEL == 4
+    generateSphere(meshes[0], 1.0f, 100);
+    createVertexBuffer(meshes[0]);
+    createIndexBuffer(meshes[0]);
+#elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7 || RENDERING_LEVEL == 8
     generateCube(meshes[0]);
     createVertexBuffer(meshes[0]);
     createIndexBuffer(meshes[0]);
@@ -215,10 +245,6 @@ void Renderer::loadModels() {
     generateSphere(meshes[1], 1.0f, 64);
     createVertexBuffer(meshes[1]);
     createIndexBuffer(meshes[1]);
-#elif RENDERING_LEVEL == 3 || RENDERING_LEVEL == 4
-    generateSphere(meshes[0], 1.0f, 100);
-    createVertexBuffer(meshes[0]);
-    createIndexBuffer(meshes[0]);
 #endif
 #if RENDERING_LEVEL == 4
     skyboxTriangleMesh.vertices = {
@@ -229,13 +255,6 @@ void Renderer::loadModels() {
     skyboxTriangleMesh.indices = { 0, 1, 2 };
     createVertexBuffer(skyboxTriangleMesh);
     createIndexBuffer(skyboxTriangleMesh);
-#endif
-#if RENDERING_LEVEL < 3
-    for (int i = 0; i < resourceManager->modelPath.size(); ++i) {
-        loadModel(resourceManager->modelPath[i], meshes[i]);
-        createVertexBuffer(meshes[i]);
-        createIndexBuffer(meshes[i]);
-    }
 #endif
 }
 

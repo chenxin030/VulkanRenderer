@@ -32,11 +32,9 @@ bool Renderer::createInstance(const std::string& appName) {
 		std::vector<const char*> extensions;
 
 		// Add required extensions for GLFW
-#if defined(PLATFORM_DESKTOP)
 		uint32_t glfwExtensionCount = 0;
 		const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 		extensions.insert(extensions.end(), glfwExtensions, glfwExtensions + glfwExtensionCount);
-#endif
 
 		// Add debug extension if validation layers are enabled
 		if (enableValidationLayers) {

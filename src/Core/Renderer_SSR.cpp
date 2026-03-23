@@ -44,6 +44,18 @@ bool Renderer::createSSRResources()
         );
         ssrColorData.textureImageView = createImageView(ssrColorData.textureImage, swapChainImageFormat, vk::ImageAspectFlagBits::eColor, 1);
 
+        createImage(
+            swapChainExtent.width,
+            swapChainExtent.height,
+            1,
+            vk::Format::eR16G16B16A16Sfloat,
+            vk::ImageTiling::eOptimal,
+            vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+            vk::MemoryPropertyFlagBits::eDeviceLocal,
+            ssrNormalData
+        );
+        ssrNormalData.textureImageView = createImageView(ssrNormalData.textureImage, vk::Format::eR16G16B16A16Sfloat, vk::ImageAspectFlagBits::eColor, 1);
+
         vk::SamplerCreateInfo samplerInfo{
             .magFilter = vk::Filter::eLinear,
             .minFilter = vk::Filter::eLinear,
@@ -69,6 +81,7 @@ bool Renderer::createSSRResources()
         ssrDepthSampler = vk::raii::Sampler(device, depthSamplerInfo);
 
         ssrColorLayout = vk::ImageLayout::eUndefined;
+        ssrNormalLayout = vk::ImageLayout::eUndefined;
 
         createUniformBuffers(ssrSceneUboResources, sizeof(SSRSceneUBO));
         createUniformBuffers(ssrParamsUboResources, sizeof(SSRParams));
@@ -89,7 +102,8 @@ bool Renderer::createSSRDescriptorSetLayout()
             {.binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
             {.binding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
             {.binding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
-            {.binding = 3, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
+            {.binding = 3, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
+            {.binding = 4, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
         };
 
         vk::DescriptorSetLayoutCreateInfo layoutInfo{
@@ -113,7 +127,7 @@ bool Renderer::createSSRDescriptorPool()
     {
         std::vector<vk::DescriptorPoolSize> poolSizes = {
             {.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u},
-            {.type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u}
+            {.type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 3u}
         };
 
         vk::DescriptorPoolCreateInfo poolInfo{
@@ -161,11 +175,18 @@ void Renderer::createSSRDescriptorSets()
             .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
         };
 
+        vk::DescriptorImageInfo normalInfo{
+            .sampler = *ssrColorSampler,
+            .imageView = *ssrNormalData.textureImageView,
+            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+        };
+
         std::vector<vk::WriteDescriptorSet> writes = {
             {.dstSet = *ssrDescriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &sceneBufferInfo},
             {.dstSet = *ssrDescriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &depthInfo},
             {.dstSet = *ssrDescriptorSets[i], .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &colorInfo},
-            {.dstSet = *ssrDescriptorSets[i], .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &paramsBufferInfo},
+            {.dstSet = *ssrDescriptorSets[i], .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &normalInfo},
+            {.dstSet = *ssrDescriptorSets[i], .dstBinding = 4, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &paramsBufferInfo},
         };
 
         device.updateDescriptorSets(writes, nullptr);
@@ -281,7 +302,7 @@ void Renderer::updateSSRBuffers(uint32_t currentImage)
         .stride = ssrStride,
         .intensity = ssrIntensity,
         .invResolution = glm::vec2(1.0f / float(swapChainExtent.width), 1.0f / float(swapChainExtent.height)),
-        .debugMode = 0,
+        .debugMode = ssrDebugMode,
         .maxSteps = ssrMaxSteps,
         .padding0 = 0.0f
     };
@@ -338,6 +359,22 @@ void Renderer::recordSSR(vk::raii::CommandBuffer& commandBuffer, uint32_t imageI
         blitRegion,
         vk::Filter::eLinear
     );
+
+    // 确保法线图在 SSR pass 前为采样布局
+    if (ssrNormalLayout != vk::ImageLayout::eShaderReadOnlyOptimal)
+    {
+        transition_image_layout(
+            ssrNormalData.textureImage,
+            ssrNormalLayout,
+            vk::ImageLayout::eShaderReadOnlyOptimal,
+            vk::AccessFlagBits2::eColorAttachmentWrite,
+            vk::AccessFlagBits2::eShaderSampledRead,
+            vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            vk::PipelineStageFlagBits2::eFragmentShader,
+            vk::ImageAspectFlagBits::eColor
+        );
+        ssrNormalLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    }
 
     transition_image_layout(
         ssrColorData.textureImage,
@@ -423,6 +460,10 @@ void Renderer::updateSSRUI()
     ImGui::SliderFloat("Thickness", &ssrThickness, 0.02f, 0.6f);
     ImGui::SliderFloat("Stride", &ssrStride, 0.05f, 1.0f);
     ImGui::SliderInt("MaxSteps", &ssrMaxSteps, 8, 128);
+
+    const char* debugItems[] = { "SSR", "HitMask", "Steps", "Depth" };
+    ImGui::Combo("DebugMode", &ssrDebugMode, debugItems, IM_ARRAYSIZE(debugItems));
+
     ImGui::End();
 }
 

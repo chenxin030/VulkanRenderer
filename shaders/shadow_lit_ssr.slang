@@ -172,8 +172,14 @@ float computeShadow(float4 shadowPos, float3 normal, float3 lightDir)
     return lerp(0.25, 1.0, visibility);
 }
 
+struct FSOutput
+{
+    float4 color : SV_Target0;
+    float4 normal : SV_Target1;
+};
+
 [shader("fragment")]
-float4 fragMain(VSOutput input) : SV_TARGET
+FSOutput fragMain(VSOutput input)
 {
     float3 baseColor = input.color.xyz;
     float3 normal = normalize(input.worldNormal);
@@ -230,5 +236,10 @@ float4 fragMain(VSOutput input) : SV_TARGET
     float3 areaLight = areaSum * (areaIntensity * 0.25) * areaColor;
 
     float3 color = ambient + dirShadow * (dirDiffuse + dirSpecular) + pointDiffuse + pointSpecular + areaLight;
-    return float4(color, 1.0);
+
+    FSOutput outp;
+    outp.color = float4(color, saturate(input.color.w));
+    // 世界法线编码到 [0,1]
+    outp.normal = float4(normalize(input.worldNormal) * 0.5 + 0.5, 1.0);
+    return outp;
 }

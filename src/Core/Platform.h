@@ -10,8 +10,8 @@ struct Platform
 {
 	GLFWwindow* window = nullptr;
 
-	int width = 800;
-	int height = 600;
+	int width = 1280;
+	int height = 720;
 
 	bool isFullscreen = false;
 	int windowedX = 0, windowedY = 0;

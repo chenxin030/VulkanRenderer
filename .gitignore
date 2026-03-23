@@ -1,3 +1,4 @@
 # 仅忽略根目录下的 build 文件夹
 /build/
 /build_x64/
+/.cursor/

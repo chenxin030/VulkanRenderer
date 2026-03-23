@@ -34,6 +34,11 @@ function(add_slang_shader_target TARGET)
         
         # 添加复制命令到源码目录（用于开发）
         set(FINAL_OUTPUT ${SHADER_OUTPUT_DIR}/${SHADER_NAME}.spv)
+
+        set(SHADER_ENTRY_ARGS -entry vertMain -entry fragMain)
+        if(SHADER_NAME MATCHES "_comp$" OR SHADER_NAME MATCHES "_build$")
+            set(SHADER_ENTRY_ARGS -entry compMain)
+        endif()
         
         # 编译命令
         add_custom_command(
@@ -44,8 +49,7 @@ function(add_slang_shader_target TARGET)
                 -profile spirv_1_4           # 🔴 指定SPIR-V 1.4版本
                 -emit-spirv-directly          # 🔴 直接生成SPIR-V
                 -fvk-use-entrypoint-name      # 🔴 使用入口点名称
-                -entry vertMain               # 🔴 指定vertex入口点
-                -entry fragMain                # 🔴 指定fragment入口点
+                ${SHADER_ENTRY_ARGS}
                 -o ${SPV_OUTPUT}
             WORKING_DIRECTORY ${SHADERS_OUTPUT_DIR}
             DEPENDS ${SHADER_SOURCE}

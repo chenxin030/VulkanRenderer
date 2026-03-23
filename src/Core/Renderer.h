@@ -128,6 +128,7 @@ struct Renderer {
 	TextureData irradianceCubemapData;
 	TextureData prefilteredEnvMapData;
 	TextureData brdfLutData;
+
 #elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7
 	// Shadow mapping resources (Level 5) + TAAU base (Level 6) + SSR base (Level 7)
 	vk::raii::DescriptorSetLayout shadowDescriptorSetLayout = nullptr;
@@ -145,7 +146,6 @@ struct Renderer {
 	vk::Extent2D shadowMapExtent{ 2048u, 2048u };
 	vk::ImageLayout shadowMapLayout = vk::ImageLayout::eUndefined;
 
-
 	int shadowFilterMode = 2;
 	float pcfRadiusTexels = 2.0f;
 	float pcssLightSizeTexels = 25.0f;
@@ -153,7 +153,129 @@ struct Renderer {
 	float dirLightIntensity = 0.5f;
 	float pointLightIntensity = 3.5f;
 	float areaLightIntensity = 2.5f;
+#if RENDERING_LEVEL == 6
+	// TAAU stage-1 resources (history + resolve pass)
+	vk::raii::DescriptorSetLayout taauDescriptorSetLayout = nullptr;
+	vk::raii::DescriptorPool taauDescriptorPool = nullptr;
+	vk::raii::PipelineLayout taauPipelineLayout = nullptr;
+	vk::raii::Pipeline taauPipeline = nullptr;
+	vk::raii::DescriptorSets taauDescriptorSets = nullptr;
+	MeshBuffer taauParamsUboResources;
+	TextureData taauInputColorData;
+	TextureData taauVelocityData;
+	TextureData taauDepthData;
+	TextureData taauHistoryColorData[2];
+	vk::ImageLayout taauInputLayout = vk::ImageLayout::eUndefined;
+	vk::ImageLayout taauVelocityLayout = vk::ImageLayout::eUndefined;
+	vk::ImageLayout taauDepthLayout = vk::ImageLayout::eUndefined;
+	vk::ImageLayout taauHistoryLayouts[2] = { vk::ImageLayout::eUndefined, vk::ImageLayout::eUndefined };
+	vk::raii::Sampler taauColorSampler = nullptr;
+	vk::raii::Sampler taauDepthSampler = nullptr;
+	uint32_t taauHistoryReadIndex = 0;
+	bool taauHistoryValid = false;
+	bool taauEnabled = true;
+	glm::mat4 taauPrevViewProj = glm::mat4(1.0f);
+	glm::vec2 taauJitterCurrent = glm::vec2(0.0f);
+	glm::vec2 taauJitterPrev = glm::vec2(0.0f);
+	uint64_t taauFrameCounter = 0;
+	float taauRenderScale = 0.85f;
+#elif RENDERING_LEVEL == 7
+	// Screen-space reflection resources
+	vk::raii::DescriptorSetLayout ssrDescriptorSetLayout = nullptr;
+	vk::raii::DescriptorPool ssrDescriptorPool = nullptr;
+	vk::raii::PipelineLayout ssrPipelineLayout = nullptr;
+	vk::raii::Pipeline ssrPipeline = nullptr;
+	vk::raii::DescriptorSets ssrDescriptorSets = nullptr;
+	MeshBuffer ssrSceneUboResources;
+	MeshBuffer ssrParamsUboResources;
+	TextureData ssrColorData;
+	TextureData ssrNormalData;
+	vk::ImageLayout ssrColorLayout = vk::ImageLayout::eUndefined;
+	vk::ImageLayout ssrNormalLayout = vk::ImageLayout::eUndefined;
+	vk::raii::Sampler ssrColorSampler = nullptr;
+	vk::raii::Sampler ssrDepthSampler = nullptr;
+	int ssrMaxSteps = 85;
+	float ssrMaxRayDistance = 16.0f;
+	float ssrThickness = 0.12f;
+	float ssrStride = 0.05f;
+	float ssrIntensity = 0.5f;
+	int ssrDebugMode = 0;
+	bool ssrEnabled = true;
+#endif
 
+#elif RENDERING_LEVEL == 8
+	// Compute occlusion culling resources
+	vk::raii::DescriptorSetLayout cullingDepthDescriptorSetLayout = nullptr;
+	vk::raii::DescriptorPool      cullingDepthDescriptorPool = nullptr;
+	vk::raii::DescriptorSet       cullingDepthDescriptorSet = nullptr;
+	vk::raii::DescriptorSets      cullingDepthDescriptorSets = nullptr;
+	vk::raii::PipelineLayout      cullingDepthPipelineLayout = nullptr;
+	vk::raii::Pipeline            cullingDepthPipeline = nullptr;		// culling_depth.slang
+
+	vk::raii::DescriptorSetLayout cullingDescriptorSetLayout = nullptr;
+	vk::raii::DescriptorPool      cullingDescriptorPool = nullptr;
+	vk::raii::DescriptorSet       cullingDescriptorSet = nullptr;
+	vk::raii::DescriptorSets      cullingDescriptorSets = nullptr;
+	vk::raii::PipelineLayout      cullingPipelineLayout = nullptr;
+	vk::raii::Pipeline            cullingPipeline = nullptr;			// culling_comp.slang
+
+	vk::raii::DescriptorSetLayout cullingDrawDescriptorSetLayout = nullptr;
+	vk::raii::DescriptorPool      cullingDrawDescriptorPool = nullptr;
+	vk::raii::DescriptorSet       cullingDrawDescriptorSet = nullptr;
+	vk::raii::DescriptorSets      cullingDrawDescriptorSets = nullptr;
+	vk::raii::PipelineLayout      cullingDrawPipelineLayout = nullptr;
+	vk::raii::Pipeline            cullingDrawPipeline = nullptr;		// culling_draw.slang
+
+	vk::raii::DescriptorSetLayout cullingHiZDescriptorSetLayout = nullptr;
+	vk::raii::DescriptorPool      cullingHiZDescriptorPool = nullptr;
+	vk::raii::DescriptorSets      cullingHiZDescriptorSets = nullptr;
+	vk::raii::PipelineLayout      cullingHiZPipelineLayout = nullptr;
+	vk::raii::Pipeline            cullingHiZPipeline = nullptr;			// culling_hiz_build.slang
+
+	vk::raii::CommandPool    computeCommandPool = nullptr;
+	std::vector<vk::raii::CommandBuffer> computeCommandBuffers;
+	std::vector<vk::raii::Semaphore> cullingCompleteSemaphores;
+
+	MeshBuffer cullingGlobalUboResources;
+	MeshBuffer cullingInstanceBufferResources;
+	MeshBuffer cullingIndirectBufferResources;	// drawCommands, culling_comp.slang写 —> vkCmdDrawIndexedIndirect 读取(见Culling.cpp 954行)，所以 usage 是 vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer。
+	MeshBuffer cullingVisibleBufferResources;	// visibleIndices, culling_comp.slang写 -> culling_draw.slang读
+	MeshBuffer cullingStatsBufferResources;		// binding 4，统计信息, CS写 ——> UI展示，因为会被下面的cullingStatsReadbackBuffer读出来，所以 usage 是 vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc
+	MeshBuffer cullingParamsBufferResources;	// 视锥平面、AABB、Hi-Z 参数、实例总数、开关。
+
+	// 裸 Buffer + DeviceMemory + 持久映射指针：用于“读回/小同步数据”，而不是主渲染资源封装。
+	// 不用 MeshBuffer 的原因：
+	// 1) 这些资源体量小（计数/统计），作用偏 CPU 可见与调试；
+	// 2) 需要明确 HOST_VISIBLE/HOST_COHERENT 与 mapped 生命周期；
+	// 3) 常作为 copy 目标或 CPU 读取目标，不长期参与图形资源绑定流程。
+	vk::raii::Buffer cullingVisibleCountBuffer = nullptr;		// 可见实例计数（culling_comp.slang binding 5，CS 原子累加）
+	vk::raii::DeviceMemory cullingVisibleCountMemory = nullptr;	// 与 cullingVisibleCountBuffer 绑定的 host-visible 内存，shader 工作缓冲，用来给到着色器
+	vk::raii::Buffer cullingVisibleReadbackBuffer = nullptr;		// 可见索引读回缓冲：GPU visibleIndices 拷贝到 CPU 读取
+	vk::raii::DeviceMemory cullingVisibleReadbackMemory = nullptr;	// 与 cullingVisibleReadbackBuffer 绑定的 host-visible 内存，CPU 读回缓冲，用于读回来
+	void* cullingVisibleCountMapped = nullptr;				// 计数缓冲 CPU 侧持久映射地址
+
+	vk::raii::Buffer cullingStatsReadbackBuffer = nullptr;		// binding 4，读回缓冲：GPU stats buffer -> 此缓冲 -> CPU/UI
+	vk::raii::DeviceMemory cullingStatsReadbackMemory = nullptr;	// 与 cullingStatsReadbackBuffer 绑定的 host-visible 内存
+	void* cullingStatsReadbackMapped = nullptr;				// 统计读回缓冲 CPU 侧持久映射地址
+
+	TextureData cullingDepthTexture;                     // 第一个 pipeline(只写深度的管线) 的深度附件，作为遮挡判断基础。
+	TextureData cullingHiZTexture;                       // Hi-Z 金字塔纹理（max-depth mip chain）
+	std::vector<vk::raii::ImageView> cullingHiZMipViews; // Hi-Z 各 mip 的单独 ImageView（逐层构建/采样）
+	vk::Extent2D cullingDepthExtent{ 0u, 0u };           // culling depth / Hi-Z 基准分辨率（通常等于 swapchain）
+	vk::ImageLayout cullingDepthLayout = vk::ImageLayout::eUndefined; // cullingDepthTexture 当前布局状态跟踪
+	vk::ImageLayout cullingHiZLayout = vk::ImageLayout::eUndefined;    // cullingHiZTexture 当前布局状态跟踪
+	uint32_t cullingHiZMipCount = 1;                     // Hi-Z mip 层数：floor(log2(max(w,h))) + 1
+
+	vk::raii::QueryPool cullingTimestampQueryPool = nullptr;	// 计时
+
+	bool cullingEnabled = true;
+	uint32_t cullingVisibleCountCpu = 0;
+	uint32_t cullingTotalCountCpu = 0;
+	float cullingGpuMs = 0.0f;
+	float cullingFrameMs = 0.0f;
+	bool cullingShowStats = true;
+#endif
+#if RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7 || RENDERING_LEVEL == 8
 	bool uiEnabled = true;
 
 	vk::raii::DescriptorSetLayout uiDescriptorSetLayout = nullptr;
@@ -177,32 +299,11 @@ struct Renderer {
 	};
 	std::vector<UiFrameBuffers> uiFrameBuffers;
 #endif
-#if RENDERING_LEVEL == 7
-	// Screen-space reflection resources
-	vk::raii::DescriptorSetLayout ssrDescriptorSetLayout = nullptr;
-	vk::raii::DescriptorPool ssrDescriptorPool = nullptr;
-	vk::raii::PipelineLayout ssrPipelineLayout = nullptr;
-	vk::raii::Pipeline ssrPipeline = nullptr;
-	vk::raii::DescriptorSets ssrDescriptorSets = nullptr;
-	MeshBuffer ssrSceneUboResources;
-	MeshBuffer ssrParamsUboResources;
-	TextureData ssrColorData;
-	vk::ImageLayout ssrColorLayout = vk::ImageLayout::eUndefined;
-	vk::raii::Sampler ssrColorSampler = nullptr;
-	vk::raii::Sampler ssrDepthSampler = nullptr;
-	int ssrMaxSteps = 64;
-	float ssrMaxRayDistance = 16.0f;
-	float ssrThickness = 0.12f;
-	float ssrStride = 0.25f;
-	float ssrIntensity = 0.5f;
-	bool ssrEnabled = true;
-#endif
-
 	bool framebufferResized = false;
 
 	TextureData depthData;
 	vk::ImageLayout depthImageLayout = vk::ImageLayout::eUndefined;
-#if RENDERING_LEVEL < 3 || RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7
+#if RENDERING_LEVEL < 3 || RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7 || RENDERING_LEVEL == 8
 	Camera camera = Camera(glm::vec3(0.0f, 0.0f, 5.0f));
 #else
 	Camera camera = Camera(glm::vec3(0.0f, -1.0f, 13.0f));
@@ -245,33 +346,35 @@ struct Renderer {
 
 	bool initVulkan()
 	{
-		if (!createInstance("Vulkan Renderer")) {
-			std::cerr << "Failed to create Vulkan instance" << std::endl;
-			return false;
-		}
-		if (!setupDebugMessenger()) {
-			std::cerr << "Failed to setup debug messenger" << std::endl;
-			return false;
-		}
-		if (!createSurface()) {
-			std::cerr << "Failed to create surface" << std::endl;
-			return false;
-		}
-		if (!pickPhysicalDevice()) {
-			std::cerr << "Failed to pick physical device" << std::endl;
-			return false;
-		}
-		if (!createLogicalDevice()) {
-			std::cerr << "Failed to create logical device" << std::endl;
-			return false;
-		}
-		if (!createSwapChain()) {
-			std::cerr << "Failed to create swap chain" << std::endl;
-			return false;
-		}
-		if (!createImageViews()) {
-			std::cerr << "Failed to create image views" << std::endl;
-			return false;
+		{
+			if (!createInstance("Vulkan Renderer")) {
+				std::cerr << "Failed to create Vulkan instance" << std::endl;
+				return false;
+			}
+			if (!setupDebugMessenger()) {
+				std::cerr << "Failed to setup debug messenger" << std::endl;
+				return false;
+			}
+			if (!createSurface()) {
+				std::cerr << "Failed to create surface" << std::endl;
+				return false;
+			}
+			if (!pickPhysicalDevice()) {
+				std::cerr << "Failed to pick physical device" << std::endl;
+				return false;
+			}
+			if (!createLogicalDevice()) {
+				std::cerr << "Failed to create logical device" << std::endl;
+				return false;
+			}
+			if (!createSwapChain()) {
+				std::cerr << "Failed to create swap chain" << std::endl;
+				return false;
+			}
+			if (!createImageViews()) {
+				std::cerr << "Failed to create image views" << std::endl;
+				return false;
+			}
 		}
 #if RENDERING_LEVEL == 1
 		const uint32_t instanceCount = scene ? scene->getActiveInstanceCount() : 0;
@@ -366,21 +469,79 @@ struct Renderer {
 			std::cerr << "Failed to create Shadow pipelines" << std::endl;
 			return false;
 		}
+#elif RENDERING_LEVEL == 8
+		if (!createCullingBuffers()) {
+			std::cerr << "Failed to create culling buffers" << std::endl;
+			return false;
+		}
+		if (!createCullingDescriptorSetLayouts()) {
+			std::cerr << "Failed to create culling descriptor set layouts" << std::endl;
+			return false;
+		}
+		if (!createCullingDescriptorPools()) {
+			std::cerr << "Failed to create culling descriptor pools" << std::endl;
+			return false;
+		}
+		if (!createCullingDepthResources()) {
+			std::cerr << "Failed to create culling depth resources" << std::endl;
+			return false;
+		}
+		if (!createCullingHiZResources()) {
+			std::cerr << "Failed to create culling Hi-Z resources" << std::endl;
+			return false;
+		}
+		if (!createCullingHiZDescriptorSetLayout()) {
+			std::cerr << "Failed to create culling Hi-Z descriptor set layout" << std::endl;
+			return false;
+		}
+		if (!createCullingHiZDescriptorPool()) {
+			std::cerr << "Failed to create culling Hi-Z descriptor pool" << std::endl;
+			return false;
+		}
+		createCullingDescriptorSets();
+		createCullingHiZDescriptorSets();
+		if (!createCullingPipelines()) {
+			std::cerr << "Failed to create culling pipelines" << std::endl;
+			return false;
+		}
+		if (!createCullingHiZPipeline()) {
+			std::cerr << "Failed to create culling Hi-Z pipeline" << std::endl;
+			return false;
+		}
 #endif
 		if (!createCommandPool()) {
 			std::cerr << "Failed to create command pool" << std::endl;
 			return false;
 		}
-#if RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7
+		if (!createDepthResources()) {
+			std::cerr << "Failed to create depth resources" << std::endl;
+			return false;
+		}
+#if RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7 || RENDERING_LEVEL == 8
 		if (!initUI()) {
 			std::cerr << "Failed to init UI" << std::endl;
 			return false;
 		}
 #endif
-		if (!createDepthResources()) {
-			std::cerr << "Failed to create depth resources" << std::endl;
+#if RENDERING_LEVEL == 6
+		if (!createTAAUResources()) {
+			std::cerr << "Failed to create TAAU resources" << std::endl;
 			return false;
 		}
+		if (!createTAAUDescriptorSetLayout()) {
+			std::cerr << "Failed to create TAAU DescriptorSetLayout" << std::endl;
+			return false;
+		}
+		if (!createTAAUDescriptorPool()) {
+			std::cerr << "Failed to create TAAU DescriptorPool" << std::endl;
+			return false;
+		}
+		createTAAUDescriptorSets();
+		if (!createTAAUPipeline()) {
+			std::cerr << "Failed to create TAAU Pipeline" << std::endl;
+			return false;
+		}
+#endif
 #if RENDERING_LEVEL == 7
 		if (!createSSRResources()) {
 			std::cerr << "Failed to create SSR resources" << std::endl;
@@ -400,6 +561,20 @@ struct Renderer {
 			return false;
 		}
 #endif
+#if RENDERING_LEVEL == 8
+		if (!createCullingCommandPool()) {
+			std::cerr << "Failed to create culling command pool" << std::endl;
+			return false;
+		}
+		if (!createCullingCommandBuffers()) {
+			std::cerr << "Failed to create culling command buffers" << std::endl;
+			return false;
+		}
+		if (!createCullingSyncObjects()) {
+			std::cerr << "Failed to create culling sync objects" << std::endl;
+			return false;
+		}
+#endif
 		if (!createCommandBuffers()) {
 			std::cerr << "Failed to create command buffers" << std::endl;
 			return false;
@@ -408,14 +583,30 @@ struct Renderer {
 			std::cerr << "Failed to create sync objects" << std::endl;
 			return false;
 		}
+#if RENDERING_LEVEL == 8
+		if (physicalDevice.getProperties().limits.timestampComputeAndGraphics == VK_FALSE)
+		{
+			std::cerr << "Warning: timestamp queries not supported for compute/graphics" << std::endl;
+		}
+#endif
 
 		return true;
 	}
-	void loadResource() {
-		loadModels();
+	void prepareResource() {
+		createMeshes();
 		loadTextures();
-#if RENDERING_LEVEL == 4
+#if RENDERING_LEVEL == 1
+		renderer.createDescriptorSets();
+#elif RENDERING_LEVEL == 2
+		renderer.createInstancedDescriptorSets();
+#elif RENDERING_LEVEL == 3
+		renderer.createPBRDescriptorSets();
+#elif RENDERING_LEVEL == 4
 		generateIBLResources();
+		renderer.createIBLPBRDescriptorSets();
+		renderer.createSkyboxDescriptorSets();
+#elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7
+		renderer.createShadowDescriptorSets();
 #endif
 	}
 
@@ -446,20 +637,48 @@ struct Renderer {
 			updatePBRInstanceBuffers(currentFrame);
 #elif RENDERING_LEVEL == 4
 			updateIBLPBRBuffers(currentFrame);
-#elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7
+#elif RENDERING_LEVEL == 5
 			updateUIFrame();
 			updateShadowBuffers(currentFrame);
-#endif
-#if RENDERING_LEVEL == 7
+#elif RENDERING_LEVEL == 6
+			updateUIFrame();
+			updateShadowBuffers(currentFrame);
+			updateTAAUBuffers(currentFrame);
+#elif RENDERING_LEVEL == 7
+			updateUIFrame();
+			updateShadowBuffers(currentFrame);
 			updateSSRBuffers(currentFrame);
-#endif
+#elif RENDERING_LEVEL == 8
+			updateUIFrame();
+			updateCullingBuffers(currentFrame);
 
+			computeCommandBuffers[currentFrame].reset();
+			recordCullingCommandBuffer(imageIndex);
+			vk::SubmitInfo cullSubmitInfo{ .commandBufferCount = 1,
+										 .pCommandBuffers = &*computeCommandBuffers[currentFrame],
+										 .signalSemaphoreCount = 1,
+										 .pSignalSemaphores = &*cullingCompleteSemaphores[currentFrame] };
+			computeQueue.submit(cullSubmitInfo, nullptr);// compute family 和 graphics family 是同一个
+			updateCullingStats();
+#endif
 			device.resetFences(*inFlightFences[currentFrame]);
 
 			commandBuffers[currentFrame].reset();
 			recordCommandBuffer(imageIndex);
 
 			vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+#if RENDERING_LEVEL == 8
+			vk::Semaphore waitSemaphores[] = { *presentCompleteSemaphores[currentFrame], *cullingCompleteSemaphores[currentFrame] };
+			vk::PipelineStageFlags waitStages[] = { vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eVertexInput };
+			const vk::SubmitInfo submitInfo{ .waitSemaphoreCount = 2,
+										 .pWaitSemaphores = waitSemaphores,
+										 .pWaitDstStageMask = waitStages,
+										 .commandBufferCount = 1,
+										 .pCommandBuffers = &*commandBuffers[currentFrame],
+										 .signalSemaphoreCount = 1,
+										 .pSignalSemaphores = &*renderFinishedSemaphores[imageIndex] };
+			graphicsQueue.submit(submitInfo, *inFlightFences[currentFrame]);
+#else
 			const vk::SubmitInfo   submitInfo{ .waitSemaphoreCount = 1,
 											  .pWaitSemaphores = &*presentCompleteSemaphores[currentFrame],
 											  .pWaitDstStageMask = &waitDestinationStageMask,
@@ -468,6 +687,7 @@ struct Renderer {
 											  .signalSemaphoreCount = 1,
 											  .pSignalSemaphores = &*renderFinishedSemaphores[imageIndex] };
 			graphicsQueue.submit(submitInfo, *inFlightFences[currentFrame]);
+#endif
 
 			const vk::PresentInfoKHR presentInfoKHR{ .waitSemaphoreCount = 1,
 													.pWaitSemaphores = &*renderFinishedSemaphores[imageIndex],
@@ -495,7 +715,10 @@ struct Renderer {
 	}
 
 	void cleanup() {
-#if RENDERING_LEVEL > 5
+#if RENDERING_LEVEL > 5 && RENDERING_LEVEL != 8
+		shutdownUI();
+#endif
+#if RENDERING_LEVEL == 8
 		shutdownUI();
 #endif
 		cleanupUBO();
@@ -568,13 +791,29 @@ struct Renderer {
 	bool createShadowPipelines();
 	void createShadowBuffers();
 	void updateShadowBuffers(uint32_t currentImage);
+	void updateShadowUI();
 	void updateTAAUScene(float deltaTime);
 	void updateTAAUHistory(const glm::mat4& currentViewProj);
 	void updateTAAUUI();
+	bool createTAAUResources();
+	bool createTAAUDescriptorSetLayout();
+	bool createTAAUDescriptorPool();
+	void createTAAUDescriptorSets();
+	void updateTAAUDescriptorSet(uint32_t frameIndex, uint32_t historyReadIndex);
+	bool createTAAUPipeline();
+	void updateTAAUBuffers(uint32_t currentImage);
+	void recordTAAU(vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex);
 	bool initUI();
 	void shutdownUI();
 	void updateUIFrame();
 	void recordUI(vk::raii::CommandBuffer& commandBuffer);
+
+	bool createSkyboxDescriptorSetLayout();
+	bool createSkyboxDescriptorPool();
+	void createSkyboxDescriptorSets();
+	bool createSkyboxPipeline();
+
+	void generateIBLResources();
 
 	// SSR (Level 7)
 	bool createSSRResources();
@@ -586,12 +825,28 @@ struct Renderer {
 	void recordSSR(vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex);
 	void updateSSRUI();
 
-	bool createSkyboxDescriptorSetLayout();
-	bool createSkyboxDescriptorPool();
-	void createSkyboxDescriptorSets();
-	bool createSkyboxPipeline();
-
-	void generateIBLResources();
+	// Compute occlusion culling functions (Level 8)
+	bool createCullingBuffers();
+	bool createCullingDescriptorSetLayouts();
+	bool createCullingDescriptorPools();
+	void createCullingDescriptorSets();
+	bool createCullingPipelines();
+	bool createCullingDepthResources();
+	bool createCullingHiZResources();
+	bool createCullingHiZDescriptorSetLayout();
+	bool createCullingHiZDescriptorPool();
+	void createCullingHiZDescriptorSets();
+	void updateCullingHiZDescriptorSets();
+	bool createCullingHiZPipeline();
+	void recordCullingHiZ(vk::raii::CommandBuffer& commandBuffer);
+	bool createCullingCommandPool();
+	bool createCullingCommandBuffers();
+	bool createCullingSyncObjects();
+	void updateCullingBuffers(uint32_t currentImage);
+	void recordCullingCommandBuffer(uint32_t imageIndex);
+	void recordCullingDrawCommands(vk::raii::CommandBuffer& commandBuffer);
+	void updateCullingUI();
+	void updateCullingStats();
 
 	void recordCommandBuffer(uint32_t imageIndex);
 
@@ -652,12 +907,13 @@ struct Renderer {
 	void createIndexBuffer(Mesh& mesh);
 	void createUniformBuffers(MeshBuffer& meshResource, vk::DeviceSize size);
 	void createStorageBuffers(MeshBuffer& meshResource, vk::DeviceSize size);
+	void createStorageBuffers(MeshBuffer& meshResource, vk::DeviceSize size, vk::BufferUsageFlags usage);
 	void updateUniformBuffer(uint32_t currentImage);
 
 	void waitIdle() {
 		device.waitIdle();
 	}
-	void loadModels();
+	void createMeshes();
 	void loadTextures();
 	void LoadTextureFromFile(const std::string& path, TextureData& texData);
 	void LoadHDRTextureFromFile(const std::string& path, TextureData& texData);

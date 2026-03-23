@@ -7,6 +7,10 @@ project(${NAME})
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(MSVC)
+    add_compile_options(/Zm300)
+endif()
+
 # 设置解决方案文件夹属性（用于 Visual Studio）
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 

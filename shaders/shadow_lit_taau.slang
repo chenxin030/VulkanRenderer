@@ -58,7 +58,15 @@ struct VSOutput
     float3 worldPos;
     float3 worldNormal;
     float4 shadowPos;
+    float4 prevClipPos;
+    float4 curClipPos;
     float4 color;
+};
+
+struct PSOutput
+{
+    float4 color : SV_TARGET0;
+    float4 velocity : SV_TARGET1;
 };
 
 [shader("vertex")]
@@ -73,7 +81,12 @@ VSOutput vertMain(VSInput input, uint instanceID: SV_InstanceID)
     float3x3 normalMat = (float3x3)model;
     float3 worldNormal = normalize(mul(normalMat, input.inNormal));
 
-    output.pos = mul(sceneUbo.projection, mul(sceneUbo.view, float4(worldPos, 1.0)));
+    float4 curClip = mul(sceneUbo.projection, mul(sceneUbo.view, float4(worldPos, 1.0)));
+    float4 prevClip = mul(shadowUbo.prevViewProj, float4(worldPos, 1.0));
+
+    output.pos = curClip;
+    output.curClipPos = curClip;
+    output.prevClipPos = prevClip;
     output.worldPos = worldPos;
     output.worldNormal = worldNormal;
     output.shadowPos = mul(shadowUbo.lightViewProj, float4(worldPos, 1.0));
@@ -173,8 +186,10 @@ float computeShadow(float4 shadowPos, float3 normal, float3 lightDir)
 }
 
 [shader("fragment")]
-float4 fragMain(VSOutput input) : SV_TARGET
+PSOutput fragMain(VSOutput input)
 {
+    PSOutput outp;
+
     float3 baseColor = input.color.xyz;
     float3 normal = normalize(input.worldNormal);
 
@@ -230,5 +245,11 @@ float4 fragMain(VSOutput input) : SV_TARGET
     float3 areaLight = areaSum * (areaIntensity * 0.25) * areaColor;
 
     float3 color = ambient + dirShadow * (dirDiffuse + dirSpecular) + pointDiffuse + pointSpecular + areaLight;
-    return float4(color, 1.0);
+    outp.color = float4(color, 1.0);
+
+    float2 curNdc = input.curClipPos.xy / max(input.curClipPos.w, 1e-6);
+    float2 prevNdc = input.prevClipPos.xy / max(input.prevClipPos.w, 1e-6);
+    float2 velocity = (curNdc - prevNdc) * 0.5;
+    outp.velocity = float4(velocity, 0.0, 1.0);
+    return outp;
 }
