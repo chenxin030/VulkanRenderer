@@ -11,9 +11,10 @@
 - **Level 2 (Instanced)**：把Level 1改成实例化渲染（不同实例有不同的transform）。
 - **Level 3 (PBR Instanced)**：实例化 PBR（直接光照）。
 - **Level 4 (IBL PBR + Skybox)**：HDR IBL 预计算 + IBL PBR + 天空盒。
-- **Level 5 (Shadow / PCF / PCSS)**：ShadowMap + PCF + PCSS + 可调光源与运行时 UI（当前默认）。
-- **Level 6 (TAAU)**：TAAU （拖影 / 细线闪烁 / 快速运动 / 边缘与高频压力测试）。
+- **Level 5 (Shadow / PCF / PCSS)**：ShadowMap + PCF + PCSS + 可调光源与运行时 UI。
+- **Level 6 (TAAU)**：TAAU 。
 - **Level 7（SSR）**：屏幕空间反射
+- **Level 8（Culling）**：可见性剔除
 
 ## 构建（Windows / Visual Studio）
 
@@ -53,11 +54,10 @@ cmake --build build --config Debug -j
 
 ## 文档
 
-- [Level 1：基础渲染](doc/BasicRender/README.zh-CN.md)
-- [Level 2：实例化渲染](doc/Instanced/README.zh-CN.md)
-- [Level 3/4：PBR / IBL](doc/PBR/README.zh-CN.md)
-- [Level 5：阴影 / PCF / PCSS / 光源与 UI](doc/Shadow/README.zh-CN.md)
-- [Level 6：TAAU](doc/TAAU/README.zh-CN.md)
-- [Level 7：SSR](doc/SSR/README.zh-CN.md)
-- [ECS 概述](doc/ECS/README.zh-CN.md)
-
+- [Level 1：基础渲染](doc/BasicRender/README.md)
+- [Level 2：实例化渲染](doc/Instanced/README.md)
+- [Level 3/4：PBR / IBL](doc/PBR/README.md)
+- [Level 5：阴影 / PCF / PCSS / 光源与 UI](doc/Shadow/README.md)
+- [Level 6：TAAU](doc/TAAU/README.md)
+- [Level 7：SSR](doc/SSR/README.md)
+- [Level 8: Culling](doc/Culling/README.md)
