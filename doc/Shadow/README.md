@@ -1,6 +1,6 @@
 # Shadow（Level 5）
 
-返回目录：[README.zh-CN.md](../../README.zh-CN.md)
+[返回目录](../../README.md)
 
 运行时通过 UI 切换： Hard / PCF / PCSS
 

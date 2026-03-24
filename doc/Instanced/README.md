@@ -1,6 +1,6 @@
 # 实例化渲染（Level 2）
 
-返回目录：[README.zh-CN.md](../../README.zh-CN.md)
+[返回目录](../../README.md)
 
 实例化能够使用一次 drawCall 渲染多个实例，并通过 UBO/SSBO 提供每个实例的变换矩阵。
 

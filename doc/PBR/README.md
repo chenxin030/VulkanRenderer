@@ -1,6 +1,6 @@
 # PBR（Level 3/4）
 
-返回目录：[README.zh-CN.md](../../README.zh-CN.md)
+[返回目录](../../README.md)
 
 
 涵盖两个阶段：
