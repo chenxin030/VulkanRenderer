@@ -65,6 +65,7 @@ bool VulkanBase::initVulkan(const std::string& appName) {
         std::cerr << "Failed to create sync objects" << std::endl;
         return false;
     }
+    return true;
 }
 
 bool VulkanBase::createInstance(const std::string& appName)

@@ -10,9 +10,9 @@ struct GlobalUBO {
     glm::mat4 proj;
 };
 
-void InstancedRenderer::initialize(Platform* _platform, ResourceManager* _resourceManager, Scene* _scene)
+void InstancedRenderer::initialize(Platform* _platform)
 {
-    VulkanBase::initialize(_platform, _resourceManager, _scene);
+    VulkanBase::initialize(_platform);
 }
 
 bool InstancedRenderer::initVulkan()
@@ -39,11 +39,11 @@ bool InstancedRenderer::prepareResource()
         std::cerr << "Failed to create Instanced DescriptorPool" << std::endl;
         return false;
     }
-    createInstancedDescriptorSets();
     if (!createInstancedPipeline()) {
         std::cerr << "Failed to create Instanced Pipeline" << std::endl;
         return false;
     }
+    createInstancedDescriptorSets();
 
     return true;
 }

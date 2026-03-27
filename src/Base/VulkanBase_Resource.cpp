@@ -138,68 +138,6 @@ void VulkanBase::copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBu
         throw;
     }
 }
-void VulkanBase::createMeshes() {
-    auto& meshes = resourceManager->meshes;
-#if RENDERING_LEVEL < 3
-    for (int i = 0; i < resourceManager->modelPath.size(); ++i) {
-        loadModel(resourceManager->modelPath[i], meshes[i]);
-        createVertexBuffer(meshes[i]);
-        createIndexBuffer(meshes[i]);
-    }
-#elif RENDERING_LEVEL == 3 || RENDERING_LEVEL == 4
-    generateSphere(meshes[0], 1.0f, 100);
-    createVertexBuffer(meshes[0]);
-    createIndexBuffer(meshes[0]);
-#elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7 || RENDERING_LEVEL == 8
-    generateCube(meshes[0]);
-    createVertexBuffer(meshes[0]);
-    createIndexBuffer(meshes[0]);
-
-    generateSphere(meshes[1], 1.0f, 64);
-    createVertexBuffer(meshes[1]);
-    createIndexBuffer(meshes[1]);
-#endif
-#if RENDERING_LEVEL == 4
-    skyboxTriangleMesh.vertices = {
-        { { -1.0f, -1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f } },
-        { {  3.0f, -1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 2.0f, 0.0f } },
-        { { -1.0f,  3.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 2.0f } },
-    };
-    skyboxTriangleMesh.indices = { 0, 1, 2 };
-    createVertexBuffer(skyboxTriangleMesh);
-    createIndexBuffer(skyboxTriangleMesh);
-#endif
-}
-void VulkanBase::loadTextures() {
-    for (int i = 0; i < resourceManager->texPath.size(); ++i) {
-        const auto& path = resourceManager->texPath[i];
-#if RENDERING_LEVEL == 4
-        const bool isHdr = path.size() >= 4 && path.substr(path.size() - 4) == ".hdr";
-        if (isHdr) {
-            LoadHDRTextureFromFile(path, resourceManager->textures[i]);
-            vk::SamplerCreateInfo samplerInfo{
-                .magFilter = vk::Filter::eLinear,
-                .minFilter = vk::Filter::eLinear,
-                .mipmapMode = vk::SamplerMipmapMode::eLinear,
-                .addressModeU = vk::SamplerAddressMode::eClampToEdge,
-                .addressModeV = vk::SamplerAddressMode::eClampToEdge,
-                .addressModeW = vk::SamplerAddressMode::eClampToEdge,
-                .mipLodBias = 0.0f,
-                .anisotropyEnable = vk::False,
-                .maxAnisotropy = 1.0f,
-                .compareEnable = vk::False,
-                .compareOp = vk::CompareOp::eAlways,
-                .minLod = 0.0f,
-                .maxLod = 0.0f
-            };
-            resourceManager->textures[i].textureSampler = vk::raii::Sampler(device, samplerInfo);
-            continue;
-        }
-#endif
-        LoadTextureFromFile(path, resourceManager->textures[i]);
-        createTextureSampler(resourceManager->textures[i].textureSampler);
-    }
-}
 void VulkanBase::LoadHDRTextureFromFile(const std::string& path, TextureData& texData)
 {
     int texWidth = 0, texHeight = 0, texChannels = 0;

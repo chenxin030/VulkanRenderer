@@ -1,12 +1,41 @@
 #pragma once
 
-#include <Core/Renderer.h>
+#include <Base/VulkanBase.h>
+#include <glm/glm.hpp>
+#include <vector>
 
-// PBR renderer wrapper (legacy core path, to be extracted later).
-class PBRRenderer : public Renderer
+struct PBRRenderer final : VulkanBase
 {
 public:
-    PBRRenderer() = default;
-    ~PBRRenderer() = default;
+    void initialize(Platform* _platform);
+
+    bool initVulkan();
+    bool prepareResource();
+    void render();
+    void waitIdle() { device.waitIdle(); }
+
+private:
+    // PBR pipeline resources
+    vk::raii::DescriptorSetLayout pbrDescriptorSetLayout = nullptr;
+    vk::raii::PipelineLayout      pbrPipelineLayout = nullptr;
+    vk::raii::Pipeline            pbrPipeline = nullptr;
+    vk::raii::DescriptorPool      pbrDescriptorPool = nullptr;
+
+    Mesh sphereMesh;
+
+    MeshBuffer pbrInstanceBufferResources;
+    MeshBuffer sceneUboResources;
+    MeshBuffer lightUboResources;
+
+    uint32_t instanceCount = 49;
+
+    bool createPBRDescriptorSetLayout();
+    bool createPBRDescriptorPool();
+    void createPBRDescriptorSets();
+    bool createPBRPipeline();
+    void createPBRBuffers();
+    void updatePBRInstanceBuffers(uint32_t frameIndex);
+
+    void recordCommandBuffer(uint32_t imageIndex);
 };
 

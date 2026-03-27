@@ -7,11 +7,10 @@
 // Independent "triangle" example (no RENDERING_LEVEL).
 struct InstancedRenderer final : VulkanBase
 {
-    void initialize(Platform* _platform, ResourceManager* _resourceManager, Scene* _scene);
+    void initialize(Platform* _platform);
 
     bool initVulkan();
     bool prepareResource();
-    void processInput(float) {}
     void render();
     void cleanup();
 

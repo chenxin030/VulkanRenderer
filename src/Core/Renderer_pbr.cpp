@@ -4,8 +4,6 @@
 #include <chrono>
 #include <cmath>
 
-#if RENDERING_LEVEL == 3
-
 bool Renderer::createPBRDescriptorSetLayout() {
 	try {
 		std::vector<vk::DescriptorSetLayoutBinding> bindings = {
@@ -260,8 +258,6 @@ void Renderer::updatePBRInstanceBuffers(uint32_t currentImage) {
 
 	memcpy(lightUboResources.BuffersMapped[currentImage], &lightUbo, sizeof(lightUbo));
 }
-
-#elif RENDERING_LEVEL == 4
 
 namespace
 {
@@ -1162,5 +1158,3 @@ void Renderer::generateIBLResources()
 
 	endSingleTimeCommands(*cmd);
 }
-
-#endif

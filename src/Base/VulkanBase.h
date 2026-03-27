@@ -87,11 +87,17 @@ struct VulkanBase {
 
     Camera camera = Camera(glm::vec3(0.0f, 0.0f, 5.0f));
     Platform* platform = nullptr;
-    ResourceManager* resourceManager = nullptr;
-    Scene* scene = nullptr;
-    uint32_t maxInstances = 0;
 
-    void initialize(Platform* _platform, ResourceManager* _resourceManager, Scene* _scene);
+    void initialize(Platform* _platform);
+    void processInput(float deltaTime) {
+        if (!platform->rightMouseButtonPressed) return;
+        if (glfwGetKey(platform->window, GLFW_KEY_W) == GLFW_PRESS) camera.ProcessKeyboard(FORWARD, deltaTime);
+        if (glfwGetKey(platform->window, GLFW_KEY_S) == GLFW_PRESS) camera.ProcessKeyboard(BACKWARD, deltaTime);
+        if (glfwGetKey(platform->window, GLFW_KEY_A) == GLFW_PRESS) camera.ProcessKeyboard(LEFT, deltaTime);
+        if (glfwGetKey(platform->window, GLFW_KEY_D) == GLFW_PRESS) camera.ProcessKeyboard(RIGHT, deltaTime);
+        if (glfwGetKey(platform->window, GLFW_KEY_Q) == GLFW_PRESS) camera.ProcessKeyboard(UP, deltaTime);
+        if (glfwGetKey(platform->window, GLFW_KEY_E) == GLFW_PRESS) camera.ProcessKeyboard(DOWN, deltaTime);
+    }
 
     // Core lifecycle (implemented today in Renderer_*; will be moved later)
     bool initVulkan(const std::string& appName);

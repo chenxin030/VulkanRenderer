@@ -9,20 +9,6 @@ struct Renderer : VulkanBase {
 
 	Renderer();
 
-#if RENDERING_LEVEL == 1
-	vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
-	vk::raii::DescriptorPool      descriptorPool = nullptr;
-	vk::raii::PipelineLayout      pipelineLayout = nullptr;
-	vk::raii::Pipeline            graphicsPipeline = nullptr;
-#elif RENDERING_LEVEL == 2
-	// Instanced rendering resources
-	vk::raii::DescriptorSetLayout instancedDescriptorSetLayout = nullptr;
-	vk::raii::DescriptorPool      instancedDescriptorPool = nullptr;
-	vk::raii::PipelineLayout      instancedPipelineLayout = nullptr;
-	vk::raii::Pipeline            instancedPipeline = nullptr;
-
-	MeshBuffer instancedBufferResources;
-	MeshBuffer globalUboResources;
 #elif RENDERING_LEVEL == 3
 	// PBR Instanced rendering resources
 	vk::raii::DescriptorSetLayout pbrDescriptorSetLayout = nullptr;
@@ -302,38 +288,6 @@ struct Renderer : VulkanBase {
 				return false;
 			}
 		}
-#if RENDERING_LEVEL == 1
-		const uint32_t instanceCount = scene ? scene->getActiveInstanceCount() : 0;
-		for (auto& meshUniformBuffer : resourceManager->meshUniformBuffer) {
-			createUniformBuffers(meshUniformBuffer, sizeof(MVP) * instanceCount);
-		}
-		if (!createDescriptorSetLayout()) {
-			std::cerr << "Failed to create descriptor set layout" << std::endl;
-			return false;
-		}
-		if (!createGraphicsPipeline()) {
-			std::cerr << "Failed to create graphics pipeline" << std::endl;
-			return false;
-		}
-		if (!createDescriptorPool()) {
-			std::cerr << "Failed to create descriptor pool" << std::endl;
-			return false;
-		}
-#elif RENDERING_LEVEL == 2
-		// Initialize instanced rendering
-		createInstancedBuffers();
-		if (!createInstancedDescriptorSetLayout()) {
-			std::cerr << "Failed to create Instanced DescriptorSetLayout" << std::endl;
-			return false;
-		}
-		if (!createInstancedDescriptorPool()) {
-			std::cerr << "Failed to create Instanced DescriptorPool" << std::endl;
-			return false;
-		}
-		if (!createInstancedPipeline()) {
-			std::cerr << "Failed to create Instanced Pipeline" << std::endl;
-			return false;
-		}
 #elif RENDERING_LEVEL == 3
 		// Initialize PBR instanced rendering
 		createPBRBuffers();
@@ -521,10 +475,6 @@ struct Renderer : VulkanBase {
 	void prepareResource() {
 		createMeshes();
 		loadTextures();
-#if RENDERING_LEVEL == 1
-		createDescriptorSets();
-#elif RENDERING_LEVEL == 2
-		createInstancedDescriptorSets();
 #elif RENDERING_LEVEL == 3
 		createPBRDescriptorSets();
 #elif RENDERING_LEVEL == 4

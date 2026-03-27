@@ -283,26 +283,6 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex)
 	commandBuffer.beginRendering(renderingInfo);
 	commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
 	commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
-
-#if RENDERING_LEVEL == 1
-	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
-	auto& mesh = resourceManager->meshes[scene->cubeMeshIndex];
-	commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
-	commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
-	const uint32_t instanceCount = scene ? scene->getMeshInstanceCount(MeshTag::Cube) : 0;
-	for (uint32_t i = 0; i < instanceCount; ++i) {
-		auto& descriptorSets = resourceManager->meshUniformBuffer[i].descriptorSets;
-		commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelineLayout, 0, *descriptorSets[currentFrame], nullptr);
-		commandBuffer.drawIndexed(mesh.indices.size(), 1, 0, 0, 0);
-	}
-#elif RENDERING_LEVEL == 2
-	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *instancedPipeline);
-	auto& mesh = resourceManager->meshes[scene->cubeMeshIndex];
-	commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
-	commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
-	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *instancedPipelineLayout, 0, *instancedBufferResources.descriptorSets[currentFrame], nullptr);
-	const uint32_t instanceCount = scene ? scene->getMeshInstanceCount(MeshTag::Cube) : 0;
-	commandBuffer.drawIndexed(mesh.indices.size(), instanceCount, 0, 0, 0);
 #elif RENDERING_LEVEL == 3
 	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *pbrPipeline);
 	auto& mesh = resourceManager->meshes[scene->sphereMeshIndex];

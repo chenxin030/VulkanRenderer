@@ -21,28 +21,6 @@ struct TextureData {
 	uint32_t mipLevels;
 };
 
-struct PBRInstanceData {
-	glm::mat4 model;
-	float metallic;
-	float roughness;
-	alignas(16) glm::vec3 color;
-};
-
-struct SceneUBO {
-	glm::mat4 projection;
-	glm::mat4 view;
-	glm::vec3 camPos;
-};
-
-struct PointLight {
-	glm::vec4 position; // w is intensity or unused
-	glm::vec4 color;    // w is intensity
-};
-
-struct LightUBO {
-	PointLight lights[4];
-};
-
 struct ParamsUBO {
 	float exposure;
 	float gamma;

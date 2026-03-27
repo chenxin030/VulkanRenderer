@@ -1,8 +1,6 @@
 #include "PBRRenderer.h"
 
-#include <Core/Platform.h>
-#include <Core/ResourceManager.h>
-#include "Scene.h"
+#include <Base/Platform.h>
 
 #include <cstdio>
 #include <exception>
@@ -13,22 +11,16 @@ int main()
     try
     {
         Platform platform;
-        platform.SetBaseTitle("VulkanRenderer - pbr (Standalone)");
+        platform.SetBaseTitle("VulkanRenderer - pbr");
         platform.initWindow();
 
-        ResourceManager resourceManager;
-        Scene scene;
-        const uint32_t sceneMax = Scene::getDefaultMaxInstances();
-        scene.initScene(resourceManager, sceneMax);
-        resourceManager.initResource(sceneMax);
-
-        auto app = std::make_unique<PBRRenderer>();
-        app->initialize(&platform, &resourceManager, &scene);
-        if (!app->initVulkan())
+        PBRRenderer renderer;
+        renderer.initialize(&platform);
+        if (!renderer.initVulkan())
         {
             return EXIT_FAILURE;
         }
-        app->prepareResource();
+        renderer.prepareResource();
 
         bool running = true;
         while (running)
@@ -38,13 +30,12 @@ int main()
                 running = false;
                 break;
             }
-            app->processInput(platform.frameTimer);
-            app->render();
+            renderer.processInput(platform.frameTimer);
+            renderer.render();
             platform.endFrame();
         }
 
-        app->waitIdle();
-        app->cleanup();
+        renderer.waitIdle();
         platform.cleanup();
     }
     catch (const std::exception& e)

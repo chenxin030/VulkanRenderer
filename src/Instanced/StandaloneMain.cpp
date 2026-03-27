@@ -13,13 +13,13 @@ int main()
         platform.SetBaseTitle("VulkanRenderer - 1_InstenceRender");
         platform.initWindow();
 
-        InstancedRenderer app;
-        app.initialize(&platform, nullptr, nullptr);
-        if (!app.initVulkan())
+        InstancedRenderer renderer;
+        renderer.initialize(&platform);
+        if (!renderer.initVulkan())
         {
             return EXIT_FAILURE;
         }
-        app.prepareResource();
+        renderer.prepareResource();
 
         bool running = true;
         while (running)
@@ -29,11 +29,12 @@ int main()
                 running = false;
                 break;
             }
-            app.render();
+            renderer.processInput(platform.frameTimer);
+            renderer.render();
             platform.endFrame();
         }
 
-        app.device.waitIdle();
+        renderer.device.waitIdle();
         platform.cleanup();
     }
     catch (const std::exception& e)
