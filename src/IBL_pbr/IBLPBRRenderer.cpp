@@ -1,544 +1,371 @@
-#include "Renderer.h"
-#include <glm/glm.hpp>
+#include "IBLPBRRenderer.h"
+
 #include <glm/gtc/matrix_transform.hpp>
 #include <chrono>
 #include <cmath>
+#include <algorithm>
 
-bool Renderer::createPBRDescriptorSetLayout() {
-	try {
-		std::vector<vk::DescriptorSetLayoutBinding> bindings = {
-			{
-				.binding = 0,
-				.descriptorType = vk::DescriptorType::eUniformBuffer,
-				.descriptorCount = 1,
-				.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment
-			},
-			{
-				.binding = 1,
-				.descriptorType = vk::DescriptorType::eStorageBuffer,
-				.descriptorCount = 1,
-				.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment
-			},
-			{
-				.binding = 2,
-				.descriptorType = vk::DescriptorType::eUniformBuffer,
-				.descriptorCount = 1,
-				.stageFlags = vk::ShaderStageFlagBits::eFragment
-			}
-		};
+struct PBRInstanceData {
+    glm::mat4 model;
+    float metallic;
+    float roughness;
+    alignas(16) glm::vec3 color;
+};
 
-		vk::DescriptorSetLayoutCreateInfo layoutInfo{
-			.bindingCount = static_cast<uint32_t>(bindings.size()),
-			.pBindings = bindings.data()
-		};
+struct SceneUBO {
+    glm::mat4 projection;
+    glm::mat4 view;
+    glm::vec3 camPos;
+};
 
-		pbrDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
-		return true;
-	}
-	catch (const std::exception& e) {
-		std::cerr << "Failed to create PBR descriptor set layout: " << e.what() << std::endl;
-		return false;
-	}
+struct PointLight {
+    glm::vec4 position; // w is intensity or unused
+    glm::vec4 color;    // w is intensity
+};
+
+struct LightUBO {
+    PointLight lights[4];
+};
+
+struct ParamsUBO {
+    float exposure;
+    float gamma;
+};
+
+struct SkyboxUBO {
+    glm::mat4 invProjection;
+    glm::mat4 invView;
+};
+
+struct PushConstMat4
+{
+	glm::mat4 mvp;
+};
+
+struct PushConstIrradiance
+{
+	glm::mat4 mvp;
+	float deltaPhi;
+	float deltaTheta;
+	float padding0;
+	float padding1;
+};
+
+struct PushConstPrefilter
+{
+	glm::mat4 mvp;
+	float roughness;
+	uint32_t numSamples;
+	float padding0;
+	float padding1;
+};
+
+void IBLPBRRenderer::initialize(Platform* _platform)
+{
+    VulkanBase::initialize(_platform);
 }
 
-bool Renderer::createPBRDescriptorPool() {
-	try {
-		std::vector<vk::DescriptorPoolSize> poolSizes = {
-			{.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2 }, // Scene + Light
-			{.type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT }
-		};
-
-		vk::DescriptorPoolCreateInfo poolInfo{
-			.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-			.maxSets = MAX_FRAMES_IN_FLIGHT,
-			.poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
-			.pPoolSizes = poolSizes.data()
-		};
-
-		pbrDescriptorPool = vk::raii::DescriptorPool(device, poolInfo);
-		return true;
-	}
-	catch (const std::exception& e) {
-		std::cerr << "Failed to create PBR descriptor pool: " << e.what() << std::endl;
-		return false;
-	}
+bool IBLPBRRenderer::initVulkan()
+{
+    camera = Camera(glm::vec3(0.0f, -1.0f, 15.0f));
+    if (!VulkanBase::initVulkan("VulkanRenderer - 2_pbr")) return false;
+    return true;
 }
 
-void Renderer::createPBRDescriptorSets() {
-	std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *pbrDescriptorSetLayout);
-	vk::DescriptorSetAllocateInfo allocInfo{
-		.descriptorPool = *pbrDescriptorPool,
-		.descriptorSetCount = static_cast<uint32_t>(layouts.size()),
-		.pSetLayouts = layouts.data()
+bool IBLPBRRenderer::prepareResource()
+{
+    // Geometry
+    generateSphere(sphereMesh, 1.0f, 100);
+    createVertexBuffer(sphereMesh);
+    createIndexBuffer(sphereMesh);
+
+	// Full-screen triangle for skybox (vertex shader uses input.Pos.xy as NDC)
+	skyboxTriangleMesh.vertices = {
+		{ { -1.0f, -1.0f, 0.0f }, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f} },
+		{ {  3.0f, -1.0f, 0.0f }, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f} },
+		{ { -1.0f,  3.0f, 0.0f }, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f} },
 	};
+	skyboxTriangleMesh.indices = { 0, 1, 2 };
+	createVertexBuffer(skyboxTriangleMesh);
+	createIndexBuffer(skyboxTriangleMesh);
 
-	pbrInstanceBufferResources.descriptorSets = vk::raii::DescriptorSets(device, allocInfo);
+	// HDR environment (equirectangular)
+	LoadHDRTextureFromFile("newport_loft.hdr", hdrEquirectData);
+	createTextureSampler(hdrEquirectData.textureSampler);
 
-	for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-		vk::DescriptorBufferInfo sceneBufferInfo{
-			.buffer = *sceneUboResources.Buffers[i],
-			.offset = 0,
-			.range = sizeof(SceneUBO)
-		};
+    createPBRBuffers();
+    if (!createPBRDescriptorSetLayout()) {
+        std::cerr << "Failed to create PBR DescriptorSetLayout" << std::endl;
+        return false;
+    }
+    if (!createPBRDescriptorPool()) {
+        std::cerr << "Failed to create PBR DescriptorPool" << std::endl;
+        return false;
+    }
+    if (!createPBRPipeline()) {
+        std::cerr << "Failed to create PBR Pipeline" << std::endl;
+        return false;
+    }
 
-		vk::DescriptorBufferInfo instanceBufferInfo{
-			.buffer = *pbrInstanceBufferResources.Buffers[i],
-			.offset = 0,
-			.range = sizeof(PBRInstanceData) * maxInstances
-		};
+    if (!createSkyboxDescriptorSetLayout()) {
+        std::cerr << "Failed to create Skybox DescriptorSetLayout" << std::endl;
+        return false;
+    }
+    if (!createSkyboxDescriptorPool()) {
+        std::cerr << "Failed to create Skybox DescriptorPool" << std::endl;
+        return false;
+    }
+    if (!createSkyboxPipeline()) {
+        std::cerr << "Failed to create Skybox Pipeline" << std::endl;
+        return false;
+    }
 
-		vk::DescriptorBufferInfo lightBufferInfo{
-			.buffer = *lightUboResources.Buffers[i],
-			.offset = 0,
-			.range = sizeof(LightUBO)
-		};
+	// Precompute IBL maps (env cubemap / irradiance / prefilter / BRDF LUT)
+	generateIBLResources();
 
-		std::vector<vk::WriteDescriptorSet> descriptorWrites = {
-			{
-				.dstSet = *pbrInstanceBufferResources.descriptorSets[i],
-				.dstBinding = 0,
-				.dstArrayElement = 0,
-				.descriptorCount = 1,
-				.descriptorType = vk::DescriptorType::eUniformBuffer,
-				.pBufferInfo = &sceneBufferInfo
-			},
-			{
-				.dstSet = *pbrInstanceBufferResources.descriptorSets[i],
-				.dstBinding = 1,
-				.dstArrayElement = 0,
-				.descriptorCount = 1,
-				.descriptorType = vk::DescriptorType::eStorageBuffer,
-				.pBufferInfo = &instanceBufferInfo
-			},
-			{
-				.dstSet = *pbrInstanceBufferResources.descriptorSets[i],
-				.dstBinding = 2,
-				.dstArrayElement = 0,
-				.descriptorCount = 1,
-				.descriptorType = vk::DescriptorType::eUniformBuffer,
-				.pBufferInfo = &lightBufferInfo
-			}
-		};
+	// Bind IBL maps to descriptors
+	createPBRDescriptorSets();
+	createSkyboxDescriptorSets();
 
-		device.updateDescriptorSets(descriptorWrites, nullptr);
-	}
+    return true;
 }
 
-bool Renderer::createPBRPipeline() {
-	try {
-		vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "pbr.spv"));
-
-		vk::PipelineShaderStageCreateInfo vertShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain" };
-		vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain" };
-		vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
-
-		auto bindingDescription = Vertex::getBindingDescription();
-		auto attributeDescriptions = Vertex::getAttributeDescriptions();
-		vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
-			.vertexBindingDescriptionCount = 1,
-			.pVertexBindingDescriptions = &bindingDescription,
-			.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
-			.pVertexAttributeDescriptions = attributeDescriptions.data()
-		};
-		vk::PipelineInputAssemblyStateCreateInfo inputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = vk::False };
-		vk::PipelineViewportStateCreateInfo viewportState{ .viewportCount = 1, .scissorCount = 1 };
-
-		vk::PipelineRasterizationStateCreateInfo rasterizer{ .depthClampEnable = vk::False, .rasterizerDiscardEnable = vk::False, .polygonMode = vk::PolygonMode::eFill, .cullMode = vk::CullModeFlagBits::eBack, .frontFace = vk::FrontFace::eCounterClockwise, .depthBiasEnable = vk::False, .lineWidth = 1.0f };
-
-		vk::PipelineMultisampleStateCreateInfo multisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False };
-
-		vk::PipelineDepthStencilStateCreateInfo depthStencil{
-			.depthTestEnable = vk::True,
-			.depthWriteEnable = vk::True,
-			.depthCompareOp = vk::CompareOp::eLess,
-			.depthBoundsTestEnable = vk::False,
-			.stencilTestEnable = vk::False
-		};
-
-		vk::PipelineColorBlendAttachmentState colorBlendAttachment{ .blendEnable = vk::False,
-																   .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA };
-
-		vk::PipelineColorBlendStateCreateInfo colorBlending{ .logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 1, .pAttachments = &colorBlendAttachment };
-
-		std::vector dynamicStates = {
-			vk::DynamicState::eViewport,
-			vk::DynamicState::eScissor };
-		vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
-
-		vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 1, .pSetLayouts = &*pbrDescriptorSetLayout, .pushConstantRangeCount = 0 };
-
-		pbrPipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
-
-		vk::Format depthFormat = findDepthFormat();
-
-		vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipelineCreateInfoChain = {
-			{
-				.stageCount = 2,
-				.pStages = shaderStages,
-				.pVertexInputState = &vertexInputInfo,
-				.pInputAssemblyState = &inputAssembly,
-				.pViewportState = &viewportState,
-				.pRasterizationState = &rasterizer,
-				.pMultisampleState = &multisampling,
-				.pDepthStencilState = &depthStencil,
-				.pColorBlendState = &colorBlending,
-				.pDynamicState = &dynamicState,
-				.layout = pbrPipelineLayout,
-				.renderPass = nullptr
-			},
-			{
-				.colorAttachmentCount = 1,
-				.pColorAttachmentFormats = &swapChainImageFormat,
-				.depthAttachmentFormat = depthFormat
-			}
-		};
-
-		pbrPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
-		return true;
-	}
-	catch (const std::exception& e) {
-		std::cerr << "Failed to create PBR graphics pipeline: " << e.what() << std::endl;
-		return false;
-	}
-}
-
-void Renderer::createPBRBuffers() {
-	createUniformBuffers(sceneUboResources, sizeof(SceneUBO));
-	createUniformBuffers(lightUboResources, sizeof(LightUBO));
-	if (scene != nullptr) {
-		maxInstances = scene->getMaxInstances();
-	}
-	createStorageBuffers(pbrInstanceBufferResources, sizeof(PBRInstanceData) * maxInstances);
-}
-
-void Renderer::updatePBRInstanceBuffers(uint32_t currentImage) {
-	// Scene UBO
-	SceneUBO sceneUbo{
-		.projection = glm::perspective(glm::radians(camera.Zoom),
-			static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height),
-			0.1f, 100.0f),
-		.view = camera.GetViewMatrix(),
-		.camPos = camera.Position
-	};
-	sceneUbo.projection[1][1] *= -1;
-	memcpy(sceneUboResources.BuffersMapped[currentImage], &sceneUbo, sizeof(sceneUbo));
-
-	if (scene == nullptr || scene->getActiveInstanceCount() == 0) {
-		return;
-	}
-
-	std::vector<PBRInstance> ecsInstances;
-	scene->world.collectPBRInstances(MeshTag::Sphere, ecsInstances, maxInstances);
-	if (ecsInstances.empty()) {
-		return;
-	}
-
-	std::vector<PBRInstanceData> instanceData;
-	instanceData.reserve(ecsInstances.size());
-	for (const auto& instance : ecsInstances) {
-		instanceData.push_back(PBRInstanceData{ instance.model, instance.metallic, instance.roughness, instance.color });
-	}
-
-	memcpy(pbrInstanceBufferResources.BuffersMapped[currentImage], instanceData.data(), sizeof(PBRInstanceData) * instanceData.size());
-
-	// Light Animation
-	static auto startTime = std::chrono::high_resolution_clock::now();
-	auto currentTime = std::chrono::high_resolution_clock::now();
-	float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-
-	LightUBO lightUbo;
-	lightUbo.lights[0] = { .position = glm::vec4(20.0f, 20.0f, 20.0f, 1.0f), .color = glm::vec4(1.0f, 1.0f, 1.0f, 400) };
-
-	lightUbo.lights[1] = { .position = glm::vec4(-20.0f, -10.0f, 10.0f, 1.0f), .color = glm::vec4(1.0f, 1.0f, 1.0f, 50.0f) };
-
-	// Moving along X axis
-	lightUbo.lights[2] = { .position = glm::vec4(sin(time * 0.5f) * 12.0f, 5.0f, 8.0f, 1.0f), .color = glm::vec4(1.0f, 1.0f, 1.0f, 150.0f) };
-	// Moving along Y axis
-	lightUbo.lights[3] = { .position = glm::vec4(0.0f, cos(time * 0.5f) * 12.0f, 8.0f, 1.0f), .color = glm::vec4(1.0f, 1.0f, 1.0f, 150.0f) };
-
-	memcpy(lightUboResources.BuffersMapped[currentImage], &lightUbo, sizeof(lightUbo));
-}
-
-namespace
+bool IBLPBRRenderer::createPBRDescriptorSetLayout()
 {
-	void transitionImageLayoutCmd(
-		vk::raii::CommandBuffer& commandBuffer,
-		vk::Image image,
-		vk::ImageAspectFlags aspectMask,
-		vk::ImageLayout oldLayout,
-		vk::ImageLayout newLayout,
-		uint32_t baseMipLevel,
-		uint32_t levelCount,
-		uint32_t baseArrayLayer,
-		uint32_t layerCount,
-		vk::PipelineStageFlags srcStage,
-		vk::PipelineStageFlags dstStage,
-		vk::AccessFlags srcAccessMask,
-		vk::AccessFlags dstAccessMask)
-	{
-		vk::ImageMemoryBarrier barrier{
-			.srcAccessMask = srcAccessMask,
-			.dstAccessMask = dstAccessMask,
-			.oldLayout = oldLayout,
-			.newLayout = newLayout,
-			.srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-			.dstQueueFamilyIndex = vk::QueueFamilyIgnored,
-			.image = image,
-			.subresourceRange = vk::ImageSubresourceRange{
-				.aspectMask = aspectMask,
-				.baseMipLevel = baseMipLevel,
-				.levelCount = levelCount,
-				.baseArrayLayer = baseArrayLayer,
-				.layerCount = layerCount
-			}
-		};
-		commandBuffer.pipelineBarrier(srcStage, dstStage, {}, {}, {}, barrier);
-	}
+    try {
+        std::vector<vk::DescriptorSetLayoutBinding> bindings = {
+            {.binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment },	// sceneUbo
+            {.binding = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment },	// instanceData
+            {.binding = 2, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },										// lightUbo
+            {.binding = 3, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },								// irradianceCubemapSampler
+            {.binding = 4, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },								// prefilteredMapSampler
+            {.binding = 5, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },								// BRDFLUTsampler
+            {.binding = 6, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },										// paramsUbo
+        };
+
+        vk::DescriptorSetLayoutCreateInfo layoutInfo{
+            .bindingCount = static_cast<uint32_t>(bindings.size()),
+            .pBindings = bindings.data()
+        };
+
+        iblPbrDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
+        return true;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Failed to create PBR descriptor set layout: " << e.what() << std::endl;
+        return false;
+    }
 }
 
-bool Renderer::createIBLPBRDescriptorSetLayout()
+bool IBLPBRRenderer::createPBRDescriptorPool()
 {
-	try
-	{
-		std::vector<vk::DescriptorSetLayoutBinding> bindings = {
-			{.binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment },	// sceneUbo
-			{.binding = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment },	// instanceData
-			{.binding = 2, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },										// lightUbo
-			{.binding = 3, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },								// irradianceCubemapSampler
-			{.binding = 4, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },								// prefilteredMapSampler
-			{.binding = 5, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },								// BRDFLUTsampler
-			{.binding = 6, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },										// paramsUbo
-		};
+    try {
+        std::vector<vk::DescriptorPoolSize> poolSizes = {
+            {.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 3u },
+            {.type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
+            {.type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 3u },
+        };
 
-		vk::DescriptorSetLayoutCreateInfo layoutInfo{
-			.bindingCount = static_cast<uint32_t>(bindings.size()),
-			.pBindings = bindings.data()
-		};
+        vk::DescriptorPoolCreateInfo poolInfo{
+            .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+            .maxSets = MAX_FRAMES_IN_FLIGHT,
+            .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+            .pPoolSizes = poolSizes.data()
+        };
 
-		iblPbrDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
-		return true;
-	}
-	catch (const std::exception& e)
-	{
-		std::cerr << "Failed to create IBL PBR descriptor set layout: " << e.what() << std::endl;
-		return false;
-	}
+        iblPbrDescriptorPool = vk::raii::DescriptorPool(device, poolInfo);
+        return true;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Failed to create PBR descriptor pool: " << e.what() << std::endl;
+        return false;
+    }
 }
 
-bool Renderer::createIBLPBRDescriptorPool()
+void IBLPBRRenderer::createPBRDescriptorSets()
 {
-	try
-	{
-		std::vector<vk::DescriptorPoolSize> poolSizes = {
-			{.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 3u },
-			{.type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
-			{.type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 3u },
-		};
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *iblPbrDescriptorSetLayout);
+    vk::DescriptorSetAllocateInfo allocInfo{
+        .descriptorPool = *iblPbrDescriptorPool,
+        .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+        .pSetLayouts = layouts.data()
+    };
 
-		vk::DescriptorPoolCreateInfo poolInfo{
-			.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-			.maxSets = MAX_FRAMES_IN_FLIGHT,
-			.poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
-			.pPoolSizes = poolSizes.data()
-		};
+    pbrInstanceBufferResources.descriptorSets = vk::raii::DescriptorSets(device, allocInfo);
 
-		iblPbrDescriptorPool = vk::raii::DescriptorPool(device, poolInfo);
-		return true;
-	}
-	catch (const std::exception& e)
-	{
-		std::cerr << "Failed to create IBL PBR descriptor pool: " << e.what() << std::endl;
-		return false;
-	}
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vk::DescriptorBufferInfo sceneBufferInfo{ .buffer = *sceneUboResources.Buffers[i], .offset = 0, .range = sizeof(SceneUBO) };
+        vk::DescriptorBufferInfo instanceBufferInfo{ .buffer = *pbrInstanceBufferResources.Buffers[i], .offset = 0, .range = sizeof(PBRInstanceData) * instanceCount };
+        vk::DescriptorBufferInfo lightBufferInfo{ .buffer = *lightUboResources.Buffers[i], .offset = 0, .range = sizeof(LightUBO) };
+        vk::DescriptorBufferInfo paramsBufferInfo{ .buffer = *paramsUboResources.Buffers[i], .offset = 0, .range = sizeof(ParamsUBO) };
+
+        vk::DescriptorImageInfo irradianceInfo{ .sampler = irradianceCubemapData.textureSampler, .imageView = irradianceCubemapData.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
+        vk::DescriptorImageInfo prefilteredInfo{ .sampler = prefilteredEnvMapData.textureSampler, .imageView = prefilteredEnvMapData.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
+        vk::DescriptorImageInfo brdfInfo{ .sampler = brdfLutData.textureSampler, .imageView = brdfLutData.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
+
+        std::vector<vk::WriteDescriptorSet> writes = {
+            {.dstSet = *pbrInstanceBufferResources.descriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &sceneBufferInfo },
+            {.dstSet = *pbrInstanceBufferResources.descriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &instanceBufferInfo },
+            {.dstSet = *pbrInstanceBufferResources.descriptorSets[i], .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &lightBufferInfo },
+            {.dstSet = *pbrInstanceBufferResources.descriptorSets[i], .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &irradianceInfo },
+            {.dstSet = *pbrInstanceBufferResources.descriptorSets[i], .dstBinding = 4, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &prefilteredInfo },
+            {.dstSet = *pbrInstanceBufferResources.descriptorSets[i], .dstBinding = 5, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &brdfInfo },
+            {.dstSet = *pbrInstanceBufferResources.descriptorSets[i], .dstBinding = 6, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &paramsBufferInfo },
+        };
+        device.updateDescriptorSets(writes, nullptr);
+    }
 }
 
-void Renderer::createIBLPBRDescriptorSets()
+bool IBLPBRRenderer::createPBRPipeline()
 {
-	std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *iblPbrDescriptorSetLayout);
-	vk::DescriptorSetAllocateInfo allocInfo{
-		.descriptorPool = *iblPbrDescriptorPool,
-		.descriptorSetCount = static_cast<uint32_t>(layouts.size()),
-		.pSetLayouts = layouts.data()
-	};
+    try {
+        vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "pbribl.spv"));
 
-	pbrInstanceBufferResources.descriptorSets = vk::raii::DescriptorSets(device, allocInfo);
+        vk::PipelineShaderStageCreateInfo vertShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain" };
+        vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain" };
+        vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
-	for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
-	{
-		vk::DescriptorBufferInfo sceneBufferInfo{ .buffer = *sceneUboResources.Buffers[i], .offset = 0, .range = sizeof(SceneUBO) };
-		vk::DescriptorBufferInfo instanceBufferInfo{ .buffer = *pbrInstanceBufferResources.Buffers[i], .offset = 0, .range = sizeof(PBRInstanceData) * maxInstances };
-		vk::DescriptorBufferInfo lightBufferInfo{ .buffer = *lightUboResources.Buffers[i], .offset = 0, .range = sizeof(LightUBO) };
-		vk::DescriptorBufferInfo paramsBufferInfo{ .buffer = *paramsUboResources.Buffers[i], .offset = 0, .range = sizeof(ParamsUBO) };
+        auto bindingDescription = Vertex::getBindingDescription();
+        std::array<vk::VertexInputAttributeDescription, 2> attributeDescriptions = {
+            vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos)),
+            vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal))
+        };
+        vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
+            .vertexBindingDescriptionCount = 1,
+            .pVertexBindingDescriptions = &bindingDescription,
+            .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
+            .pVertexAttributeDescriptions = attributeDescriptions.data()
+        };
+        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = vk::False };
+        vk::PipelineViewportStateCreateInfo viewportState{ .viewportCount = 1, .scissorCount = 1 };
 
-		vk::DescriptorImageInfo irradianceInfo{ .sampler = irradianceCubemapData.textureSampler, .imageView = irradianceCubemapData.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
-		vk::DescriptorImageInfo prefilteredInfo{ .sampler = prefilteredEnvMapData.textureSampler, .imageView = prefilteredEnvMapData.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
-		vk::DescriptorImageInfo brdfInfo{ .sampler = brdfLutData.textureSampler, .imageView = brdfLutData.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
+        vk::PipelineRasterizationStateCreateInfo rasterizer{
+            .depthClampEnable = vk::False,
+            .rasterizerDiscardEnable = vk::False,
+            .polygonMode = vk::PolygonMode::eFill,
+            .cullMode = vk::CullModeFlagBits::eBack,
+            .frontFace = vk::FrontFace::eCounterClockwise,
+            .depthBiasEnable = vk::False,
+            .lineWidth = 1.0f
+        };
 
-		std::vector<vk::WriteDescriptorSet> writes = {
-			{.dstSet = *pbrInstanceBufferResources.descriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &sceneBufferInfo },
-			{.dstSet = *pbrInstanceBufferResources.descriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &instanceBufferInfo },
-			{.dstSet = *pbrInstanceBufferResources.descriptorSets[i], .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &lightBufferInfo },
-			{.dstSet = *pbrInstanceBufferResources.descriptorSets[i], .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &irradianceInfo },
-			{.dstSet = *pbrInstanceBufferResources.descriptorSets[i], .dstBinding = 4, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &prefilteredInfo },
-			{.dstSet = *pbrInstanceBufferResources.descriptorSets[i], .dstBinding = 5, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &brdfInfo },
-			{.dstSet = *pbrInstanceBufferResources.descriptorSets[i], .dstBinding = 6, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &paramsBufferInfo },
-		};
-		device.updateDescriptorSets(writes, nullptr);
-	}
+        vk::PipelineMultisampleStateCreateInfo multisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False };
+
+        vk::PipelineDepthStencilStateCreateInfo depthStencil{
+            .depthTestEnable = vk::True,
+            .depthWriteEnable = vk::True,
+            .depthCompareOp = vk::CompareOp::eLess,
+            .depthBoundsTestEnable = vk::False,
+            .stencilTestEnable = vk::False
+        };
+
+        vk::PipelineColorBlendAttachmentState colorBlendAttachment{
+            .blendEnable = vk::False,
+            .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
+        };
+        vk::PipelineColorBlendStateCreateInfo colorBlending{ .logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 1, .pAttachments = &colorBlendAttachment };
+
+        std::vector dynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+        vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
+
+        vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 1, .pSetLayouts = &*iblPbrDescriptorSetLayout, .pushConstantRangeCount = 0 };
+        iblPbrPipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
+
+        vk::Format depthFormat = findDepthFormat();
+        vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipelineCreateInfoChain = {
+            {
+                .stageCount = 2,
+                .pStages = shaderStages,
+                .pVertexInputState = &vertexInputInfo,
+                .pInputAssemblyState = &inputAssembly,
+                .pViewportState = &viewportState,
+                .pRasterizationState = &rasterizer,
+                .pMultisampleState = &multisampling,
+                .pDepthStencilState = &depthStencil,
+                .pColorBlendState = &colorBlending,
+                .pDynamicState = &dynamicState,
+                .layout = iblPbrPipelineLayout,
+                .renderPass = nullptr
+            },
+            {
+                .colorAttachmentCount = 1,
+                .pColorAttachmentFormats = &swapChainImageFormat,
+                .depthAttachmentFormat = depthFormat
+            }
+        };
+
+        iblPbrPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
+        return true;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Failed to create PBR graphics pipeline: " << e.what() << std::endl;
+        return false;
+    }
 }
 
-bool Renderer::createIBLPBRPipeline()
+void IBLPBRRenderer::createPBRBuffers()
 {
-	try
-	{
-		vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "pbribl.spv"));
-
-		vk::PipelineShaderStageCreateInfo vertShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain" };
-		vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain" };
-		vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
-
-		auto bindingDescription = Vertex::getBindingDescription();
-		std::array<vk::VertexInputAttributeDescription, 2> attributeDescriptions = {
-			vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos)),
-			vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal))
-		};
-		vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
-			.vertexBindingDescriptionCount = 1,
-			.pVertexBindingDescriptions = &bindingDescription,
-			.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
-			.pVertexAttributeDescriptions = attributeDescriptions.data()
-		};
-		vk::PipelineInputAssemblyStateCreateInfo inputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = vk::False };
-		vk::PipelineViewportStateCreateInfo viewportState{ .viewportCount = 1, .scissorCount = 1 };
-
-		vk::PipelineRasterizationStateCreateInfo rasterizer{
-			.depthClampEnable = vk::False,
-			.rasterizerDiscardEnable = vk::False,
-			.polygonMode = vk::PolygonMode::eFill,
-			.cullMode = vk::CullModeFlagBits::eBack,
-			.frontFace = vk::FrontFace::eCounterClockwise,
-			.depthBiasEnable = vk::False,
-			.lineWidth = 1.0f
-		};
-
-		vk::PipelineMultisampleStateCreateInfo multisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False };
-
-		vk::PipelineDepthStencilStateCreateInfo depthStencil{
-			.depthTestEnable = vk::True,
-			.depthWriteEnable = vk::True,
-			.depthCompareOp = vk::CompareOp::eLess,
-			.depthBoundsTestEnable = vk::False,
-			.stencilTestEnable = vk::False
-		};
-
-		vk::PipelineColorBlendAttachmentState colorBlendAttachment{
-			.blendEnable = vk::False,
-			.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
-		};
-		vk::PipelineColorBlendStateCreateInfo colorBlending{ .logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 1, .pAttachments = &colorBlendAttachment };
-
-		std::vector dynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
-		vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
-
-		vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 1, .pSetLayouts = &*iblPbrDescriptorSetLayout, .pushConstantRangeCount = 0 };
-		iblPbrPipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
-
-		vk::Format depthFormat = findDepthFormat();
-		vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipelineCreateInfoChain = {
-			{
-				.stageCount = 2,
-				.pStages = shaderStages,
-				.pVertexInputState = &vertexInputInfo,
-				.pInputAssemblyState = &inputAssembly,
-				.pViewportState = &viewportState,
-				.pRasterizationState = &rasterizer,
-				.pMultisampleState = &multisampling,
-				.pDepthStencilState = &depthStencil,
-				.pColorBlendState = &colorBlending,
-				.pDynamicState = &dynamicState,
-				.layout = iblPbrPipelineLayout,
-				.renderPass = nullptr
-			},
-			{
-				.colorAttachmentCount = 1,
-				.pColorAttachmentFormats = &swapChainImageFormat,
-				.depthAttachmentFormat = depthFormat
-			}
-		};
-
-		iblPbrPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
-		return true;
-	}
-	catch (const std::exception& e)
-	{
-		std::cerr << "Failed to create IBL PBR pipeline: " << e.what() << std::endl;
-		return false;
-	}
+    createUniformBuffers(sceneUboResources, sizeof(SceneUBO));
+    createUniformBuffers(lightUboResources, sizeof(LightUBO));
+    createUniformBuffers(paramsUboResources, sizeof(ParamsUBO));
+    createUniformBuffers(skyboxUboResources, sizeof(SkyboxUBO));
+    createStorageBuffers(pbrInstanceBufferResources, sizeof(PBRInstanceData) * instanceCount);
 }
 
-void Renderer::createIBLPBRBuffers()
+void IBLPBRRenderer::updatePBRInstanceBuffers(uint32_t frameIndex)
 {
-	createUniformBuffers(sceneUboResources, sizeof(SceneUBO));
-	createUniformBuffers(lightUboResources, sizeof(LightUBO));
-	createUniformBuffers(paramsUboResources, sizeof(ParamsUBO));
-	createUniformBuffers(skyboxUboResources, sizeof(SkyboxUBO));
-	if (scene != nullptr) {
-		maxInstances = scene->getMaxInstances();
-	}
-	createStorageBuffers(pbrInstanceBufferResources, sizeof(PBRInstanceData) * maxInstances);
+    SceneUBO sceneUbo{
+        .projection = glm::perspective(glm::radians(camera.Zoom),
+            static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height),
+            0.1f, 100.0f),
+        .view = camera.GetViewMatrix(),
+        .camPos = camera.Position
+    };
+    sceneUbo.projection[1][1] *= -1;
+    std::memcpy(sceneUboResources.BuffersMapped[frameIndex], &sceneUbo, sizeof(sceneUbo));
+
+    // Instances: 7*7 grid (49 instances).
+    std::vector<PBRInstanceData> instances;
+    instances.reserve(instanceCount);
+    for (int y = -3; y <= 3; ++y) {
+        for (int x = -3; x <= 3; ++x) {
+            glm::mat4 model(1.0f);
+            model = glm::translate(model, glm::vec3(static_cast<float>(x) * 2.2f, static_cast<float>(y) * 2.2f, 0.0f));
+
+            const float fx = static_cast<float>(x + 3) / 6.0f;
+            const float fy = static_cast<float>(y + 3) / 6.0f;
+            const float metallic = fx;
+            const float roughness = std::clamp(fy, 0.04f, 1.0f);
+
+            const glm::vec3 color(1.0f, 0.86f, 0.57f);
+            instances.push_back(PBRInstanceData{ model, metallic, roughness, color });
+        }
+    }
+    std::memcpy(pbrInstanceBufferResources.BuffersMapped[frameIndex], instances.data(), sizeof(PBRInstanceData) * instances.size());
+
+    static auto startTime = std::chrono::high_resolution_clock::now();
+    const auto currentTime = std::chrono::high_resolution_clock::now();
+    const float time = std::chrono::duration<float>(currentTime - startTime).count();
+
+    LightUBO lightUbo{};
+    lightUbo.lights[0] = { .position = glm::vec4(20.0f, 20.0f, 20.0f, 1.0f), .color = glm::vec4(1.0f, 1.0f, 1.0f, 400.0f) };
+    lightUbo.lights[1] = { .position = glm::vec4(-20.0f, -10.0f, 10.0f, 1.0f), .color = glm::vec4(1.0f, 1.0f, 1.0f, 50.0f) };
+    lightUbo.lights[2] = { .position = glm::vec4(std::sin(time * 0.5f) * 12.0f, 5.0f, 8.0f, 1.0f), .color = glm::vec4(1.0f, 1.0f, 1.0f, 150.0f) };
+    lightUbo.lights[3] = { .position = glm::vec4(0.0f, std::cos(time * 0.5f) * 12.0f, 8.0f, 1.0f), .color = glm::vec4(1.0f, 1.0f, 1.0f, 150.0f) };
+    std::memcpy(lightUboResources.BuffersMapped[frameIndex], &lightUbo, sizeof(lightUbo));
+
+    ParamsUBO params{ .exposure = 4.5f, .gamma = 2.2f };
+    memcpy(paramsUboResources.BuffersMapped[frameIndex], &params, sizeof(params));
+
+    SkyboxUBO skyboxUbo{
+        .invProjection = glm::inverse(sceneUbo.projection),
+        .invView = glm::inverse(sceneUbo.view)
+    };
+    memcpy(skyboxUboResources.BuffersMapped[frameIndex], &skyboxUbo, sizeof(skyboxUbo));
 }
 
-void Renderer::updateIBLPBRBuffers(uint32_t currentImage)
-{
-	SceneUBO sceneUbo{
-		.projection = glm::perspective(glm::radians(camera.Zoom),
-			static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height),
-			0.1f, 100.0f),
-		.view = camera.GetViewMatrix(),
-		.camPos = camera.Position
-	};
-	sceneUbo.projection[1][1] *= -1;
-	memcpy(sceneUboResources.BuffersMapped[currentImage], &sceneUbo, sizeof(sceneUbo));
-
-	if (scene == nullptr || scene->getActiveInstanceCount() == 0) {
-		return;
-	}
-
-	std::vector<PBRInstance> ecsInstances;
-	scene->world.collectPBRInstances(MeshTag::Sphere, ecsInstances, maxInstances);
-	if (ecsInstances.empty()) {
-		return;
-	}
-
-	std::vector<PBRInstanceData> instanceData;
-	instanceData.reserve(ecsInstances.size());
-	for (const auto& instance : ecsInstances) {
-		instanceData.push_back(PBRInstanceData{ instance.model, instance.metallic, instance.roughness, instance.color });
-	}
-	memcpy(pbrInstanceBufferResources.BuffersMapped[currentImage], instanceData.data(), sizeof(PBRInstanceData) * instanceData.size());
-
-	static auto startTime = std::chrono::high_resolution_clock::now();
-	auto currentTime = std::chrono::high_resolution_clock::now();
-	float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-
-	LightUBO lightUbo;
-	lightUbo.lights[0] = { .position = glm::vec4(20.0f, 20.0f, 20.0f, 1.0f), .color = glm::vec4(1.0f, 1.0f, 1.0f, 20.0f) };
-	lightUbo.lights[1] = { .position = glm::vec4(-20.0f, -10.0f, 10.0f, 1.0f), .color = glm::vec4(1.0f, 1.0f, 1.0f, 10.0f) };
-	lightUbo.lights[2] = { .position = glm::vec4(sin(time * 0.5f) * 12.0f, 5.0f, 8.0f, 1.0f), .color = glm::vec4(1.0f, 1.0f, 1.0f, 15.0f) };
-	lightUbo.lights[3] = { .position = glm::vec4(0.0f, cos(time * 0.5f) * 12.0f, 8.0f, 1.0f), .color = glm::vec4(1.0f, 1.0f, 1.0f, 15.0f) };
-	memcpy(lightUboResources.BuffersMapped[currentImage], &lightUbo, sizeof(lightUbo));
-
-	ParamsUBO params{ .exposure = 4.5f, .gamma = 2.2f };
-	memcpy(paramsUboResources.BuffersMapped[currentImage], &params, sizeof(params));
-
-	SkyboxUBO skyboxUbo{
-		.invProjection = glm::inverse(sceneUbo.projection),
-		.invView = glm::inverse(sceneUbo.view)
-	};
-	memcpy(skyboxUboResources.BuffersMapped[currentImage], &skyboxUbo, sizeof(skyboxUbo));
-}
-
-bool Renderer::createSkyboxDescriptorSetLayout()
+bool IBLPBRRenderer::createSkyboxDescriptorSetLayout()
 {
 	try
 	{
@@ -561,7 +388,7 @@ bool Renderer::createSkyboxDescriptorSetLayout()
 	}
 }
 
-bool Renderer::createSkyboxDescriptorPool()
+bool IBLPBRRenderer::createSkyboxDescriptorPool()
 {
 	try
 	{
@@ -585,7 +412,7 @@ bool Renderer::createSkyboxDescriptorPool()
 	}
 }
 
-void Renderer::createSkyboxDescriptorSets()
+void IBLPBRRenderer::createSkyboxDescriptorSets()
 {
 	std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *skyboxDescriptorSetLayout);
 	vk::DescriptorSetAllocateInfo allocInfo{
@@ -611,7 +438,7 @@ void Renderer::createSkyboxDescriptorSets()
 	}
 }
 
-bool Renderer::createSkyboxPipeline()
+bool IBLPBRRenderer::createSkyboxPipeline()
 {
 	try
 	{
@@ -699,13 +526,8 @@ bool Renderer::createSkyboxPipeline()
 	}
 }
 
-void Renderer::generateIBLResources()
+void IBLPBRRenderer::generateIBLResources()
 {
-	if (resourceManager->textures.empty())
-	{
-		throw std::runtime_error("HDR texture not loaded (resourceManager->textures is empty)");
-	}
-
 	const vk::Format envFormat = vk::Format::eR16G16B16A16Sfloat;
 	const uint32_t envDim = 512u;
 	const uint32_t irradianceDim = 64u;
@@ -757,7 +579,7 @@ void Renderer::generateIBLResources()
 		.mipLodBias = 0.0f,
 		.anisotropyEnable = vk::False,
 		.maxAnisotropy = 1.0f,
-		.compareEnable = vk::False,			
+		.compareEnable = vk::False,
 		.compareOp = vk::CompareOp::eAlways,
 		.minLod = 0.0f,
 		.maxLod = static_cast<float>(prefilterMipLevels)
@@ -835,7 +657,7 @@ void Renderer::generateIBLResources()
 		.pPoolSizes = &equirectPoolSize
 		});
 	vk::raii::DescriptorSet equirectSet = std::move(device.allocateDescriptorSets(vk::DescriptorSetAllocateInfo{ .descriptorPool = *equirectPool, .descriptorSetCount = 1, .pSetLayouts = &*equirectSetLayout }).front());
-	vk::DescriptorImageInfo hdrInfo{ .sampler = resourceManager->textures[0].textureSampler, .imageView = resourceManager->textures[0].textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
+	vk::DescriptorImageInfo hdrInfo{ .sampler = hdrEquirectData.textureSampler, .imageView = hdrEquirectData.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
 	device.updateDescriptorSets(vk::WriteDescriptorSet{ .dstSet = *equirectSet, .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &hdrInfo }, nullptr);
 
 	std::array<vk::PipelineShaderStageCreateInfo, 2> equirectStages = {
@@ -1134,4 +956,170 @@ void Renderer::generateIBLResources()
 		0, 1, 0, 1, vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eFragmentShader, vk::AccessFlagBits::eColorAttachmentWrite, vk::AccessFlagBits::eShaderRead);
 
 	endSingleTimeCommands(*cmd);
+}
+
+void IBLPBRRenderer::recordCommandBuffer(uint32_t imageIndex)
+{
+    auto& commandBuffer = commandBuffers[currentFrame];
+    commandBuffer.begin({});
+
+    transition_image_layout(
+        swapChainImages[imageIndex],
+        swapChainImageLayouts[imageIndex],
+        vk::ImageLayout::eColorAttachmentOptimal,
+        {},
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::PipelineStageFlagBits2::eAllCommands,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::ImageAspectFlagBits::eColor);
+    swapChainImageLayouts[imageIndex] = vk::ImageLayout::eColorAttachmentOptimal;
+
+    transition_image_layout(
+        depthData.textureImage,
+        depthImageLayout,
+        vk::ImageLayout::eDepthAttachmentOptimal,
+        {},
+        vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+        vk::PipelineStageFlagBits2::eAllCommands,
+        vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+        vk::ImageAspectFlagBits::eDepth);
+    depthImageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+
+    const vk::ClearValue clearColor = vk::ClearColorValue(0.2f, 0.2f, 0.2f, 1.0f);
+    const vk::RenderingAttachmentInfo attachmentInfo{
+        .imageView = swapChainImageViews[imageIndex],
+        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eClear,
+        .storeOp = vk::AttachmentStoreOp::eStore,
+        .clearValue = clearColor
+    };
+    const vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
+    const vk::RenderingAttachmentInfo depthAttachmentInfo{
+        .imageView = depthData.textureImageView,
+        .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eClear,
+        .storeOp = vk::AttachmentStoreOp::eDontCare,
+        .clearValue = clearDepth
+    };
+    const vk::RenderingInfo renderingInfo{
+        .renderArea = {.offset = {0, 0}, .extent = swapChainExtent },
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &attachmentInfo,
+        .pDepthAttachment = &depthAttachmentInfo
+    };
+
+    commandBuffer.beginRendering(renderingInfo);
+    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+
+	// Skybox first (no depth test/write)
+	commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *skyboxPipeline);
+	commandBuffer.bindVertexBuffers(0, *skyboxTriangleMesh.vertexBuffer, { 0 });
+	commandBuffer.bindIndexBuffer(*skyboxTriangleMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(skyboxTriangleMesh.indices)::value_type>::value);
+	commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *skyboxPipelineLayout, 0, *skyboxDescriptorSets[currentFrame], nullptr);
+	commandBuffer.drawIndexed(static_cast<uint32_t>(skyboxTriangleMesh.indices.size()), 1, 0, 0, 0);
+
+	// PBR spheres
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *iblPbrPipeline);
+    commandBuffer.bindVertexBuffers(0, *sphereMesh.vertexBuffer, { 0 });
+    commandBuffer.bindIndexBuffer(*sphereMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(sphereMesh.indices)::value_type>::value);
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *iblPbrPipelineLayout, 0, *pbrInstanceBufferResources.descriptorSets[currentFrame], nullptr);
+    commandBuffer.drawIndexed(static_cast<uint32_t>(sphereMesh.indices.size()), instanceCount, 0, 0, 0);
+    commandBuffer.endRendering();
+
+    transition_image_layout(
+        swapChainImages[imageIndex],
+        vk::ImageLayout::eColorAttachmentOptimal,
+        vk::ImageLayout::ePresentSrcKHR,
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        {},
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::PipelineStageFlagBits2::eBottomOfPipe,
+        vk::ImageAspectFlagBits::eColor);
+    swapChainImageLayouts[imageIndex] = vk::ImageLayout::ePresentSrcKHR;
+
+    commandBuffer.end();
+}
+
+void IBLPBRRenderer::render()
+{
+    const auto fenceResult = device.waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
+    if (fenceResult != vk::Result::eSuccess) {
+        throw std::runtime_error("failed to wait for fence!");
+    }
+
+    auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[currentFrame], nullptr);
+    if (result == vk::Result::eErrorOutOfDateKHR) {
+        recreateSwapChain();
+        return;
+    }
+
+    device.resetFences(*inFlightFences[currentFrame]);
+    commandBuffers[currentFrame].reset();
+
+    updatePBRInstanceBuffers(currentFrame);
+    recordCommandBuffer(imageIndex);
+
+    const vk::PipelineStageFlags waitStage(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+    const vk::SubmitInfo submitInfo{
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &*presentCompleteSemaphores[currentFrame],
+        .pWaitDstStageMask = &waitStage,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &*commandBuffers[currentFrame],
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &*renderFinishedSemaphores[imageIndex]
+    };
+    graphicsQueue.submit(submitInfo, *inFlightFences[currentFrame]);
+
+    const vk::PresentInfoKHR presentInfo{
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &*renderFinishedSemaphores[imageIndex],
+        .swapchainCount = 1,
+        .pSwapchains = &*swapChain,
+        .pImageIndices = &imageIndex
+    };
+    result = presentQueue.presentKHR(presentInfo);
+
+    if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || framebufferResized) {
+        framebufferResized = false;
+        recreateSwapChain();
+    }
+
+    currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+
+void IBLPBRRenderer::transitionImageLayoutCmd(
+	vk::raii::CommandBuffer& commandBuffer,
+	vk::Image image,
+	vk::ImageAspectFlags aspectMask,
+	vk::ImageLayout oldLayout,
+	vk::ImageLayout newLayout,
+	uint32_t baseMipLevel,
+	uint32_t levelCount,
+	uint32_t baseArrayLayer,
+	uint32_t layerCount,
+	vk::PipelineStageFlags srcStage,
+	vk::PipelineStageFlags dstStage,
+	vk::AccessFlags srcAccessMask,
+	vk::AccessFlags dstAccessMask)
+{
+	vk::ImageMemoryBarrier barrier{
+		.srcAccessMask = srcAccessMask,
+		.dstAccessMask = dstAccessMask,
+		.oldLayout = oldLayout,
+		.newLayout = newLayout,
+		.srcQueueFamilyIndex = vk::QueueFamilyIgnored,
+		.dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+		.image = image,
+		.subresourceRange = vk::ImageSubresourceRange{
+			.aspectMask = aspectMask,
+			.baseMipLevel = baseMipLevel,
+			.levelCount = levelCount,
+			.baseArrayLayer = baseArrayLayer,
+			.layerCount = layerCount
+		}
+	};
+	commandBuffer.pipelineBarrier(srcStage, dstStage, {}, {}, {}, barrier);
 }

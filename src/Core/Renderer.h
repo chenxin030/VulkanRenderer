@@ -9,42 +9,6 @@ struct Renderer : VulkanBase {
 
 	Renderer();
 
-#elif RENDERING_LEVEL == 3
-	// PBR Instanced rendering resources
-	vk::raii::DescriptorSetLayout pbrDescriptorSetLayout = nullptr;
-	vk::raii::PipelineLayout      pbrPipelineLayout = nullptr;
-	vk::raii::Pipeline            pbrPipeline = nullptr;
-	vk::raii::DescriptorPool      pbrDescriptorPool = nullptr;
-
-	MeshBuffer pbrInstanceBufferResources;
-	MeshBuffer sceneUboResources;
-	MeshBuffer lightUboResources;
-#elif RENDERING_LEVEL == 4
-	// IBL PBR + skybox resources
-	vk::raii::DescriptorSetLayout iblPbrDescriptorSetLayout = nullptr;
-	vk::raii::PipelineLayout      iblPbrPipelineLayout = nullptr;
-	vk::raii::Pipeline            iblPbrPipeline = nullptr;
-	vk::raii::DescriptorPool      iblPbrDescriptorPool = nullptr;
-
-	MeshBuffer pbrInstanceBufferResources;
-	MeshBuffer sceneUboResources;
-	MeshBuffer lightUboResources;
-	MeshBuffer paramsUboResources;
-	MeshBuffer skyboxUboResources;
-
-	vk::raii::DescriptorSetLayout skyboxDescriptorSetLayout = nullptr;
-	vk::raii::PipelineLayout      skyboxPipelineLayout = nullptr;
-	vk::raii::Pipeline            skyboxPipeline = nullptr;
-	vk::raii::DescriptorPool      skyboxDescriptorPool = nullptr;
-	std::vector<vk::raii::DescriptorSet> skyboxDescriptorSets;
-
-	Mesh skyboxTriangleMesh;
-
-	TextureData envCubemapData;
-	TextureData irradianceCubemapData;
-	TextureData prefilteredEnvMapData;
-	TextureData brdfLutData;
-
 #elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7
 	// Shadow mapping resources (Level 5) + TAAU base (Level 6) + SSR base (Level 7)
 	vk::raii::DescriptorSetLayout shadowDescriptorSetLayout = nullptr;
@@ -287,21 +251,6 @@ struct Renderer : VulkanBase {
 				std::cerr << "Failed to create image views" << std::endl;
 				return false;
 			}
-		}
-#elif RENDERING_LEVEL == 3
-		// Initialize PBR instanced rendering
-		createPBRBuffers();
-		if (!createPBRDescriptorSetLayout()) {
-			std::cerr << "Failed to create PBR DescriptorSetLayout" << std::endl;
-			return false;
-		}
-		if (!createPBRDescriptorPool()) {
-			std::cerr << "Failed to create PBR DescriptorPool" << std::endl;
-			return false;
-		}
-		if (!createPBRPipeline()) {
-			std::cerr << "Failed to create PBR Pipeline" << std::endl;
-			return false;
 		}
 #elif RENDERING_LEVEL == 4
 		// Initialize IBL PBR rendering

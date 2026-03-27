@@ -11,7 +11,7 @@ int main()
     try
     {
         Platform platform;
-        platform.SetBaseTitle("VulkanRenderer - pbr");
+        platform.SetBaseTitle("VulkanRenderer - PBR");
         platform.initWindow();
 
         PBRRenderer renderer;

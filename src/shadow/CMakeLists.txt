@@ -13,20 +13,14 @@ add_executable(${EXAMPLE_NAME}
 
 target_include_directories(${EXAMPLE_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/src/Examples
+    ${CMAKE_SOURCE_DIR}/src
 )
 
 target_sources(${EXAMPLE_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/ShadowRenderer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/StandaloneMain.cpp
 
-    ${CMAKE_CURRENT_SOURCE_DIR}/ShadowRenderer_core.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/ShadowRenderer_utils.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/ShadowRenderer_Resources.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/ShadowRenderer_rendering.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/ShadowRenderer_shadow.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/ShadowRenderer_ui.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Scene.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ShadowRenderer.cpp
     ${IMGUI_SOURCES}
 )
 

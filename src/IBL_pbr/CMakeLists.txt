@@ -17,18 +17,12 @@ target_sources(${EXAMPLE_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/IBLPBRRenderer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/StandaloneMain.cpp
 
-    ${CMAKE_CURRENT_SOURCE_DIR}/IBLPBRRenderer_core.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/IBLPBRRenderer_utils.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/IBLPBRRenderer_Resources.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/IBLPBRRenderer_rendering.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/IBLPBRRenderer_pbr.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Scene.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/IBLPBRRenderer.cpp
 )
 
 target_link_libraries(${EXAMPLE_NAME} PRIVATE vkr_deps vkr_base)
 
 target_compile_definitions(${EXAMPLE_NAME} PRIVATE
-    RENDERING_LEVEL=4
     VK_SHADERS_DIR="${EXAMPLE_SHADER_OUTPUT_DIR}/"
 )
 

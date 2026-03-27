@@ -21,16 +21,6 @@ struct TextureData {
 	uint32_t mipLevels;
 };
 
-struct ParamsUBO {
-	float exposure;
-	float gamma;
-};
-
-struct SkyboxUBO {
-	glm::mat4 invProjection;
-	glm::mat4 invView;
-};
-
 struct ShadowUBO {
 	glm::mat4 lightViewProj;
 	glm::mat4 prevViewProj;
