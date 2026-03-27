@@ -61,7 +61,7 @@ function(vkr_add_example_slang_shaders target_name shader_source_dir shader_outp
     target_sources(${target_name} PRIVATE ${EXAMPLE_SHADER_SOURCES})
 endfunction()
 
-add_subdirectory(triangle)
+add_subdirectory(Instanced)
 add_subdirectory(pbr)
 add_subdirectory(IBL_pbr)
 add_subdirectory(shadow)

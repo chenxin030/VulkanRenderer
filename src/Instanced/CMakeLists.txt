@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-set(EXAMPLE_NAME 1_triangle)
+set(EXAMPLE_NAME 1_InstenceRender)
 set(EXAMPLE_SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
 set(EXAMPLE_SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
 
@@ -10,12 +10,12 @@ add_executable(${EXAMPLE_NAME}
 
 target_include_directories(${EXAMPLE_NAME} PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
-    ${CMAKE_SOURCE_DIR}/src/Examples
+    ${CMAKE_SOURCE_DIR}/src/Base
 )
 
 target_sources(${EXAMPLE_NAME} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/TriangleRenderer.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/TriangleRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/InstancedRenderer.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/InstancedRenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/StandaloneMain.cpp
 )
 

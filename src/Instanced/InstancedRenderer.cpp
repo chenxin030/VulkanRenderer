@@ -1,19 +1,60 @@
-#include "Renderer.h"
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <cmath>
-#include <imgui.h>
+#include "InstancedRenderer.h"
 
+#include <glm/gtc/matrix_transform.hpp>
+
+struct InstanceData {
+    glm::mat4 model;
+};
 struct GlobalUBO {
     glm::mat4 view;
     glm::mat4 proj;
 };
 
-struct InstanceData {
-    glm::mat4 model;
-};
+void InstancedRenderer::initialize(Platform* _platform, ResourceManager* _resourceManager, Scene* _scene)
+{
+    VulkanBase::initialize(_platform, _resourceManager, _scene);
+}
 
-bool Renderer::createInstancedDescriptorSetLayout() {
+bool InstancedRenderer::initVulkan()
+{
+    if (!VulkanBase::initVulkan("VulkanRenderer - 1_InstenceRender")) return false;
+    return true;
+}
+
+bool InstancedRenderer::prepareResource()
+{
+    loadModel("viking_room.glb", mesh);
+    createVertexBuffer(mesh);
+    createIndexBuffer(mesh);
+
+    LoadTextureFromFile("viking_room.png", texture);
+    createTextureSampler(texture.textureSampler);
+
+    createInstanceBuffer();
+    if (!createInstancedDescriptorSetLayout()) {
+        std::cerr << "Failed to create Instanced DescriptorSetLayout" << std::endl;
+        return false;
+    }
+    if (!createInstancedDescriptorPool()) {
+        std::cerr << "Failed to create Instanced DescriptorPool" << std::endl;
+        return false;
+    }
+    createInstancedDescriptorSets();
+    if (!createInstancedPipeline()) {
+        std::cerr << "Failed to create Instanced Pipeline" << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+void InstancedRenderer::createInstanceBuffer()
+{
+    createUniformBuffers(globalUboResources, sizeof(GlobalUBO));
+    createStorageBuffers(instancedBufferResources, sizeof(InstanceData) * instanceCount);
+}
+
+bool InstancedRenderer::createInstancedDescriptorSetLayout() {
     try {
         std::vector<vk::DescriptorSetLayoutBinding> bindings = {
             {
@@ -50,7 +91,7 @@ bool Renderer::createInstancedDescriptorSetLayout() {
     }
 }
 
-bool Renderer::createInstancedDescriptorPool() {
+bool InstancedRenderer::createInstancedDescriptorPool() {
     try {
         std::vector<vk::DescriptorPoolSize> poolSizes = {
             {.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
@@ -74,7 +115,7 @@ bool Renderer::createInstancedDescriptorPool() {
     }
 }
 
-void Renderer::createInstancedDescriptorSets() {
+void InstancedRenderer::createInstancedDescriptorSets() {
     std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *instancedDescriptorSetLayout);
     vk::DescriptorSetAllocateInfo allocInfo{
         .descriptorPool = *instancedDescriptorPool,
@@ -94,12 +135,12 @@ void Renderer::createInstancedDescriptorSets() {
         vk::DescriptorBufferInfo instanceBufferInfo{
             .buffer = *instancedBufferResources.Buffers[i],
             .offset = 0,
-            .range = sizeof(InstanceData) * maxInstances
+            .range = sizeof(InstanceData) * instanceCount
         };
 
         vk::DescriptorImageInfo imageInfo{
-            .sampler = *resourceManager->textures[0].textureSampler,
-            .imageView = *resourceManager->textures[0].textureImageView,
+            .sampler = texture.textureSampler,
+            .imageView = texture.textureImageView,
             .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
         };
 
@@ -134,7 +175,7 @@ void Renderer::createInstancedDescriptorSets() {
     }
 }
 
-bool Renderer::createInstancedPipeline() {
+bool InstancedRenderer::createInstancedPipeline() {
     try {
         vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "instanced.spv"));
 
@@ -212,15 +253,7 @@ bool Renderer::createInstancedPipeline() {
     }
 }
 
-void Renderer::createInstancedBuffers() {
-    createUniformBuffers(globalUboResources, sizeof(GlobalUBO));
-    if (scene != nullptr) {
-        maxInstances = scene->getMaxInstances();
-    }
-    createStorageBuffers(instancedBufferResources, sizeof(InstanceData) * maxInstances);
-}
-
-void Renderer::updateInstancedBuffers(uint32_t currentImage) {
+void InstancedRenderer::updateInstancedBuffers(uint32_t frameIndex) {
     // Global UBO
     GlobalUBO globalUbo{
         .view = camera.GetViewMatrix(),
@@ -229,32 +262,160 @@ void Renderer::updateInstancedBuffers(uint32_t currentImage) {
             0.1f, 100.0f)
     };
     globalUbo.proj[1][1] *= -1;
-    memcpy(globalUboResources.BuffersMapped[currentImage], &globalUbo, sizeof(globalUbo));
+    memcpy(globalUboResources.BuffersMapped[frameIndex], &globalUbo, sizeof(globalUbo));
 
     // Instance Data
     float deltaTime = platform->frameTimer;
-    if (scene == nullptr) {
+
+    std::vector<InstanceData> instanceData = {
+        { glm::translate(glm::mat4(1.0f), glm::vec3(-2.0f, 0.0f, 0.0f)) },
+        { glm::translate(glm::mat4(1.0f), glm::vec3( 0.0f, 0.0f, 0.0f)) },
+        { glm::translate(glm::mat4(1.0f), glm::vec3( 2.0f, 0.0f, 0.0f)) }
+    };
+    const float rotationSpeedRadPerSec = 0.5f;
+    const uint32_t rotateCount = std::min<uint32_t>(3u, static_cast<uint32_t>(instanceData.size()));
+    for (uint32_t i = 0; i < rotateCount; ++i) {
+        instanceAnglesRad[i] += rotationSpeedRadPerSec * deltaTime;
+        instanceData[i].model = glm::rotate(instanceData[i].model, instanceAnglesRad[i], glm::vec3(0.0f, 1.0f, 0.0f));
+    }
+
+    memcpy(instancedBufferResources.BuffersMapped[frameIndex], instanceData.data(), sizeof(InstanceData) * instanceData.size());
+}
+
+void InstancedRenderer::recordCommandBuffer(uint32_t imageIndex)
+{
+    auto& commandBuffer = commandBuffers[currentFrame];
+    commandBuffer.begin({});
+    transition_image_layout(
+        swapChainImages[imageIndex],
+        swapChainImageLayouts[imageIndex],
+        vk::ImageLayout::eColorAttachmentOptimal,
+        {},
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::PipelineStageFlagBits2::eAllCommands,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::ImageAspectFlagBits::eColor
+    );
+    swapChainImageLayouts[imageIndex] = vk::ImageLayout::eColorAttachmentOptimal;
+
+    transition_image_layout(
+        depthData.textureImage,
+        depthImageLayout,
+        vk::ImageLayout::eDepthAttachmentOptimal,
+        {},
+        vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+        vk::PipelineStageFlagBits2::eAllCommands,
+        vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+        vk::ImageAspectFlagBits::eDepth
+    );
+    depthImageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+
+    vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
+    vk::RenderingAttachmentInfo attachmentInfo = {
+        .imageView = swapChainImageViews[imageIndex],
+        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eClear,
+        .storeOp = vk::AttachmentStoreOp::eStore,
+        .clearValue = clearColor };
+    vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
+    vk::RenderingAttachmentInfo depthAttachmentInfo = {
+        .imageView = depthData.textureImageView,
+        .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eClear,
+        .storeOp = vk::AttachmentStoreOp::eDontCare,
+        .clearValue = clearDepth };
+    vk::RenderingInfo renderingInfo = {
+        .renderArea = {.offset = {0, 0}, .extent = swapChainExtent},
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &attachmentInfo,
+        .pDepthAttachment = &depthAttachmentInfo
+    };
+
+    if (depthImageLayout != vk::ImageLayout::eDepthAttachmentOptimal) {
+        transition_image_layout(
+            depthData.textureImage,
+            depthImageLayout,
+            vk::ImageLayout::eDepthAttachmentOptimal,
+            {},
+            vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+            vk::PipelineStageFlagBits2::eTopOfPipe,
+            vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+            vk::ImageAspectFlagBits::eDepth
+        );
+        depthImageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+    }
+
+    commandBuffer.beginRendering(renderingInfo);
+    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *instancedPipeline);
+    commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
+    commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *instancedPipelineLayout, 0, *instancedBufferResources.descriptorSets[currentFrame], nullptr);
+    commandBuffer.drawIndexed(mesh.indices.size(), instanceCount, 0, 0, 0);
+    commandBuffer.endRendering();
+    transition_image_layout(
+        swapChainImages[imageIndex],
+        vk::ImageLayout::eColorAttachmentOptimal,
+        vk::ImageLayout::ePresentSrcKHR,
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        {},
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::PipelineStageFlagBits2::eBottomOfPipe,
+        vk::ImageAspectFlagBits::eColor
+    );
+    swapChainImageLayouts[imageIndex] = vk::ImageLayout::ePresentSrcKHR;
+    commandBuffer.end();
+}
+
+void InstancedRenderer::render()
+{
+    auto fenceResult = device.waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
+    if (fenceResult != vk::Result::eSuccess)
+    {
+        throw std::runtime_error("failed to wait for fence!");
+    }
+
+    auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[currentFrame], nullptr);
+    if (result == vk::Result::eErrorOutOfDateKHR)
+    {
+        recreateSwapChain();
         return;
     }
 
-    std::vector<glm::mat4> models;
-    scene->world.collectModels(MeshTag::Cube, models, maxInstances);
-    if (models.empty()) {
-        return;
+    device.resetFences(*inFlightFences[currentFrame]);
+
+    commandBuffers[currentFrame].reset();
+    updateInstancedBuffers(currentFrame);
+    recordCommandBuffer(imageIndex);
+
+    vk::PipelineStageFlags waitStage(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+    vk::SubmitInfo submitInfo{
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &*presentCompleteSemaphores[currentFrame],
+        .pWaitDstStageMask = &waitStage,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &*commandBuffers[currentFrame],
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &*renderFinishedSemaphores[imageIndex]
+    };
+    graphicsQueue.submit(submitInfo, *inFlightFences[currentFrame]);
+
+    vk::PresentInfoKHR presentInfo{
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &*renderFinishedSemaphores[imageIndex],
+        .swapchainCount = 1,
+        .pSwapchains = &*swapChain,
+        .pImageIndices = &imageIndex
+    };
+    result = presentQueue.presentKHR(presentInfo);
+
+    if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || framebufferResized)
+    {
+        framebufferResized = false;
+        recreateSwapChain();
     }
 
-    std::vector<InstanceData> instanceData;
-    instanceData.reserve(models.size());
-    for (const auto& model : models) {
-        instanceData.push_back(InstanceData{ model });
-    }
-
-    for (auto& instance : instanceData) {
-        const float rotationSpeed = 0.5f;
-        glm::mat4 model = instance.model;
-        model = glm::rotate(model, rotationSpeed * deltaTime, glm::vec3(0.0f, 1.0f, 0.0f));
-        instance.model = model;
-    }
-
-    memcpy(instancedBufferResources.BuffersMapped[currentImage], instanceData.data(), sizeof(InstanceData) * instanceData.size());
+    currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }

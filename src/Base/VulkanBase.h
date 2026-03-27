@@ -3,6 +3,7 @@
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
+#include "Camera.h"
 #include "Platform.h"
 #include "ResourceManager.h"
 
@@ -84,6 +85,7 @@ struct VulkanBase {
     TextureData depthData;
     vk::ImageLayout depthImageLayout = vk::ImageLayout::eUndefined;
 
+    Camera camera = Camera(glm::vec3(0.0f, 0.0f, 5.0f));
     Platform* platform = nullptr;
     ResourceManager* resourceManager = nullptr;
     Scene* scene = nullptr;
@@ -133,5 +135,30 @@ struct VulkanBase {
         vk::PipelineStageFlags2 src_stage_mask,
         vk::PipelineStageFlags2 dst_stage_mask,
         vk::ImageAspectFlags image_aspect_flags);
+
+    void createVertexBuffer(Mesh& mesh);
+    void createIndexBuffer(Mesh& mesh);
+    void createUniformBuffers(MeshBuffer& meshResource, vk::DeviceSize size);
+    void createStorageBuffers(MeshBuffer& meshResource, vk::DeviceSize size);
+    void createStorageBuffers(MeshBuffer& meshResource, vk::DeviceSize size, vk::BufferUsageFlags usage);
+    void createBuffer(
+        vk::DeviceSize size,
+        vk::BufferUsageFlags usage,
+        vk::MemoryPropertyFlags properties,
+        vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory);
+    void copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size);
+    void createMeshes();
+    void loadTextures();
+    void LoadHDRTextureFromFile(const std::string& path, TextureData& texData);
+    void LoadTextureFromFile(const std::string& path, TextureData& texData);
+    void generateMipmaps(vk::raii::Image& image, vk::Format imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels);
+    void createImage(uint32_t width, uint32_t height, uint32_t mipLevels, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, TextureData& texData);
+    void createImage(uint32_t width, uint32_t height, uint32_t mipLevels, uint32_t arrayLayers, vk::ImageCreateFlags flags, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, TextureData& texData);
+    vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags, uint32_t mipLevels);
+    void createTextureSampler(vk::raii::Sampler& textureSampler);
+    void transitionImageLayout(const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout, uint32_t mipLevels);
+    void copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image, uint32_t width, uint32_t height);
+    std::unique_ptr<vk::raii::CommandBuffer> beginSingleTimeCommands();
+    void endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer);
 };
 

@@ -21,16 +21,50 @@ static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallbackVkHpp(
 }
 
 bool VulkanBase::initVulkan(const std::string& appName) {
-    if (!createInstance(appName)) return false;
-    if (!setupDebugMessenger()) return false;
-    if (!createSurface()) return false;
-    if (!pickPhysicalDevice()) return false;
-    if (!createLogicalDevice()) return false;
-    if (!createSwapChain()) return false;
-    if (!createImageViews()) return false;
-    if (!createCommandPool()) return false;
-    if (!createCommandBuffers()) return false;
-    if (!createSyncObjects()) return false;
+    if (!createInstance(appName)) {
+        std::cerr << "Failed to create Vulkan instance" << std::endl;
+        return false;
+    }
+    if (!setupDebugMessenger()) {
+        std::cerr << "Failed to setup debug messenger" << std::endl;
+        return false;
+    }
+    if (!createSurface()) {
+        std::cerr << "Failed to create surface" << std::endl;
+        return false;
+    }
+    if (!pickPhysicalDevice()) {
+        std::cerr << "Failed to pick physical device" << std::endl;
+        return false;
+    }
+    if (!createLogicalDevice()) {
+        std::cerr << "Failed to create logical device" << std::endl;
+        return false;
+    }
+    if (!createSwapChain()) {
+        std::cerr << "Failed to create swap chain" << std::endl;
+        return false;
+    }
+    if (!createImageViews()) {
+        std::cerr << "Failed to create image views" << std::endl;
+        return false;
+    }
+    if (!createCommandPool()) {
+        std::cerr << "Failed to create command pool" << std::endl;
+        return false;
+    }
+    if (!createDepthResources()) {
+        std::cerr << "Failed to create depth resources" << std::endl;
+        return false;
+    }
+    if (!createCommandBuffers()) {
+        std::cerr << "Failed to create command buffers" << std::endl;
+        return false;
+    }
+    if (!createSyncObjects()) {
+        std::cerr << "Failed to create sync objects" << std::endl;
+        return false;
+    }
 }
 
 bool VulkanBase::createInstance(const std::string& appName)

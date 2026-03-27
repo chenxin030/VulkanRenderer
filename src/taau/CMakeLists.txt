@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-set(EXAMPLE_NAME 7_culling)
+set(EXAMPLE_NAME 5_taau)
 set(EXAMPLE_SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
 set(EXAMPLE_SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
 file(GLOB IMGUI_SOURCES
@@ -17,17 +17,17 @@ target_include_directories(${EXAMPLE_NAME} PRIVATE
 )
 
 target_sources(${EXAMPLE_NAME} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/CullingRenderer.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/TAAURenderer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/StandaloneMain.cpp
 
-    # Level8 = Compute Culling + Hi-Z + indirect draw + UI
-    ${CMAKE_CURRENT_SOURCE_DIR}/CullingRenderer_core.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/CullingRenderer_utils.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/CullingRenderer_Resources.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/CullingRenderer_rendering.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/CullingRenderer_culling.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/CullingRenderer_ui.cpp
-    ${CMAKE_SOURCE_DIR}/src/Core/Mesh.cpp
+    # Level6 = Shadow base + TAAU resolve + UI
+    ${CMAKE_CURRENT_SOURCE_DIR}/TAAURenderer_core.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TAAURenderer_utils.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TAAURenderer_Resources.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TAAURenderer_rendering.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TAAURenderer_shadow.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TAAURenderer_taau.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TAAURenderer_ui.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Scene.cpp
     ${IMGUI_SOURCES}
 )
@@ -35,7 +35,7 @@ target_sources(${EXAMPLE_NAME} PRIVATE
 target_link_libraries(${EXAMPLE_NAME} PRIVATE vkr_deps vkr_base)
 
 target_compile_definitions(${EXAMPLE_NAME} PRIVATE
-    RENDERING_LEVEL=8
+    RENDERING_LEVEL=6
     VK_SHADERS_DIR="${EXAMPLE_SHADER_OUTPUT_DIR}/"
 )
 

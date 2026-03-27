@@ -82,11 +82,13 @@ target_link_libraries(vkr_deps INTERFACE
 # Base core target (shared VulkanBase implementation)
 # -----------------------------
 add_library(vkr_base STATIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/Core/VulkanBase.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/Core/VulkanBase_commands.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/Core/VulkanBase_core.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/Core/VulkanBase_swapchain.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/Core/VulkanBase_utils.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase_commands.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase_core.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase_swapchain.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase_utils.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase_Resource.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/Mesh.cpp
 )
 target_link_libraries(vkr_base PUBLIC vkr_deps)
 set_target_properties(vkr_base PROPERTIES
@@ -98,29 +100,7 @@ set_target_properties(vkr_base PROPERTIES
 # -----------------------------
 option(VKR_BUILD_LEGACY "Build legacy vulkanRenderer target" OFF)
 
-file(GLOB_RECURSE APP_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/App/*.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/App/*.cxx
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/App/*.cc
-)
-file(GLOB_RECURSE APP_HEADERS
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/App/*.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/App/*.hpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/App/*.hxx
-)
-
 if(VKR_BUILD_LEGACY)
-    file(GLOB_RECURSE CORE_SOURCES
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Core/*.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Core/*.cxx
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Core/*.cc
-    )
-    file(GLOB_RECURSE CORE_HEADERS
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Core/*.h
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Core/*.hpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Core/*.hxx
-    )
-    list(FILTER CORE_SOURCES EXCLUDE REGEX ".*/main\\.cpp$")
     file(GLOB IMGUI_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/imgui*.cpp
     )
@@ -137,8 +117,6 @@ if(VKR_BUILD_LEGACY)
 
     add_executable(${NAME})
     target_sources(${NAME} PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Core/main.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/Core/Application.h
         ${APP_SOURCES}
         ${APP_HEADERS}
         ${CORE_SOURCES}
@@ -179,4 +157,4 @@ endif()
 # -----------------------------
 # Examples
 # -----------------------------
-add_subdirectory(src/Examples)
+add_subdirectory(src)

@@ -22,7 +22,6 @@ target_sources(${EXAMPLE_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/IBLPBRRenderer_Resources.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/IBLPBRRenderer_rendering.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/IBLPBRRenderer_pbr.cpp
-    ${CMAKE_SOURCE_DIR}/src/Core/Mesh.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Scene.cpp
 )
 

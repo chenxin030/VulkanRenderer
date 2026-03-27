@@ -1,6 +1,6 @@
-#include "TriangleRenderer.h"
+#include "InstancedRenderer.h"
 
-#include <Core/Platform.h>
+#include <Platform.h>
 
 #include <cstdio>
 #include <exception>
@@ -10,10 +10,10 @@ int main()
     try
     {
         Platform platform;
-        platform.SetBaseTitle("VulkanRenderer - triangle (Standalone)");
+        platform.SetBaseTitle("VulkanRenderer - 1_InstenceRender");
         platform.initWindow();
 
-        TriangleRenderer app;
+        InstancedRenderer app;
         app.initialize(&platform, nullptr, nullptr);
         if (!app.initVulkan())
         {
@@ -34,7 +34,6 @@ int main()
         }
 
         app.device.waitIdle();
-        app.cleanup();
         platform.cleanup();
     }
     catch (const std::exception& e)

@@ -6,12 +6,6 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-struct MVP {
-	alignas(16) glm::mat4 model;
-	alignas(16) glm::mat4 view;
-	alignas(16) glm::mat4 proj;
-};
-
 struct MeshBuffer {
 	std::vector<vk::raii::Buffer> Buffers;
 	std::vector<vk::raii::DeviceMemory> BuffersMemory;
@@ -34,6 +28,12 @@ struct PBRInstanceData {
 	alignas(16) glm::vec3 color;
 };
 
+struct SceneUBO {
+	glm::mat4 projection;
+	glm::mat4 view;
+	glm::vec3 camPos;
+};
+
 struct PointLight {
 	glm::vec4 position; // w is intensity or unused
 	glm::vec4 color;    // w is intensity
@@ -41,12 +41,6 @@ struct PointLight {
 
 struct LightUBO {
 	PointLight lights[4];
-};
-
-struct SceneUBO {
-	glm::mat4 projection;
-	glm::mat4 view;
-	glm::vec3 camPos;
 };
 
 struct ParamsUBO {
@@ -106,30 +100,4 @@ struct ResourceManager {
 		"newport_loft.hdr"
 	};
 
-	void initResource(unsigned int modelCount) {
-#if RENDERING_LEVEL == 1 || RENDERING_LEVEL == 2
-		meshes.resize(modelPath.size());
-		textures.resize(texPath.size());
-		meshUniformBuffer.resize(modelCount);
-#elif RENDERING_LEVEL == 3
-		meshes.resize(1);
-		meshUniformBuffer.resize(modelCount);
-#elif RENDERING_LEVEL == 4
-		meshes.resize(1);
-		textures.resize(texPath.size());
-		meshUniformBuffer.resize(modelCount);
-#elif RENDERING_LEVEL == 5
-		meshes.resize(2);
-		meshUniformBuffer.resize(modelCount);
-#elif RENDERING_LEVEL == 6
-		meshes.resize(2);
-		meshUniformBuffer.resize(modelCount);
-#elif RENDERING_LEVEL == 7
-		meshes.resize(2);
-		meshUniformBuffer.resize(modelCount);
-#elif RENDERING_LEVEL == 8
-		meshes.resize(2);
-		meshUniformBuffer.resize(modelCount);
-#endif
-	}
 };
