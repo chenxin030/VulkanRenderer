@@ -99,16 +99,11 @@ struct ResourceManager {
 	std::vector<MeshBuffer> meshUniformBuffer;
 
 	std::vector<std::string> modelPath{
-#if RENDERING_LEVEL < 3
 		"viking_room.glb"
-#endif
 	};
 	std::vector<std::string> texPath{
-#if RENDERING_LEVEL < 3
 		"viking_room.png"
-#elif RENDERING_LEVEL == 4
 		"newport_loft.hdr"
-#endif
 	};
 
 	void initResource(unsigned int modelCount) {

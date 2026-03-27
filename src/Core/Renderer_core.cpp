@@ -1,5 +1,6 @@
 #include <Renderer.h>
 #include <set>
+#include <map>
 
 static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallbackVkHpp(
 	vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -15,9 +16,7 @@ static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallbackVkHpp(
 	return vk::False;
 }
 
-Renderer::Renderer() {
-	deviceExtensions = requiredDeviceExtensions;
-}
+Renderer::Renderer() = default;
 
 bool Renderer::createInstance(const std::string& appName) {
 	try {

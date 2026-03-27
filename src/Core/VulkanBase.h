@@ -1,0 +1,137 @@
+#pragma once
+
+#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
+
+#include "Platform.h"
+#include "ResourceManager.h"
+
+#include <optional>
+#include <string>
+#include <vector>
+
+struct Scene;
+
+inline const std::vector<char const*> validationLayers = {
+    "VK_LAYER_KHRONOS_validation"
+};
+
+#ifdef NDEBUG
+inline constexpr bool enableValidationLayers = false;
+#else
+inline constexpr bool enableValidationLayers = true;
+#endif
+
+struct QueueFamilyIndices {
+    std::optional<uint32_t> graphicsFamily;
+    std::optional<uint32_t> presentFamily;
+    std::optional<uint32_t> computeFamily;
+    std::optional<uint32_t> transferFamily;
+
+    [[nodiscard]] bool isComplete() const
+    {
+        return graphicsFamily.has_value() && presentFamily.has_value() && computeFamily.has_value();
+    }
+};
+
+struct SwapChainSupportDetails {
+    vk::SurfaceCapabilitiesKHR capabilities;
+    std::vector<vk::SurfaceFormatKHR> formats;
+    std::vector<vk::PresentModeKHR> presentModes;
+};
+
+struct VulkanBase {
+    VulkanBase();
+    virtual ~VulkanBase() = default;
+
+    const uint32_t MAX_FRAMES_IN_FLIGHT = 2u;
+    uint32_t currentFrame = 0;
+
+    vk::raii::Context context;
+    vk::raii::Instance instance = nullptr;
+    vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
+
+    vk::raii::PhysicalDevice physicalDevice = nullptr;
+    vk::raii::Device device = nullptr;
+
+    QueueFamilyIndices queueFamilyIndices;
+    vk::raii::Queue graphicsQueue = nullptr;
+    vk::raii::Queue presentQueue = nullptr;
+    vk::raii::Queue computeQueue = nullptr;
+    vk::raii::Queue transferQueue = nullptr;
+
+    vk::raii::SurfaceKHR surface = nullptr;
+
+    const std::vector<const char*> requiredDeviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+    std::vector<const char*> deviceExtensions;
+
+    vk::raii::SwapchainKHR swapChain = nullptr;
+    std::vector<vk::Image> swapChainImages;
+    vk::Format swapChainImageFormat = vk::Format::eUndefined;
+    vk::Extent2D swapChainExtent;
+    std::vector<vk::raii::ImageView> swapChainImageViews;
+    std::vector<vk::ImageLayout> swapChainImageLayouts;
+
+    vk::raii::CommandPool commandPool = nullptr;
+    std::vector<vk::raii::CommandBuffer> commandBuffers;
+
+    std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
+    std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
+    std::vector<vk::raii::Fence> inFlightFences;
+
+    bool framebufferResized = false;
+
+    TextureData depthData;
+    vk::ImageLayout depthImageLayout = vk::ImageLayout::eUndefined;
+
+    Platform* platform = nullptr;
+    ResourceManager* resourceManager = nullptr;
+    Scene* scene = nullptr;
+    uint32_t maxInstances = 0;
+
+    void initialize(Platform* _platform, ResourceManager* _resourceManager, Scene* _scene);
+
+    // Core lifecycle (implemented today in Renderer_*; will be moved later)
+    bool initVulkan(const std::string& appName);
+    bool createInstance(const std::string& appName);
+    bool setupDebugMessenger();
+    bool createSurface();
+    bool pickPhysicalDevice();
+    bool createLogicalDevice();
+    bool createSwapChain();
+    void cleanupSwapChain();
+    void recreateSwapChain();
+    bool createImageViews();
+    bool createCommandPool();
+    bool createCommandBuffers();
+    bool createSyncObjects();
+    bool createDepthResources();
+
+    bool checkValidationLayerSupport() const;
+    uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties) const;
+    std::vector<char> readFile(const std::string& filename);
+    vk::raii::ShaderModule createShaderModule(const std::vector<char>& code);
+
+    QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& device);
+    SwapChainSupportDetails querySwapChainSupport(const vk::raii::PhysicalDevice& device);
+    static uint32_t chooseSwapMinImageCount(vk::SurfaceCapabilitiesKHR const& surfaceCapabilities);
+    bool checkDeviceExtensionSupport(vk::raii::PhysicalDevice& device);
+    vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats);
+    vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes);
+    vk::Extent2D chooseSwapExtent(const vk::SurfaceCapabilitiesKHR& capabilities);
+
+    vk::Format findSupportedFormat(const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features);
+    vk::Format findDepthFormat();
+    bool hasStencilComponent(vk::Format format);
+
+    void transition_image_layout(
+        vk::Image image,
+        vk::ImageLayout old_layout,
+        vk::ImageLayout new_layout,
+        vk::AccessFlags2 src_access_mask,
+        vk::AccessFlags2 dst_access_mask,
+        vk::PipelineStageFlags2 src_stage_mask,
+        vk::PipelineStageFlags2 dst_stage_mask,
+        vk::ImageAspectFlags image_aspect_flags);
+};
+

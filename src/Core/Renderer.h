@@ -1,83 +1,13 @@
 #pragma once
 
 #include "RenderConfig.h"
-#include "ResourceManager.h"
-#include "Scene.h"
-#include "Platform.h"
+#include "VulkanBase.h"
 #include "Camera.h"
+#include <Scene.h>
 
-#include <map>
-#include <vector>
-
-const std::vector<char const*> validationLayers = {
-	"VK_LAYER_KHRONOS_validation"
-};
-
-#ifdef NDEBUG
-constexpr bool enableValidationLayers = false;
-#else
-constexpr bool enableValidationLayers = true;
-#endif
-
-struct QueueFamilyIndices {
-	std::optional<uint32_t> graphicsFamily;
-	std::optional<uint32_t> presentFamily;
-	std::optional<uint32_t> computeFamily;
-	std::optional<uint32_t> transferFamily; // optional dedicated transfer queue family
-
-	[[nodiscard]] bool isComplete() const {
-		return graphicsFamily.has_value() && presentFamily.has_value() && computeFamily.has_value();
-	}
-};
-struct SwapChainSupportDetails {
-	vk::SurfaceCapabilitiesKHR capabilities;
-	std::vector<vk::SurfaceFormatKHR> formats;
-	std::vector<vk::PresentModeKHR> presentModes;
-};
-
-struct Renderer {
+struct Renderer : VulkanBase {
 
 	Renderer();
-
-	const uint32_t MAX_FRAMES_IN_FLIGHT = 2u;
-	// Current frame index
-	uint32_t currentFrame = 0;
-
-	vk::raii::Context  context;
-	vk::raii::Instance instance = nullptr;
-	vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
-
-	vk::raii::PhysicalDevice physicalDevice = nullptr;
-	vk::raii::Device         device = nullptr;
-
-	QueueFamilyIndices queueFamilyIndices;
-	vk::raii::Queue graphicsQueue = nullptr;
-	vk::raii::Queue presentQueue = nullptr;
-	vk::raii::Queue computeQueue = nullptr;
-	vk::raii::Queue transferQueue = nullptr;
-
-	vk::raii::SurfaceKHR surface = nullptr;
-
-	// Required device extensions
-	const std::vector<const char*> requiredDeviceExtensions = {
-	  VK_KHR_SWAPCHAIN_EXTENSION_NAME
-	};
-	// All device extensions (required + optional)
-	std::vector<const char*> deviceExtensions;
-
-	vk::raii::SwapchainKHR           swapChain = nullptr;
-	std::vector<vk::Image>           swapChainImages;
-	vk::Format						 swapChainImageFormat = vk::Format::eUndefined;
-	vk::Extent2D                     swapChainExtent;
-	std::vector<vk::raii::ImageView> swapChainImageViews;
-	std::vector<vk::ImageLayout> swapChainImageLayouts;
-
-	vk::raii::CommandPool    commandPool = nullptr;
-	std::vector<vk::raii::CommandBuffer> commandBuffers;
-
-	std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
-	std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
-	std::vector<vk::raii::Fence> inFlightFences;
 
 #if RENDERING_LEVEL == 1
 	vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
@@ -299,10 +229,6 @@ struct Renderer {
 	};
 	std::vector<UiFrameBuffers> uiFrameBuffers;
 #endif
-	bool framebufferResized = false;
-
-	TextureData depthData;
-	vk::ImageLayout depthImageLayout = vk::ImageLayout::eUndefined;
 #if RENDERING_LEVEL < 3 || RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7 || RENDERING_LEVEL == 8
 	Camera camera = Camera(glm::vec3(0.0f, 0.0f, 5.0f));
 #else
@@ -596,17 +522,17 @@ struct Renderer {
 		createMeshes();
 		loadTextures();
 #if RENDERING_LEVEL == 1
-		renderer.createDescriptorSets();
+		createDescriptorSets();
 #elif RENDERING_LEVEL == 2
-		renderer.createInstancedDescriptorSets();
+		createInstancedDescriptorSets();
 #elif RENDERING_LEVEL == 3
-		renderer.createPBRDescriptorSets();
+		createPBRDescriptorSets();
 #elif RENDERING_LEVEL == 4
 		generateIBLResources();
-		renderer.createIBLPBRDescriptorSets();
-		renderer.createSkyboxDescriptorSets();
+		createIBLPBRDescriptorSets();
+		createSkyboxDescriptorSets();
 #elif RENDERING_LEVEL == 5 || RENDERING_LEVEL == 6 || RENDERING_LEVEL == 7
-		renderer.createShadowDescriptorSets();
+		createShadowDescriptorSets();
 #endif
 	}
 
@@ -932,10 +858,5 @@ struct Renderer {
 	void endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer);
 
 	void generateMipmaps(vk::raii::Image& image, vk::Format imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels);
-
-	Platform* platform;
-	ResourceManager* resourceManager;
-	Scene* scene = nullptr;
-	uint32_t maxInstances = 0;
 
 };

@@ -1,3 +1,7 @@
 #pragma once
 
-#define RENDERING_LEVEL  8 // 1: Multi-draw, 2: Instanced, 3: PBR Instanced, 4: IBL_PBR, 5: ShadowMap, 6: TAAU, 7: SSR, 8: Compute Occlusion Culling
+// RENDERING_LEVEL is set per-target via CMake (target_compile_definitions).
+// If not defined, fall back to a default to keep legacy builds working.
+#ifndef RENDERING_LEVEL
+#define RENDERING_LEVEL 8
+#endif
