@@ -6,21 +6,14 @@ struct InstanceData
 [[vk::binding(1, 0)]]
 StructuredBuffer<InstanceData> instanceBuffer;
 
-struct ShadowUBO
+struct SceneUBO
 {
-    float4x4 lightViewProj;
-    float4x4 prevViewProj;
-    float4 dirLightDirIntensity;
-    float4 dirLightColor;
-    float4 pointLightPosIntensity;
-    float4 pointLightColor;
-    float4 areaLightPosIntensity;
-    float4 areaLightColor;
-    float4 areaLightU;
-    float4 areaLightV;
+    float4x4 projection;
+    float4x4 view;
+    float3 camPos;
 };
-[[vk::binding(2, 0)]]
-ConstantBuffer<ShadowUBO> shadowUbo;
+[[vk::binding(0, 0)]]
+ConstantBuffer<SceneUBO> sceneUbo;
 
 struct VSInput
 {
@@ -38,7 +31,7 @@ VSOutput vertMain(VSInput input, uint instanceID : SV_InstanceID)
     VSOutput output;
     float4x4 model = instanceBuffer[instanceID].model;
     float4 worldPos = mul(model, float4(input.inPosition, 1.0));
-    output.pos = mul(shadowUbo.lightViewProj, worldPos);
+    output.pos = mul(sceneUbo.projection, mul(sceneUbo.view, worldPos));
     return output;
 }
 

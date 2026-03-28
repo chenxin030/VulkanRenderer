@@ -1,9 +1,8 @@
 cmake_minimum_required(VERSION 3.28)
 
-set(EXAMPLE_NAME 2_pbr)
-
-set(EXAMPLE_SHADER_SOURCE_DIR "${CMAKE_SOURCE_DIR}/shaders/pbr")
-set(EXAMPLE_SHADER_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/shaders/pbr")
+set(EXAMPLE_NAME 8_deferredShading)
+set(EXAMPLE_SHADER_SOURCE_DIR "${CMAKE_SOURCE_DIR}/shaders/deferredShading")
+set(EXAMPLE_SHADER_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/shaders/deferredShading")
 
 add_executable(${EXAMPLE_NAME}
     ${CMAKE_CURRENT_SOURCE_DIR}/StandaloneMain.cpp
@@ -11,16 +10,16 @@ add_executable(${EXAMPLE_NAME}
 
 target_include_directories(${EXAMPLE_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/src/Base
+    ${CMAKE_SOURCE_DIR}/src
 )
 
 target_sources(${EXAMPLE_NAME} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/PBRRenderer.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/PBRRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/DeferredRenderer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/StandaloneMain.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/DeferredRenderer.cpp
 )
 
-target_link_libraries(${EXAMPLE_NAME} PRIVATE vkr_deps vkr_base)
+target_link_libraries(${EXAMPLE_NAME} PRIVATE vkr_deps vkr_base vkr_imgui)
 
 target_compile_definitions(${EXAMPLE_NAME} PRIVATE
     VK_SHADERS_DIR="${EXAMPLE_SHADER_OUTPUT_DIR}/"
@@ -33,4 +32,3 @@ vkr_copy_glfw_dll(${EXAMPLE_NAME})
 set_target_properties(${EXAMPLE_NAME} PROPERTIES
     VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 )
-

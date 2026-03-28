@@ -1,5 +1,7 @@
 #include "Scene.h"
 
+#include <cmath>
+
 void Scene::initScene(const ResourceManager& resourceManager, unsigned int modelCount)
 {
 	world.clear();
@@ -163,21 +165,43 @@ void Scene::initScene(const ResourceManager& resourceManager, unsigned int model
 #elif RENDERING_LEVEL == 8
 	setCubeMeshIndex(0);
 	setSphereMeshIndex(1);
-	const uint32_t gridSize = static_cast<uint32_t>(std::ceil(std::sqrt(static_cast<float>(modelCount))));
-	const float spacing = 1.25f;
-	const float halfExtent = (static_cast<float>(gridSize) * spacing) * 0.5f;
-	for (uint32_t i = 0; i < modelCount; ++i) {
+
+	const uint32_t clampedCount = std::max(1u, modelCount);
+	const uint32_t gridX = static_cast<uint32_t>(std::ceil(std::sqrt(static_cast<float>(clampedCount))));
+	const uint32_t gridZ = static_cast<uint32_t>(std::ceil(static_cast<float>(clampedCount) / static_cast<float>(gridX)));
+	const float spacing = 1.85f;
+	const float originX = -0.5f * static_cast<float>(gridX - 1) * spacing;
+	const float originZ = -0.5f * static_cast<float>(gridZ - 1) * spacing;
+
+	if (modelCount > 0) {
+		Entity ground = world.createEntity();
+		const float groundScaleX = static_cast<float>(gridX) * spacing * 0.6f;
+		const float groundScaleZ = static_cast<float>(gridZ) * spacing * 0.6f;
+		world.addTransform(ground, Transform{ {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f, 0.0f}, {groundScaleX, 0.05f, groundScaleZ} });
+		world.addMeshTag(ground, MeshTag::Cube);
+		world.addColor(ground, glm::vec4(0.24f, 0.24f, 0.26f, 1.0f));
+	}
+
+	for (uint32_t i = 1; i < modelCount; ++i) {
+		const uint32_t id = i - 1;
+		const uint32_t row = id / gridX;
+		const uint32_t col = id % gridX;
+
+		const float x = originX + static_cast<float>(col) * spacing;
+		const float z = originZ + static_cast<float>(row) * spacing;
+		const float wave = std::sin(static_cast<float>(id) * 0.31f) * std::cos(static_cast<float>(id) * 0.17f);
+		const float y = -0.25f + 0.35f * wave;
+		const float scale = 0.22f + 0.18f * (0.5f + 0.5f * std::sin(static_cast<float>(id) * 0.11f));
+
 		Entity cube = world.createEntity();
-		uint32_t row = i / gridSize;
-		uint32_t col = i % gridSize;
-		float x = static_cast<float>(col) * spacing - halfExtent;
-		float z = static_cast<float>(row) * spacing - halfExtent;
-		float y = 0.15f + 0.05f * std::sin(static_cast<float>(i) * 0.17f);
-		float scale = 0.45f + 0.15f * std::sin(static_cast<float>(i) * 0.07f);
-		world.addTransform(cube, Transform{ {x, y, z}, {0.0f, 0.0f, 0.0f}, {scale, scale, scale} });
+		world.addTransform(cube, Transform{ {x, y, z}, {0.0f, static_cast<float>(id) * 0.013f, 0.0f}, {scale, scale, scale} });
 		world.addMeshTag(cube, MeshTag::Cube);
-		float hue = static_cast<float>(i % 256) / 255.0f;
-		world.addColor(cube, glm::vec4(0.2f + 0.8f * hue, 0.9f - 0.6f * hue, 0.4f + 0.4f * std::sin(hue * 6.2831f), 1.0f));
+
+		const float hue = std::fmod(static_cast<float>(id) * 0.6180339f, 1.0f);
+		const float r = 0.25f + 0.75f * std::sin((hue + 0.00f) * 6.2831853f) * 0.5f + 0.375f;
+		const float g = 0.25f + 0.75f * std::sin((hue + 0.33f) * 6.2831853f) * 0.5f + 0.375f;
+		const float b = 0.25f + 0.75f * std::sin((hue + 0.67f) * 6.2831853f) * 0.5f + 0.375f;
+		world.addColor(cube, glm::vec4(glm::clamp(r, 0.1f, 1.0f), glm::clamp(g, 0.1f, 1.0f), glm::clamp(b, 0.1f, 1.0f), 1.0f));
 	}
 #endif
 }

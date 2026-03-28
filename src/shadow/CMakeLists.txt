@@ -1,11 +1,8 @@
 cmake_minimum_required(VERSION 3.28)
 
 set(EXAMPLE_NAME 4_shadow)
-set(EXAMPLE_SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
-set(EXAMPLE_SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
-file(GLOB IMGUI_SOURCES
-    ${CMAKE_SOURCE_DIR}/external/imgui/imgui*.cpp
-)
+set(EXAMPLE_SHADER_SOURCE_DIR "${CMAKE_SOURCE_DIR}/shaders/shadow")
+set(EXAMPLE_SHADER_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/shaders/shadow")
 
 add_executable(${EXAMPLE_NAME}
     ${CMAKE_CURRENT_SOURCE_DIR}/StandaloneMain.cpp
@@ -21,10 +18,9 @@ target_sources(${EXAMPLE_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/StandaloneMain.cpp
 
     ${CMAKE_CURRENT_SOURCE_DIR}/ShadowRenderer.cpp
-    ${IMGUI_SOURCES}
 )
 
-target_link_libraries(${EXAMPLE_NAME} PRIVATE vkr_deps vkr_base)
+target_link_libraries(${EXAMPLE_NAME} PRIVATE vkr_deps vkr_base vkr_imgui)
 
 target_compile_definitions(${EXAMPLE_NAME} PRIVATE
     VK_SHADERS_DIR="${EXAMPLE_SHADER_OUTPUT_DIR}/"

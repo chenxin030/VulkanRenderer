@@ -9,7 +9,6 @@ StructuredBuffer<InstanceData> instanceBuffer;
 struct ShadowUBO
 {
     float4x4 lightViewProj;
-    float4x4 prevViewProj;
     float4 dirLightDirIntensity;
     float4 dirLightColor;
     float4 pointLightPosIntensity;

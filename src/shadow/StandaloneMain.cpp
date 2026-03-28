@@ -1,8 +1,6 @@
 #include "ShadowRenderer.h"
 
-#include <Core/Platform.h>
-#include <Core/ResourceManager.h>
-#include "Scene.h"
+#include <Base/Platform.h>
 
 #include <cstdio>
 #include <exception>
@@ -13,22 +11,16 @@ int main()
     try
     {
         Platform platform;
-        platform.SetBaseTitle("VulkanRenderer - shadow (Standalone)");
+        platform.SetBaseTitle("VulkanRenderer - shadow");
         platform.initWindow();
 
-        ResourceManager resourceManager;
-        Scene scene;
-        const uint32_t sceneMax = Scene::getDefaultMaxInstances();
-        scene.initScene(resourceManager, sceneMax);
-        resourceManager.initResource(sceneMax);
-
-        auto app = std::make_unique<ShadowRenderer>();
-        app->initialize(&platform, &resourceManager, &scene);
-        if (!app->initVulkan())
+        ShadowRenderer renderer;
+        renderer.initialize(&platform);
+        if (!renderer.initVulkan())
         {
             return EXIT_FAILURE;
         }
-        app->prepareResource();
+        renderer.prepareResource();
 
         bool running = true;
         while (running)
@@ -38,13 +30,13 @@ int main()
                 running = false;
                 break;
             }
-            app->processInput(platform.frameTimer);
-            app->render();
+            renderer.processInput(platform.frameTimer);
+            renderer.render();
             platform.endFrame();
         }
 
-        app->waitIdle();
-        app->cleanup();
+        renderer.waitIdle();
+        renderer.cleanup();
         platform.cleanup();
     }
     catch (const std::exception& e)

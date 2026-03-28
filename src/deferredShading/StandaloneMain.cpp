@@ -1,19 +1,20 @@
-#include "CullingRenderer.h"
+#include "DeferredRenderer.h"
 
 #include <Base/Platform.h>
 
 #include <cstdio>
 #include <exception>
+#include <memory>
 
 int main()
 {
     try
     {
         Platform platform;
-        platform.SetBaseTitle("VulkanRenderer - culling");
+        platform.SetBaseTitle("VulkanRenderer - deferredShading");
         platform.initWindow();
 
-        CullingRenderer renderer;
+        DeferredRenderer renderer;
         renderer.initialize(&platform);
         if (!renderer.initVulkan())
         {
@@ -46,4 +47,3 @@ int main()
 
     return EXIT_SUCCESS;
 }
-

@@ -96,6 +96,21 @@ set_target_properties(vkr_base PROPERTIES
 )
 
 # -----------------------------
+# ImGui shared target
+# -----------------------------
+file(GLOB VKR_IMGUI_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/imgui*.cpp
+)
+add_library(vkr_imgui STATIC
+    ${VKR_IMGUI_SOURCES}
+)
+target_link_libraries(vkr_imgui PUBLIC vkr_deps)
+source_group("ImGui" FILES ${VKR_IMGUI_SOURCES})
+set_target_properties(vkr_imgui PROPERTIES
+    FOLDER external
+)
+
+# -----------------------------
 # Legacy exe（保留原入口，便于对照）
 # -----------------------------
 option(VKR_BUILD_LEGACY "Build legacy vulkanRenderer target" OFF)
