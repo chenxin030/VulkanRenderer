@@ -1157,6 +1157,28 @@ void CullingRenderer::updateCullingUI()
 
     ImGui::Begin("Culling", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::Checkbox("Enable Culling", &cullingEnabled);
+
+    const char* viewButtonLabel = lowViewEnabled ? "Switch to High View" : "Switch to Low View";
+    if (ImGui::Button(viewButtonLabel))
+    {
+        if (!lowViewEnabled)
+        {
+            highViewCamera = camera;
+            highViewSaved = true;
+            camera = lowViewCamera;
+            lowViewEnabled = true;
+        }
+        else
+        {
+            lowViewCamera = camera;
+            if (highViewSaved)
+            {
+                camera = highViewCamera;
+            }
+            lowViewEnabled = false;
+        }
+    }
+
     ImGui::Text("Instances: %u", totalInstanceCount);
     ImGui::Text("Visible: %u", visibleCountCpu);
     ImGui::Text("Frame: %.3f ms", displayedFrameMs);

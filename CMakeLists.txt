@@ -14,9 +14,6 @@ endif()
 # 设置解决方案文件夹属性（用于 Visual Studio）
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
-# 包含着色器编译模块
-include(cmake/shader.cmake)
-
 message(STATUS "Looking for Vulkan...")
 find_package(Vulkan REQUIRED)
 
@@ -53,12 +50,6 @@ if(FORCE_VALIDATION)
     add_definitions(-DFORCE_VALIDATION)
 endif()
 
-# -----------------------------
-# Common deps target (no sources)
-# 注意：Renderer/Scene/ResourceManager 仍依赖 RENDERING_LEVEL 宏，
-# 现阶段不能做成“单份静态库供多个 example 复用”，否则不同 example 会冲突。
-# 后续把 Renderer 拆成 VulkanBase + Example 后，再恢复真正的 vkr_base 静态库。
-# -----------------------------
 add_library(vkr_deps INTERFACE)
 target_include_directories(vkr_deps INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/external
@@ -69,7 +60,6 @@ target_include_directories(vkr_deps INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/external/ktx/include
     ${CMAKE_CURRENT_SOURCE_DIR}/external/ktx/other_include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/Core
     ${Vulkan_INCLUDE_DIRS}
 )
 
@@ -78,22 +68,23 @@ target_link_libraries(vkr_deps INTERFACE
     ${GLFW_LIBRARY}
 )
 
-# -----------------------------
-# Base core target (shared VulkanBase implementation)
-# -----------------------------
-add_library(vkr_base STATIC
+add_library(Base STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/Camera.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/Platform.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase.h   
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase_commands.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase_core.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase_swapchain.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase_utils.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase_Resource.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/Mesh.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/Mesh.cpp
 )
-target_link_libraries(vkr_base PUBLIC vkr_deps)
-set_target_properties(vkr_base PROPERTIES
-    FOLDER base
-)
+target_link_libraries(Base PUBLIC vkr_deps)
+
+# 兼容各 example 现有链接名（它们都链接 vkr_base）
+add_library(vkr_base ALIAS Base)
 
 # -----------------------------
 # ImGui shared target
@@ -101,72 +92,28 @@ set_target_properties(vkr_base PROPERTIES
 file(GLOB VKR_IMGUI_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/imgui*.cpp
 )
-add_library(vkr_imgui STATIC
+add_library(Imgui STATIC
     ${VKR_IMGUI_SOURCES}
 )
-target_link_libraries(vkr_imgui PUBLIC vkr_deps)
+target_link_libraries(Imgui PUBLIC vkr_deps)
 source_group("ImGui" FILES ${VKR_IMGUI_SOURCES})
-set_target_properties(vkr_imgui PROPERTIES
-    FOLDER external
+
+file(GLOB IMGUI_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/imgui*.cpp
 )
-
-# -----------------------------
-# Legacy exe（保留原入口，便于对照）
-# -----------------------------
-option(VKR_BUILD_LEGACY "Build legacy vulkanRenderer target" OFF)
-
-if(VKR_BUILD_LEGACY)
-    file(GLOB IMGUI_SOURCES
-        ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/imgui*.cpp
+file(GLOB_RECURSE SHADER_SLANG_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.slang
+)
+if(SHADER_SLANG_FILES)
+    add_slang_shader_target(
+        ShaderCompileTarget
+        SOURCES ${SHADER_SLANG_FILES}
+        OUTPUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders
     )
-    file(GLOB_RECURSE SHADER_SLANG_FILES
-        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.slang
-    )
-    if(SHADER_SLANG_FILES)
-        add_slang_shader_target(
-            ShaderCompileTarget
-            SOURCES ${SHADER_SLANG_FILES}
-            OUTPUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders
-        )
-    endif()
+endif()
 
-    add_executable(${NAME})
-    target_sources(${NAME} PRIVATE
-        ${APP_SOURCES}
-        ${APP_HEADERS}
-        ${CORE_SOURCES}
-        ${CORE_HEADERS}
-        ${IMGUI_SOURCES}
-        ${SHADER_SLANG_FILES}
-    )
-    target_include_directories(${NAME} PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/App
-    )
-    target_link_libraries(${NAME} PRIVATE vkr_deps)
-    target_compile_definitions(${NAME} PRIVATE
-        RENDERING_LEVEL=8
-        VK_SHADERS_DIR="${CMAKE_SOURCE_DIR}/shaders/"
-    )
-
-    if(TARGET ShaderCompileTarget)
-        add_dependencies(${NAME} ShaderCompileTarget)
-    endif()
-
-    if(WIN32)
-        set(GLFW_DLL_PATH "${CMAKE_CURRENT_SOURCE_DIR}/external/GLFW3/bin/glfw3.dll")
-        if(EXISTS ${GLFW_DLL_PATH})
-            add_custom_command(TARGET ${NAME} POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    ${GLFW_DLL_PATH}
-                    $<TARGET_FILE_DIR:${NAME}>
-            )
-        endif()
-    endif()
-
-    set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${NAME})
-else()
-    # 默认启动一个 example
-    set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT 1_triangle)
+if(TARGET ShaderCompileTarget)
+    add_dependencies(${NAME} ShaderCompileTarget)
 endif()
 
 # -----------------------------

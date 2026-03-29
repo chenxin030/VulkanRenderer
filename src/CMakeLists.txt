@@ -14,7 +14,7 @@ function(vkr_copy_glfw_dll target_name)
 endfunction()
 
 function(vkr_add_example_slang_shaders target_name shader_source_dir shader_output_dir)
-    file(GLOB EXAMPLE_SHADER_SOURCES "${shader_source_dir}/*.slang")
+    file(GLOB CONFIGURE_DEPENDS EXAMPLE_SHADER_SOURCES "${shader_source_dir}/*.slang")
     if(NOT EXAMPLE_SHADER_SOURCES)
         return()
     endif()
@@ -61,6 +61,10 @@ function(vkr_add_example_slang_shaders target_name shader_source_dir shader_outp
     target_sources(${target_name} PRIVATE ${EXAMPLE_SHADER_SOURCES})
 endfunction()
 
+add_compile_definitions(
+    VK_SHADERS_DIR="${CMAKE_SOURCE_DIR}/shaders/"
+)
+
 add_subdirectory(Instanced)
 add_subdirectory(pbr)
 add_subdirectory(IBL_pbr)
@@ -69,4 +73,14 @@ add_subdirectory(deferredShading)
 add_subdirectory(taau)
 add_subdirectory(ssr)
 add_subdirectory(culling)
+
+# 统一从根目录 shaders/<example> 编译，并统一输出到根 shaders 目录
+vkr_add_example_slang_shaders(1_InstenceRender   "${CMAKE_SOURCE_DIR}/shaders/Instanced"       "${CMAKE_SOURCE_DIR}/shaders")
+vkr_add_example_slang_shaders(2_pbr              "${CMAKE_SOURCE_DIR}/shaders/pbr"             "${CMAKE_SOURCE_DIR}/shaders")
+vkr_add_example_slang_shaders(3_pbr_ibl          "${CMAKE_SOURCE_DIR}/shaders/IBL_pbr"         "${CMAKE_SOURCE_DIR}/shaders")
+vkr_add_example_slang_shaders(4_shadow           "${CMAKE_SOURCE_DIR}/shaders/shadow"          "${CMAKE_SOURCE_DIR}/shaders")
+vkr_add_example_slang_shaders(8_deferredShading  "${CMAKE_SOURCE_DIR}/shaders/deferredShading" "${CMAKE_SOURCE_DIR}/shaders")
+vkr_add_example_slang_shaders(5_taau             "${CMAKE_SOURCE_DIR}/shaders/taau"            "${CMAKE_SOURCE_DIR}/shaders")
+vkr_add_example_slang_shaders(6_ssr              "${CMAKE_SOURCE_DIR}/shaders/ssr"             "${CMAKE_SOURCE_DIR}/shaders")
+vkr_add_example_slang_shaders(7_culling          "${CMAKE_SOURCE_DIR}/shaders/culling"         "${CMAKE_SOURCE_DIR}/shaders")
 
