@@ -18,6 +18,20 @@ target_sources(${EXAMPLE_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/DeferredRenderer.cpp
 )
 
+file(GLOB EXAMPLE_SHADER_FILES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/shaders/8_deferredShading/*.slang"
+)
+if(EXAMPLE_SHADER_FILES)
+    set_source_files_properties(${EXAMPLE_SHADER_FILES} PROPERTIES HEADER_FILE_ONLY TRUE)
+    source_group("shaders" FILES ${EXAMPLE_SHADER_FILES})
+    target_sources(${EXAMPLE_NAME} PRIVATE ${EXAMPLE_SHADER_FILES})
+endif()
+
+vkr_add_example_slang_shaders(${EXAMPLE_NAME}
+    "${CMAKE_SOURCE_DIR}/shaders/8_deferredShading"
+    "${CMAKE_SOURCE_DIR}/shaders"
+)
+
 target_link_libraries(${EXAMPLE_NAME} PRIVATE vkr_deps vkr_base vkr_imgui)
 
 vkr_copy_glfw_dll(${EXAMPLE_NAME})

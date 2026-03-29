@@ -92,29 +92,12 @@ add_library(vkr_base ALIAS Base)
 file(GLOB VKR_IMGUI_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/imgui*.cpp
 )
-add_library(Imgui STATIC
+add_library(vkr_imgui STATIC
     ${VKR_IMGUI_SOURCES}
 )
-target_link_libraries(Imgui PUBLIC vkr_deps)
+target_link_libraries(vkr_imgui PUBLIC vkr_deps)
 source_group("ImGui" FILES ${VKR_IMGUI_SOURCES})
 
-file(GLOB IMGUI_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/imgui*.cpp
-)
-file(GLOB_RECURSE SHADER_SLANG_FILES
-    ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.slang
-)
-if(SHADER_SLANG_FILES)
-    add_slang_shader_target(
-        ShaderCompileTarget
-        SOURCES ${SHADER_SLANG_FILES}
-        OUTPUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders
-    )
-endif()
-
-if(TARGET ShaderCompileTarget)
-    add_dependencies(${NAME} ShaderCompileTarget)
-endif()
 
 # -----------------------------
 # Examples
