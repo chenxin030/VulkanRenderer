@@ -68,7 +68,6 @@ public:
     uint32_t clusterY = DEFAULT_CLUSTER_Y;
     uint32_t clusterZ = DEFAULT_CLUSTER_Z;
     bool clusteredShadingEnabled = true;
-    bool uiEnabled = true;
 
     float frameMs = 0.0f;
     float fps = 0.0f;
@@ -112,27 +111,6 @@ public:
     std::vector<vk::raii::CommandBuffer> computeCommandBuffers;
     std::vector<vk::raii::Semaphore> computeCompleteSemaphores;
 
-    vk::raii::DescriptorSetLayout uiDescriptorSetLayout = nullptr;
-    vk::raii::DescriptorPool uiDescriptorPool = nullptr;
-    vk::raii::PipelineLayout uiPipelineLayout = nullptr;
-    vk::raii::Pipeline uiPipeline = nullptr;
-    vk::raii::DescriptorSets uiDescriptorSets = nullptr;
-    TextureData uiFontTexture;
-
-    struct UiFrameBuffers
-    {
-        vk::raii::Buffer vertexBuffer = nullptr;
-        vk::raii::DeviceMemory vertexBufferMemory = nullptr;
-        void* vertexMapped = nullptr;
-        size_t vertexSize = 0;
-
-        vk::raii::Buffer indexBuffer = nullptr;
-        vk::raii::DeviceMemory indexBufferMemory = nullptr;
-        void* indexMapped = nullptr;
-        size_t indexSize = 0;
-    };
-    std::vector<UiFrameBuffers> uiFrameBuffers;
-
     struct GroundUBO
     {
         glm::mat4 model;
@@ -164,7 +142,6 @@ public:
     void recordCommandBuffer(uint32_t imageIndex);
 
     bool initUI();
-    void shutdownUI();
     void updateUIFrame();
     void updateClusteredUI();
     void recordUI(vk::raii::CommandBuffer& commandBuffer);

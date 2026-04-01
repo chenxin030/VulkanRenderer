@@ -1,5 +1,6 @@
 #include "VulkanBase.h"
 
+#include <imgui.h>
 #include <set>
 #include <map>
 
@@ -358,5 +359,36 @@ bool VulkanBase::checkValidationLayerSupport() const
         }
     }
     return true;
+}
+
+void VulkanBase::shutdownUI()
+{
+    if (ImGui::GetCurrentContext() == nullptr)
+    {
+        return;
+    }
+
+    device.waitIdle();
+
+    for (auto& fb : uiFrameBuffers)
+    {
+        if (fb.vertexMapped != nullptr)
+        {
+            fb.vertexBufferMemory.unmapMemory();
+            fb.vertexMapped = nullptr;
+        }
+        if (fb.indexMapped != nullptr)
+        {
+            fb.indexBufferMemory.unmapMemory();
+            fb.indexMapped = nullptr;
+        }
+        fb.vertexBuffer = vk::raii::Buffer(nullptr);
+        fb.vertexBufferMemory = vk::raii::DeviceMemory(nullptr);
+        fb.indexBuffer = vk::raii::Buffer(nullptr);
+        fb.indexBufferMemory = vk::raii::DeviceMemory(nullptr);
+    }
+    uiFrameBuffers.clear();
+    
+    ImGui::DestroyContext();
 }
 

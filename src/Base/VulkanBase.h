@@ -169,5 +169,31 @@ struct VulkanBase {
     void copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image, uint32_t width, uint32_t height);
     std::unique_ptr<vk::raii::CommandBuffer> beginSingleTimeCommands();
     void endSingleTimeCommands(vk::raii::CommandBuffer& commandBuffer);
+
+    // ImGui UI
+    bool uiEnabled = true;
+    vk::raii::DescriptorSetLayout uiDescriptorSetLayout = nullptr;
+    vk::raii::DescriptorPool uiDescriptorPool = nullptr;
+    vk::raii::PipelineLayout uiPipelineLayout = nullptr;
+    vk::raii::Pipeline uiPipeline = nullptr;
+    vk::raii::DescriptorSets uiDescriptorSets = nullptr;
+    TextureData uiFontTexture;
+
+    struct UiFrameBuffers
+    {
+        vk::raii::Buffer vertexBuffer = nullptr;
+        vk::raii::DeviceMemory vertexBufferMemory = nullptr;
+        void* vertexMapped = nullptr;
+        size_t vertexSize = 0;
+        size_t vertexBufferSize = 0; // tracked for dynamic reallocation
+        vk::raii::Buffer indexBuffer = nullptr;
+        vk::raii::DeviceMemory indexBufferMemory = nullptr;
+        void* indexMapped = nullptr;
+        size_t indexSize = 0;
+        size_t indexBufferSize = 0; // tracked for dynamic reallocation
+    };
+    std::vector<UiFrameBuffers> uiFrameBuffers;
+
+    virtual void shutdownUI();
 };
 

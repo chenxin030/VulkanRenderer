@@ -35,26 +35,10 @@ private:
     vk::raii::Pipeline skyPipeline = nullptr;
     vk::raii::DescriptorSets skyDescriptorSets = nullptr;
 
-    bool uiEnabled = true;
-    vk::raii::DescriptorSetLayout uiDescriptorSetLayout = nullptr;
-    vk::raii::DescriptorPool uiDescriptorPool = nullptr;
-    vk::raii::PipelineLayout uiPipelineLayout = nullptr;
-    vk::raii::Pipeline uiPipeline = nullptr;
-    vk::raii::DescriptorSets uiDescriptorSets = nullptr;
-    TextureData uiFontTexture;
-
-    struct UiFrameBuffers
-    {
-        vk::raii::Buffer vertexBuffer = nullptr;
-        vk::raii::DeviceMemory vertexBufferMemory = nullptr;
-        void* vertexMapped = nullptr;
-        size_t vertexSize = 0;
-        vk::raii::Buffer indexBuffer = nullptr;
-        vk::raii::DeviceMemory indexBufferMemory = nullptr;
-        void* indexMapped = nullptr;
-        size_t indexSize = 0;
-    };
-    std::vector<UiFrameBuffers> uiFrameBuffers;
+    bool initUI();
+    void updateUIFrame();
+    void updateAtmosphericUI();
+    void recordUI(vk::raii::CommandBuffer& commandBuffer);
 
     // Scene settings
     float sunElevation = 0.3f;    // radians above horizon
@@ -67,12 +51,6 @@ private:
     bool createSkyDescriptorPool();
     void createSkyDescriptorSets();
     bool createSkyPipeline();
-
-    bool initUI();
-    void updateUIFrame();
-    void updateAtmosphericUI();
-    void recordUI(vk::raii::CommandBuffer& commandBuffer);
-    void shutdownUI();
 
     void recordCommandBuffer(uint32_t imageIndex);
 };

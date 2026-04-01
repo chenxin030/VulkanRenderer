@@ -59,8 +59,6 @@ public:
     float spread = 1.5f;
     float velocity = 5.0f;
 
-    bool uiEnabled = true;
-
     MeshBuffer particleBufferResources;
     MeshBuffer particleParamsBufferResources;
     MeshBuffer sceneUboResources;
@@ -81,28 +79,6 @@ public:
     std::vector<vk::raii::CommandBuffer> computeCommandBuffers;
     std::vector<vk::raii::Semaphore> computeCompleteSemaphores;
 
-    vk::raii::DescriptorSetLayout uiDescriptorSetLayout = nullptr;
-    vk::raii::DescriptorPool uiDescriptorPool = nullptr;
-    vk::raii::PipelineLayout uiPipelineLayout = nullptr;
-    vk::raii::Pipeline uiPipeline = nullptr;
-    vk::raii::DescriptorSets uiDescriptorSets = nullptr;
-    TextureData uiFontTexture;
-
-    struct UiFrameBuffers
-    {
-        vk::raii::Buffer vertexBuffer = nullptr;
-        vk::raii::DeviceMemory vertexBufferMemory = nullptr;
-        void* vertexMapped = nullptr;
-        size_t vertexSize = 0;
-        size_t vertexBufferSize = 0;
-        vk::raii::Buffer indexBuffer = nullptr;
-        vk::raii::DeviceMemory indexBufferMemory = nullptr;
-        void* indexMapped = nullptr;
-        size_t indexSize = 0;
-        size_t indexBufferSize = 0;
-    };
-    std::vector<UiFrameBuffers> uiFrameBuffers;
-
     std::mt19937 rng;
     std::uniform_real_distribution<float> dist01{ 0.0f, 1.0f };
     std::uniform_real_distribution<float> dist11{ -1.0f, 1.0f };
@@ -117,7 +93,6 @@ public:
     bool createComputeCommandBuffers();
     bool createComputeSyncObjects();
     bool initUI();
-    void shutdownUI();
     void updateUIFrame();
     void updateParticleUI();
     void recordUI(vk::raii::CommandBuffer& commandBuffer);

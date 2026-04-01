@@ -81,7 +81,7 @@ add_library(Base STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/Mesh.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/Mesh.cpp
 )
-target_link_libraries(Base PUBLIC vkr_deps)
+target_link_libraries(Base PUBLIC vkr_deps vkr_imgui)
 
 # 兼容各 example 现有链接名（它们都链接 vkr_base）
 add_library(vkr_base ALIAS Base)

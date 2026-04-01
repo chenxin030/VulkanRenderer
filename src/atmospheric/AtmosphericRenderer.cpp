@@ -30,29 +30,7 @@ bool AtmosphericRenderer::prepareResource()
 
 void AtmosphericRenderer::cleanup()
 {
-    device.waitIdle();
-
-    uiPipeline = vk::raii::Pipeline(nullptr);
-    uiPipelineLayout = vk::raii::PipelineLayout(nullptr);
-    uiDescriptorSets = vk::raii::DescriptorSets(nullptr);
-    uiDescriptorPool = vk::raii::DescriptorPool(nullptr);
-    uiDescriptorSetLayout = vk::raii::DescriptorSetLayout(nullptr);
-
-    uiFontTexture.textureSampler = vk::raii::Sampler(nullptr);
-    uiFontTexture.textureImageView = vk::raii::ImageView(nullptr);
-    uiFontTexture.textureImage = vk::raii::Image(nullptr);
-    uiFontTexture.textureImageMemory = vk::raii::DeviceMemory(nullptr);
-
-    for (auto& fb : uiFrameBuffers)
-    {
-        if (fb.vertexMapped) { fb.vertexBufferMemory.unmapMemory(); fb.vertexMapped = nullptr; }
-        if (fb.indexMapped) { fb.indexBufferMemory.unmapMemory(); fb.indexMapped = nullptr; }
-        fb.vertexBuffer = vk::raii::Buffer(nullptr);
-        fb.vertexBufferMemory = vk::raii::DeviceMemory(nullptr);
-        fb.indexBuffer = vk::raii::Buffer(nullptr);
-        fb.indexBufferMemory = vk::raii::DeviceMemory(nullptr);
-    }
-    uiFrameBuffers.clear();
+    shutdownUI();
 
     skyPipeline = vk::raii::Pipeline(nullptr);
     skyPipelineLayout = vk::raii::PipelineLayout(nullptr);
@@ -374,33 +352,6 @@ bool AtmosphericRenderer::initUI()
 
     uiFrameBuffers.resize(MAX_FRAMES_IN_FLIGHT);
     return true;
-}
-
-void AtmosphericRenderer::shutdownUI()
-{
-    if (ImGui::GetCurrentContext() == nullptr) return;
-
-    device.waitIdle();
-
-    for (auto& fb : uiFrameBuffers)
-    {
-        if (fb.vertexMapped != nullptr) { fb.vertexBufferMemory.unmapMemory(); fb.vertexMapped = nullptr; }
-        if (fb.indexMapped != nullptr) { fb.indexBufferMemory.unmapMemory(); fb.indexMapped = nullptr; }
-    }
-    uiFrameBuffers.clear();
-
-    uiPipeline = vk::raii::Pipeline(nullptr);
-    uiPipelineLayout = vk::raii::PipelineLayout(nullptr);
-    uiDescriptorSets = vk::raii::DescriptorSets(nullptr);
-    uiDescriptorPool = vk::raii::DescriptorPool(nullptr);
-    uiDescriptorSetLayout = vk::raii::DescriptorSetLayout(nullptr);
-
-    uiFontTexture.textureSampler = vk::raii::Sampler(nullptr);
-    uiFontTexture.textureImageView = vk::raii::ImageView(nullptr);
-    uiFontTexture.textureImage = vk::raii::Image(nullptr);
-    uiFontTexture.textureImageMemory = vk::raii::DeviceMemory(nullptr);
-
-    ImGui::DestroyContext();
 }
 
 void AtmosphericRenderer::updateAtmosphericUI()

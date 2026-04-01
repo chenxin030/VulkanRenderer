@@ -688,15 +688,6 @@ bool ParticleRenderer::initUI()
     }
 }
 
-void ParticleRenderer::shutdownUI()
-{
-    uiPipeline = nullptr;
-    uiPipelineLayout = nullptr;
-    uiDescriptorPool = nullptr;
-    uiDescriptorSetLayout = nullptr;
-    ImGui::DestroyContext();
-}
-
 void ParticleRenderer::updateUIFrame()
 {
     ImGuiIO& io = ImGui::GetIO();

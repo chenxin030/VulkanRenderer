@@ -55,28 +55,6 @@ private:
     bool animateLights = true;
     int debugView = 0; // 0: lit, 1: albedo, 2: normal, 3: material, 4: depth
 
-    bool uiEnabled = true;
-    vk::raii::DescriptorSetLayout uiDescriptorSetLayout = nullptr;
-    vk::raii::DescriptorPool uiDescriptorPool = nullptr;
-    vk::raii::PipelineLayout uiPipelineLayout = nullptr;
-    vk::raii::Pipeline uiPipeline = nullptr;
-    vk::raii::DescriptorSets uiDescriptorSets = nullptr;
-    TextureData uiFontTexture;
-
-    struct UiFrameBuffers
-    {
-        vk::raii::Buffer vertexBuffer = nullptr;
-        vk::raii::DeviceMemory vertexBufferMemory = nullptr;
-        void* vertexMapped = nullptr;
-        size_t vertexSize = 0;
-
-        vk::raii::Buffer indexBuffer = nullptr;
-        vk::raii::DeviceMemory indexBufferMemory = nullptr;
-        void* indexMapped = nullptr;
-        size_t indexSize = 0;
-    };
-    std::vector<UiFrameBuffers> uiFrameBuffers;
-
     bool createGBufferDescriptorSetLayout();
     bool createDeferredDescriptorSetLayout();
 
@@ -98,7 +76,6 @@ private:
     bool recreateDeferredSizedResources();
 
     bool initUI();
-    void shutdownUI();
     void updateUIFrame();
     void updateDeferredUI();
     void recordUI(vk::raii::CommandBuffer& commandBuffer);

@@ -1101,44 +1101,6 @@ bool CullingRenderer::initUI()
     return true;
 }
 
-void CullingRenderer::shutdownUI()
-{
-    if (ImGui::GetCurrentContext() == nullptr)
-    {
-        return;
-    }
-
-    device.waitIdle();
-
-    for (auto& fb : uiFrameBuffers)
-    {
-        if (fb.vertexMapped != nullptr)
-        {
-            fb.vertexBufferMemory.unmapMemory();
-            fb.vertexMapped = nullptr;
-        }
-        if (fb.indexMapped != nullptr)
-        {
-            fb.indexBufferMemory.unmapMemory();
-            fb.indexMapped = nullptr;
-        }
-    }
-    uiFrameBuffers.clear();
-
-    uiPipeline = vk::raii::Pipeline(nullptr);
-    uiPipelineLayout = vk::raii::PipelineLayout(nullptr);
-    uiDescriptorSets = vk::raii::DescriptorSets(nullptr);
-    uiDescriptorPool = vk::raii::DescriptorPool(nullptr);
-    uiDescriptorSetLayout = vk::raii::DescriptorSetLayout(nullptr);
-
-    uiFontTexture.textureSampler = vk::raii::Sampler(nullptr);
-    uiFontTexture.textureImageView = vk::raii::ImageView(nullptr);
-    uiFontTexture.textureImage = vk::raii::Image(nullptr);
-    uiFontTexture.textureImageMemory = vk::raii::DeviceMemory(nullptr);
-
-    ImGui::DestroyContext();
-}
-
 void CullingRenderer::updateCullingUI()
 {
     static float uiUpdateAccum = 0.0f;
@@ -1157,27 +1119,6 @@ void CullingRenderer::updateCullingUI()
 
     ImGui::Begin("Culling", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::Checkbox("Enable Culling", &cullingEnabled);
-
-    const char* viewButtonLabel = lowViewEnabled ? "Switch to High View" : "Switch to Low View";
-    if (ImGui::Button(viewButtonLabel))
-    {
-        if (!lowViewEnabled)
-        {
-            highViewCamera = camera;
-            highViewSaved = true;
-            camera = lowViewCamera;
-            lowViewEnabled = true;
-        }
-        else
-        {
-            lowViewCamera = camera;
-            if (highViewSaved)
-            {
-                camera = highViewCamera;
-            }
-            lowViewEnabled = false;
-        }
-    }
 
     ImGui::Text("Instances: %u", totalInstanceCount);
     ImGui::Text("Visible: %u", visibleCountCpu);
@@ -1443,15 +1384,6 @@ void CullingRenderer::updateCullingStats()
     if (cullingVisibleCountMapped != nullptr)
     {
         visibleCountCpu = *reinterpret_cast<const uint32_t*>(cullingVisibleCountMapped);
-    }
-
-    if (platform)
-    {
-        platform->SetWindowTitle(
-            "VulkanRenderer - 7_culling | Instances: " + std::to_string(totalInstanceCount) +
-            " | Visible: " + std::to_string(visibleCountCpu) +
-            " | Frame: " + std::to_string(frameMs) + " ms" +
-            " | CullGPU: " + std::to_string(cullingGpuMs) + " ms");
     }
 }
 

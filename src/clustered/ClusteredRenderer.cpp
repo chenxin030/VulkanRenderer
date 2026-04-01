@@ -812,44 +812,6 @@ bool ClusteredRenderer::initUI()
     return true;
 }
 
-void ClusteredRenderer::shutdownUI()
-{
-    if (ImGui::GetCurrentContext() == nullptr)
-    {
-        return;
-    }
-
-    device.waitIdle();
-
-    for (auto& fb : uiFrameBuffers)
-    {
-        if (fb.vertexMapped != nullptr)
-        {
-            fb.vertexBufferMemory.unmapMemory();
-            fb.vertexMapped = nullptr;
-        }
-        if (fb.indexMapped != nullptr)
-        {
-            fb.indexBufferMemory.unmapMemory();
-            fb.indexMapped = nullptr;
-        }
-    }
-    uiFrameBuffers.clear();
-
-    uiPipeline = vk::raii::Pipeline(nullptr);
-    uiPipelineLayout = vk::raii::PipelineLayout(nullptr);
-    uiDescriptorSets = vk::raii::DescriptorSets(nullptr);
-    uiDescriptorPool = vk::raii::DescriptorPool(nullptr);
-    uiDescriptorSetLayout = vk::raii::DescriptorSetLayout(nullptr);
-
-    uiFontTexture.textureSampler = vk::raii::Sampler(nullptr);
-    uiFontTexture.textureImageView = vk::raii::ImageView(nullptr);
-    uiFontTexture.textureImage = vk::raii::Image(nullptr);
-    uiFontTexture.textureImageMemory = vk::raii::DeviceMemory(nullptr);
-
-    ImGui::DestroyContext();
-}
-
 void ClusteredRenderer::updateClusteredUI()
 {
     ImGui::Begin("Clustered Forward Shading", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
