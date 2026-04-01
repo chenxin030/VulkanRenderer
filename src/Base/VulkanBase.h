@@ -111,8 +111,8 @@ struct VulkanBase {
     void recreateSwapChain();
     bool createImageViews();
     bool createCommandPool();
-    bool createCommandBuffers();
-    bool createSyncObjects();
+    virtual bool createCommandBuffers();
+    virtual bool createSyncObjects();
     bool createDepthResources();
 
     bool checkValidationLayerSupport() const;
@@ -143,10 +143,13 @@ struct VulkanBase {
         vk::ImageAspectFlags image_aspect_flags);
 
     void createVertexBuffer(Mesh& mesh);
+    void createSkinnedVertexBuffer(Mesh& mesh);
     void createIndexBuffer(Mesh& mesh);
     void createUniformBuffers(MeshBuffer& meshResource, vk::DeviceSize size);
+    void createUniformBuffers(MeshBuffer& meshResource, vk::DeviceSize size, uint32_t count);
     void createStorageBuffers(MeshBuffer& meshResource, vk::DeviceSize size);
     void createStorageBuffers(MeshBuffer& meshResource, vk::DeviceSize size, vk::BufferUsageFlags usage);
+    void createStorageBuffers(MeshBuffer& meshResource, vk::DeviceSize size, vk::BufferUsageFlags usage, uint32_t count);
     void createBuffer(
         vk::DeviceSize size,
         vk::BufferUsageFlags usage,

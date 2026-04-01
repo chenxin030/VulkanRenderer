@@ -47,6 +47,8 @@ struct Vertex {
 struct Mesh {
     std::vector<Vertex> vertices;
     std::vector<uint16_t> indices;
+    std::vector<std::array<uint32_t, 4>> jointIndices;
+    std::vector<std::array<float, 4>> jointWeights;
 
     vk::raii::Buffer vertexBuffer = nullptr;
     vk::raii::DeviceMemory vertexBufferMemory = nullptr;

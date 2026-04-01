@@ -1,7 +1,8 @@
-#include "DeferredRenderer.h"
+#include "GIRenderer.h"
 
 #include <Base/Mesh.h>
 #include <glm/gtc/matrix_transform.hpp>
+#include <random>
 
 #include <algorithm>
 #include <array>
@@ -13,7 +14,7 @@ struct DeferredInstanceData
 {
     glm::mat4 model;
     glm::vec4 baseColor;
-    glm::vec4 material; // x: metallic, y: roughness, z: ao, w: unused
+    glm::vec4 material;
 };
 
 struct SceneUBO
@@ -36,62 +37,164 @@ struct LightUBO
     PointLight lights[4];
 };
 
-struct DeferredSettingsUBO
+struct SsaoSettingsUBO
 {
-    glm::vec4 params0; // x ambient, y exposure, z gamma, w lightScale
-    glm::ivec4 debug;  // x debugView
+    glm::mat4 invProjection;
+    glm::mat4 invView;
+    glm::vec4 params0;
+    glm::ivec4 flags;
+    glm::vec4 kernel[16];
 };
 
-void DeferredRenderer::initialize(Platform* _platform)
+struct BlurUBO
+{
+    glm::vec2 texelSize;
+};
+
+void GIRenderer::initialize(Platform* _platform)
 {
     VulkanBase::initialize(_platform);
 }
 
-bool DeferredRenderer::initVulkan()
+bool GIRenderer::initVulkan()
 {
     camera = Camera(glm::vec3(0.0f, 0.0f, 15.0f));
-    return VulkanBase::initVulkan("VulkanRenderer - 5_deferredPBR");
+    return VulkanBase::initVulkan("VulkanRenderer - 11_gi_ssao");
 }
 
-bool DeferredRenderer::prepareResource()
+bool GIRenderer::prepareResource()
 {
     generateSphere(sphereMesh, 1.0f, 100);
     createVertexBuffer(sphereMesh);
     createIndexBuffer(sphereMesh);
 
-    createDeferredBuffers();
+    createBuffers();
+    generateSsaoKernel();
+    createNoiseTexture();
 
     if (!createGBufferDescriptorSetLayout()) return false;
-    if (!createGBufferDescriptorPool()) return false;
-    if (!createGBufferResources()) return false;
-    if (!createGBufferPipeline()) return false;
-    createGBufferDescriptorSets();
+    if (!createSsaoDescriptorSetLayout()) return false;
+    if (!createSsaoBlurDescriptorSetLayout()) return false;
+    if (!createLightingDescriptorSetLayout()) return false;
 
-    if (!createDeferredDescriptorSetLayout()) return false;
-    if (!createDeferredDescriptorPool()) return false;
-    if (!createDeferredPipeline()) return false;
-    createDeferredDescriptorSets();
+    if (!createGBufferDescriptorPool()) return false;
+    if (!createSsaoDescriptorPool()) return false;
+    if (!createSsaoBlurDescriptorPool()) return false;
+    if (!createLightingDescriptorPool()) return false;
+
+    if (!createGBufferResources()) return false;
+    if (!createSsaoResources()) return false;
+
+    if (!createGBufferPipeline()) return false;
+    if (!createSsaoPipeline()) return false;
+    if (!createSsaoBlurPipeline()) return false;
+    if (!createLightingPipeline()) return false;
+
+    createGBufferDescriptorSets();
+    createSsaoDescriptorSets();
+    createSsaoBlurDescriptorSets();
+    createLightingDescriptorSets();
 
     if (!initUI()) return false;
 
     return true;
 }
 
-void DeferredRenderer::cleanup()
+void GIRenderer::cleanup()
 {
     shutdownUI();
+    destroySsaoResources();
     destroyGBufferResources();
 }
 
-void DeferredRenderer::createDeferredBuffers()
+void GIRenderer::createBuffers()
 {
     createUniformBuffers(sceneUboResources, sizeof(SceneUBO));
     createUniformBuffers(lightUboResources, sizeof(LightUBO));
-    createUniformBuffers(deferredSettingsUboResources, sizeof(DeferredSettingsUBO));
     createStorageBuffers(gbufferInstanceBufferResources, sizeof(DeferredInstanceData) * instanceCount);
+    createUniformBuffers(ssaoSettingsUboResources, sizeof(SsaoSettingsUBO));
+    createUniformBuffers(ssaoBlurUboResources, sizeof(BlurUBO));
 }
 
-bool DeferredRenderer::createGBufferDescriptorSetLayout()
+void GIRenderer::generateSsaoKernel()
+{
+    ssaoKernel.resize(SSAO_SAMPLE_COUNT);
+    std::uniform_real_distribution<float> randomFloats(0.0, 1.0);
+    std::default_random_engine generator;
+
+    for (int i = 0; i < SSAO_SAMPLE_COUNT; ++i)
+    {
+        glm::vec3 sample(randomFloats(generator) * 2.0 - 1.0,
+            randomFloats(generator) * 2.0 - 1.0,
+            randomFloats(generator));
+        sample = glm::normalize(sample);
+        float scale = static_cast<float>(i) / static_cast<float>(SSAO_SAMPLE_COUNT);
+        scale = 0.1f + 0.9f * scale * scale;
+        sample *= scale;
+        ssaoKernel[i] = glm::vec4(sample, 0.0f);
+    }
+}
+
+void GIRenderer::createNoiseTexture()
+{
+    std::uniform_real_distribution<float> randomFloats(0.0, 1.0);
+    std::default_random_engine generator;
+
+    std::vector<glm::vec4> noiseData(16);
+    for (int i = 0; i < 16; ++i)
+    {
+        glm::vec3 noise(randomFloats(generator) * 2.0 - 1.0,
+            randomFloats(generator) * 2.0 - 1.0,
+            0.0f);
+        noiseData[i] = glm::vec4(glm::normalize(noise), 0.0f);
+    }
+
+    vk::DeviceSize bufferSize = sizeof(glm::vec4) * noiseData.size();
+    vk::raii::Buffer stagingBuffer({});
+    vk::raii::DeviceMemory stagingBufferMemory({});
+    createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
+        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+        stagingBuffer, stagingBufferMemory);
+
+    void* mapped = stagingBufferMemory.mapMemory(0, bufferSize);
+    memcpy(mapped, noiseData.data(), static_cast<size_t>(bufferSize));
+    stagingBufferMemory.unmapMemory();
+
+    noiseTexture.mipLevels = 1;
+    createImage(4, 4, 1, vk::Format::eR32G32B32A32Sfloat, vk::ImageTiling::eOptimal,
+        vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+        vk::MemoryPropertyFlagBits::eDeviceLocal, noiseTexture);
+
+    transitionImageLayout(noiseTexture.textureImage, vk::ImageLayout::eUndefined,
+        vk::ImageLayout::eTransferDstOptimal, 1);
+    copyBufferToImage(stagingBuffer, noiseTexture.textureImage, 4, 4);
+    transitionImageLayout(noiseTexture.textureImage, vk::ImageLayout::eTransferDstOptimal,
+        vk::ImageLayout::eShaderReadOnlyOptimal, 1);
+
+    noiseTexture.textureImageView = createImageView(noiseTexture.textureImage,
+        vk::Format::eR32G32B32A32Sfloat, vk::ImageAspectFlagBits::eColor, 1);
+
+    vk::SamplerCreateInfo samplerInfo{
+        .magFilter = vk::Filter::eNearest,
+        .minFilter = vk::Filter::eNearest,
+        .mipmapMode = vk::SamplerMipmapMode::eNearest,
+        .addressModeU = vk::SamplerAddressMode::eRepeat,
+        .addressModeV = vk::SamplerAddressMode::eRepeat,
+        .addressModeW = vk::SamplerAddressMode::eRepeat,
+        .mipLodBias = 0.0f,
+        .anisotropyEnable = vk::False,
+        .maxAnisotropy = 1.0f,
+        .compareEnable = vk::False,
+        .compareOp = vk::CompareOp::eAlways,
+        .minLod = 0.0f,
+        .maxLod = 0.0f,
+        .borderColor = vk::BorderColor::eFloatOpaqueWhite,
+        .unnormalizedCoordinates = vk::False
+    };
+    noiseSampler = vk::raii::Sampler(device, samplerInfo);
+}
+
+bool GIRenderer::createGBufferDescriptorSetLayout()
 {
     try
     {
@@ -113,7 +216,53 @@ bool DeferredRenderer::createGBufferDescriptorSetLayout()
     }
 }
 
-bool DeferredRenderer::createDeferredDescriptorSetLayout()
+bool GIRenderer::createSsaoDescriptorSetLayout()
+{
+    try
+    {
+        std::vector<vk::DescriptorSetLayoutBinding> bindings = {
+            { .binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
+            { .binding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
+            { .binding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
+            { .binding = 3, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
+        };
+
+        ssaoDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, vk::DescriptorSetLayoutCreateInfo{
+            .bindingCount = static_cast<uint32_t>(bindings.size()),
+            .pBindings = bindings.data()
+        });
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Failed to create ssao descriptor set layout: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool GIRenderer::createSsaoBlurDescriptorSetLayout()
+{
+    try
+    {
+        std::vector<vk::DescriptorSetLayoutBinding> bindings = {
+            { .binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
+            { .binding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
+        };
+
+        ssaoBlurDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, vk::DescriptorSetLayoutCreateInfo{
+            .bindingCount = static_cast<uint32_t>(bindings.size()),
+            .pBindings = bindings.data()
+        });
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Failed to create ssao blur descriptor set layout: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool GIRenderer::createLightingDescriptorSetLayout()
 {
     try
     {
@@ -122,12 +271,13 @@ bool DeferredRenderer::createDeferredDescriptorSetLayout()
             { .binding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
             { .binding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
             { .binding = 3, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
-            { .binding = 4, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
+            { .binding = 4, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
             { .binding = 5, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
             { .binding = 6, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
+            { .binding = 7, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
         };
 
-        deferredDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, vk::DescriptorSetLayoutCreateInfo{
+        lightingDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, vk::DescriptorSetLayoutCreateInfo{
             .bindingCount = static_cast<uint32_t>(bindings.size()),
             .pBindings = bindings.data()
         });
@@ -135,12 +285,12 @@ bool DeferredRenderer::createDeferredDescriptorSetLayout()
     }
     catch (const std::exception& e)
     {
-        std::cerr << "Failed to create deferred descriptor set layout: " << e.what() << std::endl;
+        std::cerr << "Failed to create lighting descriptor set layout: " << e.what() << std::endl;
         return false;
     }
 }
 
-bool DeferredRenderer::createGBufferDescriptorPool()
+bool GIRenderer::createGBufferDescriptorPool()
 {
     try
     {
@@ -164,16 +314,16 @@ bool DeferredRenderer::createGBufferDescriptorPool()
     }
 }
 
-bool DeferredRenderer::createDeferredDescriptorPool()
+bool GIRenderer::createSsaoDescriptorPool()
 {
     try
     {
         std::vector<vk::DescriptorPoolSize> poolSizes = {
-            { .type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 4u },
-            { .type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 3u },
+            { .type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
+            { .type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 3u },
         };
 
-        deferredDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
+        ssaoDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
             .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
             .maxSets = MAX_FRAMES_IN_FLIGHT,
             .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
@@ -183,12 +333,60 @@ bool DeferredRenderer::createDeferredDescriptorPool()
     }
     catch (const std::exception& e)
     {
-        std::cerr << "Failed to create deferred descriptor pool: " << e.what() << std::endl;
+        std::cerr << "Failed to create ssao descriptor pool: " << e.what() << std::endl;
         return false;
     }
 }
 
-void DeferredRenderer::createGBufferDescriptorSets()
+bool GIRenderer::createSsaoBlurDescriptorPool()
+{
+    try
+    {
+        std::vector<vk::DescriptorPoolSize> poolSizes = {
+            { .type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
+            { .type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
+        };
+
+        ssaoBlurDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
+            .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+            .maxSets = MAX_FRAMES_IN_FLIGHT,
+            .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+            .pPoolSizes = poolSizes.data()
+        });
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Failed to create ssao blur descriptor pool: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool GIRenderer::createLightingDescriptorPool()
+{
+    try
+    {
+        std::vector<vk::DescriptorPoolSize> poolSizes = {
+            { .type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 5u },
+            { .type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 3u },
+        };
+
+        lightingDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
+            .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+            .maxSets = MAX_FRAMES_IN_FLIGHT,
+            .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+            .pPoolSizes = poolSizes.data()
+        });
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Failed to create lighting descriptor pool: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+void GIRenderer::createGBufferDescriptorSets()
 {
     std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *gbufferDescriptorSetLayout);
     vk::DescriptorSetAllocateInfo allocInfo{
@@ -212,11 +410,65 @@ void DeferredRenderer::createGBufferDescriptorSets()
     }
 }
 
-void DeferredRenderer::createDeferredDescriptorSets()
+void GIRenderer::createSsaoDescriptorSets()
 {
-    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *deferredDescriptorSetLayout);
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *ssaoDescriptorSetLayout);
     vk::DescriptorSetAllocateInfo allocInfo{
-        .descriptorPool = *deferredDescriptorPool,
+        .descriptorPool = *ssaoDescriptorPool,
+        .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+        .pSetLayouts = layouts.data()
+    };
+
+    ssaoSettingsUboResources.descriptorSets = vk::raii::DescriptorSets(device, allocInfo);
+
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    {
+        vk::DescriptorBufferInfo settingsBufferInfo{ .buffer = *ssaoSettingsUboResources.Buffers[i], .offset = 0, .range = sizeof(SsaoSettingsUBO) };
+        vk::DescriptorImageInfo normalInfo{ .sampler = gbufferSampler, .imageView = gbufferNormal.texture.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
+        vk::DescriptorImageInfo depthInfo{ .sampler = gbufferSampler, .imageView = gbufferDepth.texture.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
+        vk::DescriptorImageInfo noiseInfo{ .sampler = noiseSampler, .imageView = noiseTexture.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
+
+        std::vector<vk::WriteDescriptorSet> writes = {
+            { .dstSet = *ssaoSettingsUboResources.descriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &settingsBufferInfo },
+            { .dstSet = *ssaoSettingsUboResources.descriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &normalInfo },
+            { .dstSet = *ssaoSettingsUboResources.descriptorSets[i], .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &depthInfo },
+            { .dstSet = *ssaoSettingsUboResources.descriptorSets[i], .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &noiseInfo },
+        };
+
+        device.updateDescriptorSets(writes, nullptr);
+    }
+}
+
+void GIRenderer::createSsaoBlurDescriptorSets()
+{
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *ssaoBlurDescriptorSetLayout);
+    vk::DescriptorSetAllocateInfo allocInfo{
+        .descriptorPool = *ssaoBlurDescriptorPool,
+        .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+        .pSetLayouts = layouts.data()
+    };
+
+    ssaoBlurColor.descriptorSet = vk::raii::DescriptorSets(device, allocInfo);
+
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    {
+        vk::DescriptorBufferInfo blurBufferInfo{ .buffer = *ssaoBlurUboResources.Buffers[i], .offset = 0, .range = sizeof(BlurUBO) };
+        vk::DescriptorImageInfo ssaoInfo{ .sampler = gbufferSampler, .imageView = ssaoColor.texture.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
+
+        std::vector<vk::WriteDescriptorSet> writes = {
+            { .dstSet = *ssaoBlurColor.descriptorSet[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &blurBufferInfo },
+            { .dstSet = *ssaoBlurColor.descriptorSet[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &ssaoInfo },
+        };
+
+        device.updateDescriptorSets(writes, nullptr);
+    }
+}
+
+void GIRenderer::createLightingDescriptorSets()
+{
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *lightingDescriptorSetLayout);
+    vk::DescriptorSetAllocateInfo allocInfo{
+        .descriptorPool = *lightingDescriptorPool,
         .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
         .pSetLayouts = layouts.data()
     };
@@ -229,26 +481,28 @@ void DeferredRenderer::createDeferredDescriptorSets()
         vk::DescriptorImageInfo normalInfo{ .sampler = gbufferSampler, .imageView = gbufferNormal.texture.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
         vk::DescriptorImageInfo materialInfo{ .sampler = gbufferSampler, .imageView = gbufferMaterial.texture.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
         vk::DescriptorImageInfo depthInfo{ .sampler = gbufferSampler, .imageView = gbufferDepth.texture.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
+        vk::DescriptorImageInfo aoInfo{ .sampler = gbufferSampler, .imageView = ssaoBlurColor.texture.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
 
         vk::DescriptorBufferInfo sceneBufferInfo{ .buffer = *sceneUboResources.Buffers[i], .offset = 0, .range = sizeof(SceneUBO) };
         vk::DescriptorBufferInfo lightBufferInfo{ .buffer = *lightUboResources.Buffers[i], .offset = 0, .range = sizeof(LightUBO) };
-        vk::DescriptorBufferInfo settingsBufferInfo{ .buffer = *deferredSettingsUboResources.Buffers[i], .offset = 0, .range = sizeof(DeferredSettingsUBO) };
+        vk::DescriptorBufferInfo settingsBufferInfo{ .buffer = *ssaoSettingsUboResources.Buffers[i], .offset = 0, .range = sizeof(SsaoSettingsUBO) };
 
         std::vector<vk::WriteDescriptorSet> writes = {
             { .dstSet = *lightUboResources.descriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &albedoInfo },
             { .dstSet = *lightUboResources.descriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &normalInfo },
             { .dstSet = *lightUboResources.descriptorSets[i], .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &materialInfo },
             { .dstSet = *lightUboResources.descriptorSets[i], .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &depthInfo },
-            { .dstSet = *lightUboResources.descriptorSets[i], .dstBinding = 4, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &sceneBufferInfo },
-            { .dstSet = *lightUboResources.descriptorSets[i], .dstBinding = 5, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &lightBufferInfo },
-            { .dstSet = *lightUboResources.descriptorSets[i], .dstBinding = 6, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &settingsBufferInfo },
+            { .dstSet = *lightUboResources.descriptorSets[i], .dstBinding = 4, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &aoInfo },
+            { .dstSet = *lightUboResources.descriptorSets[i], .dstBinding = 5, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &sceneBufferInfo },
+            { .dstSet = *lightUboResources.descriptorSets[i], .dstBinding = 6, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &lightBufferInfo },
+            { .dstSet = *lightUboResources.descriptorSets[i], .dstBinding = 7, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &settingsBufferInfo },
         };
 
         device.updateDescriptorSets(writes, nullptr);
     }
 }
 
-bool DeferredRenderer::createGBufferResources()
+bool GIRenderer::createGBufferResources()
 {
     try
     {
@@ -314,7 +568,39 @@ bool DeferredRenderer::createGBufferResources()
     }
 }
 
-void DeferredRenderer::destroyGBufferResources()
+bool GIRenderer::createSsaoResources()
+{
+    try
+    {
+        destroySsaoResources();
+
+        ssaoColor.format = vk::Format::eR8Unorm;
+        ssaoBlurColor.format = vk::Format::eR8Unorm;
+
+        createImage(swapChainExtent.width, swapChainExtent.height, 1, ssaoColor.format, vk::ImageTiling::eOptimal,
+            vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+            vk::MemoryPropertyFlagBits::eDeviceLocal, ssaoColor.texture);
+        ssaoColor.texture.textureImageView = createImageView(ssaoColor.texture.textureImage, ssaoColor.format, vk::ImageAspectFlagBits::eColor, 1);
+        ssaoColor.layout = vk::ImageLayout::eUndefined;
+
+        createImage(swapChainExtent.width, swapChainExtent.height, 1, ssaoBlurColor.format, vk::ImageTiling::eOptimal,
+            vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+            vk::MemoryPropertyFlagBits::eDeviceLocal, ssaoBlurColor.texture);
+        ssaoBlurColor.texture.textureImageView = createImageView(ssaoBlurColor.texture.textureImage, ssaoBlurColor.format, vk::ImageAspectFlagBits::eColor, 1);
+        ssaoBlurColor.layout = vk::ImageLayout::eUndefined;
+
+        ssaoColor.descriptorSet = nullptr;
+
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Failed to create ssao resources: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+void GIRenderer::destroyGBufferResources()
 {
     gbufferAlbedo.texture.textureImageView = nullptr;
     gbufferAlbedo.texture.textureImage = nullptr;
@@ -338,7 +624,20 @@ void DeferredRenderer::destroyGBufferResources()
     gbufferDepth.layout = vk::ImageLayout::eUndefined;
 }
 
-bool DeferredRenderer::createGBufferPipeline()
+void GIRenderer::destroySsaoResources()
+{
+    ssaoColor.texture.textureImageView = nullptr;
+    ssaoColor.texture.textureImage = nullptr;
+    ssaoColor.texture.textureImageMemory = nullptr;
+    ssaoColor.layout = vk::ImageLayout::eUndefined;
+
+    ssaoBlurColor.texture.textureImageView = nullptr;
+    ssaoBlurColor.texture.textureImage = nullptr;
+    ssaoBlurColor.texture.textureImageMemory = nullptr;
+    ssaoBlurColor.layout = vk::ImageLayout::eUndefined;
+}
+
+bool GIRenderer::createGBufferPipeline()
 {
     try
     {
@@ -439,11 +738,11 @@ bool DeferredRenderer::createGBufferPipeline()
     }
 }
 
-bool DeferredRenderer::createDeferredPipeline()
+bool GIRenderer::createSsaoPipeline()
 {
     try
     {
-        vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "deferred_lighting.spv"));
+        vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "ssao.spv"));
 
         vk::PipelineShaderStageCreateInfo vertShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain" };
         vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain" };
@@ -464,7 +763,6 @@ bool DeferredRenderer::createDeferredPipeline()
         };
 
         vk::PipelineMultisampleStateCreateInfo multisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False };
-
         vk::PipelineDepthStencilStateCreateInfo depthStencil{
             .depthTestEnable = vk::False,
             .depthWriteEnable = vk::False,
@@ -487,9 +785,9 @@ bool DeferredRenderer::createDeferredPipeline()
         std::vector dynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
         vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
 
-        deferredPipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
+        ssaoPipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
             .setLayoutCount = 1,
-            .pSetLayouts = &*deferredDescriptorSetLayout,
+            .pSetLayouts = &*ssaoDescriptorSetLayout,
             .pushConstantRangeCount = 0
         });
 
@@ -505,7 +803,175 @@ bool DeferredRenderer::createDeferredPipeline()
                 .pDepthStencilState = &depthStencil,
                 .pColorBlendState = &colorBlending,
                 .pDynamicState = &dynamicState,
-                .layout = deferredPipelineLayout,
+                .layout = ssaoPipelineLayout,
+                .renderPass = nullptr
+            },
+            {
+                .colorAttachmentCount = 1,
+                .pColorAttachmentFormats = &ssaoColor.format
+            }
+        };
+
+        ssaoPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Failed to create ssao pipeline: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool GIRenderer::createSsaoBlurPipeline()
+{
+    try
+    {
+        vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "ssao_blur.spv"));
+
+        vk::PipelineShaderStageCreateInfo vertShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain" };
+        vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain" };
+        vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+        vk::PipelineVertexInputStateCreateInfo vertexInputInfo{};
+        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = vk::False };
+        vk::PipelineViewportStateCreateInfo viewportState{ .viewportCount = 1, .scissorCount = 1 };
+
+        vk::PipelineRasterizationStateCreateInfo rasterizer{
+            .depthClampEnable = vk::False,
+            .rasterizerDiscardEnable = vk::False,
+            .polygonMode = vk::PolygonMode::eFill,
+            .cullMode = vk::CullModeFlagBits::eNone,
+            .frontFace = vk::FrontFace::eCounterClockwise,
+            .depthBiasEnable = vk::False,
+            .lineWidth = 1.0f
+        };
+
+        vk::PipelineMultisampleStateCreateInfo multisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False };
+        vk::PipelineDepthStencilStateCreateInfo depthStencil{
+            .depthTestEnable = vk::False,
+            .depthWriteEnable = vk::False,
+            .depthCompareOp = vk::CompareOp::eAlways,
+            .depthBoundsTestEnable = vk::False,
+            .stencilTestEnable = vk::False
+        };
+
+        vk::PipelineColorBlendAttachmentState colorBlendAttachment{
+            .blendEnable = vk::False,
+            .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
+        };
+        vk::PipelineColorBlendStateCreateInfo colorBlending{
+            .logicOpEnable = vk::False,
+            .logicOp = vk::LogicOp::eCopy,
+            .attachmentCount = 1,
+            .pAttachments = &colorBlendAttachment
+        };
+
+        std::vector dynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+        vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
+
+        ssaoBlurPipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
+            .setLayoutCount = 1,
+            .pSetLayouts = &*ssaoBlurDescriptorSetLayout,
+            .pushConstantRangeCount = 0
+        });
+
+        vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipelineCreateInfoChain = {
+            {
+                .stageCount = 2,
+                .pStages = shaderStages,
+                .pVertexInputState = &vertexInputInfo,
+                .pInputAssemblyState = &inputAssembly,
+                .pViewportState = &viewportState,
+                .pRasterizationState = &rasterizer,
+                .pMultisampleState = &multisampling,
+                .pDepthStencilState = &depthStencil,
+                .pColorBlendState = &colorBlending,
+                .pDynamicState = &dynamicState,
+                .layout = ssaoBlurPipelineLayout,
+                .renderPass = nullptr
+            },
+            {
+                .colorAttachmentCount = 1,
+                .pColorAttachmentFormats = &ssaoBlurColor.format
+            }
+        };
+
+        ssaoBlurPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Failed to create ssao blur pipeline: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool GIRenderer::createLightingPipeline()
+{
+    try
+    {
+        vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "ssao_lighting.spv"));
+
+        vk::PipelineShaderStageCreateInfo vertShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain" };
+        vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain" };
+        vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+        vk::PipelineVertexInputStateCreateInfo vertexInputInfo{};
+        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = vk::False };
+        vk::PipelineViewportStateCreateInfo viewportState{ .viewportCount = 1, .scissorCount = 1 };
+
+        vk::PipelineRasterizationStateCreateInfo rasterizer{
+            .depthClampEnable = vk::False,
+            .rasterizerDiscardEnable = vk::False,
+            .polygonMode = vk::PolygonMode::eFill,
+            .cullMode = vk::CullModeFlagBits::eNone,
+            .frontFace = vk::FrontFace::eCounterClockwise,
+            .depthBiasEnable = vk::False,
+            .lineWidth = 1.0f
+        };
+
+        vk::PipelineMultisampleStateCreateInfo multisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False };
+        vk::PipelineDepthStencilStateCreateInfo depthStencil{
+            .depthTestEnable = vk::False,
+            .depthWriteEnable = vk::False,
+            .depthCompareOp = vk::CompareOp::eAlways,
+            .depthBoundsTestEnable = vk::False,
+            .stencilTestEnable = vk::False
+        };
+
+        vk::PipelineColorBlendAttachmentState colorBlendAttachment{
+            .blendEnable = vk::False,
+            .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
+        };
+        vk::PipelineColorBlendStateCreateInfo colorBlending{
+            .logicOpEnable = vk::False,
+            .logicOp = vk::LogicOp::eCopy,
+            .attachmentCount = 1,
+            .pAttachments = &colorBlendAttachment
+        };
+
+        std::vector dynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+        vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
+
+        lightingPipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
+            .setLayoutCount = 1,
+            .pSetLayouts = &*lightingDescriptorSetLayout,
+            .pushConstantRangeCount = 0
+        });
+
+        vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipelineCreateInfoChain = {
+            {
+                .stageCount = 2,
+                .pStages = shaderStages,
+                .pVertexInputState = &vertexInputInfo,
+                .pInputAssemblyState = &inputAssembly,
+                .pViewportState = &viewportState,
+                .pRasterizationState = &rasterizer,
+                .pMultisampleState = &multisampling,
+                .pDepthStencilState = &depthStencil,
+                .pColorBlendState = &colorBlending,
+                .pDynamicState = &dynamicState,
+                .layout = lightingPipelineLayout,
                 .renderPass = nullptr
             },
             {
@@ -514,17 +980,17 @@ bool DeferredRenderer::createDeferredPipeline()
             }
         };
 
-        deferredPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
+        lightingPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
         return true;
     }
     catch (const std::exception& e)
     {
-        std::cerr << "Failed to create deferred lighting pipeline: " << e.what() << std::endl;
+        std::cerr << "Failed to create lighting pipeline: " << e.what() << std::endl;
         return false;
     }
 }
 
-bool DeferredRenderer::initUI()
+bool GIRenderer::initUI()
 {
     if (!uiEnabled)
     {
@@ -701,7 +1167,7 @@ bool DeferredRenderer::initUI()
     return true;
 }
 
-void DeferredRenderer::shutdownUI()
+void GIRenderer::shutdownUI()
 {
     if (ImGui::GetCurrentContext() == nullptr)
     {
@@ -739,12 +1205,21 @@ void DeferredRenderer::shutdownUI()
     ImGui::DestroyContext();
 }
 
-void DeferredRenderer::updateDeferredUI()
+void GIRenderer::updateGIVUI()
 {
-    ImGui::SetNextWindowSize(ImVec2(560.0f, 320.0f), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Deferred PBR", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::SetNextWindowSize(ImVec2(480.0f, 400.0f), ImGuiCond_FirstUseEver);
+    ImGui::Begin("SSAO GI", nullptr, ImGuiWindowFlags_NoCollapse);
 
-    ImGui::Columns(2, "DeferredColumns", false);
+    ImGui::Columns(2, "GIColumns", false);
+
+    ImGui::TextUnformatted("SSAO");
+    ImGui::Separator();
+    ImGui::Checkbox("Enable SSAO", &ssaoEnabled);
+    ImGui::SliderFloat("Radius", &ssaoRadius, 0.1f, 2.0f);
+    ImGui::SliderFloat("Bias", &ssaoBias, 0.001f, 0.1f);
+    ImGui::SliderFloat("Intensity", &ssaoIntensity, 0.5f, 3.0f);
+
+    ImGui::NextColumn();
 
     ImGui::TextUnformatted("Lighting");
     ImGui::Separator();
@@ -758,21 +1233,21 @@ void DeferredRenderer::updateDeferredUI()
 
     ImGui::TextUnformatted("Debug");
     ImGui::Separator();
-    const char* views[] = { "Lit", "Albedo", "Normal", "Material", "Depth" };
-    ImGui::Combo("Debug View", &debugView, views, 5);
+    const char* views[] = { "Lit", "Albedo", "Normal", "Material", "Depth", "SSAO" };
+    ImGui::Combo("Debug View", &debugView, views, 6);
 
     ImGui::Spacing();
-    ImGui::TextUnformatted("GBuffer Channels:");
-    ImGui::BulletText("Albedo: base color");
-    ImGui::BulletText("Normal: encoded world normal");
-    ImGui::BulletText("Material: metallic/roughness/ao");
-    ImGui::BulletText("Depth: scene depth");
+    ImGui::TextUnformatted("Pipeline:");
+    ImGui::BulletText("1. GBuffer pass");
+    ImGui::BulletText("2. SSAO pass");
+    ImGui::BulletText("3. SSAO blur pass");
+    ImGui::BulletText("4. Lighting + AO pass");
 
     ImGui::Columns(1);
     ImGui::End();
 }
 
-void DeferredRenderer::updateUIFrame()
+void GIRenderer::updateUIFrame()
 {
     if (!uiEnabled || ImGui::GetCurrentContext() == nullptr)
     {
@@ -792,11 +1267,11 @@ void DeferredRenderer::updateUIFrame()
     io.MouseDown[2] = glfwGetMouseButton(platform->window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
 
     ImGui::NewFrame();
-    updateDeferredUI();
+    updateGIVUI();
     ImGui::Render();
 }
 
-void DeferredRenderer::recordUI(vk::raii::CommandBuffer& commandBuffer)
+void GIRenderer::recordUI(vk::raii::CommandBuffer& commandBuffer)
 {
     if (!uiEnabled || ImGui::GetCurrentContext() == nullptr || uiPipeline == vk::raii::Pipeline(nullptr))
     {
@@ -908,7 +1383,7 @@ void DeferredRenderer::recordUI(vk::raii::CommandBuffer& commandBuffer)
     }
 }
 
-void DeferredRenderer::updateDeferredBuffers(uint32_t frameIndex)
+void GIRenderer::updateBuffers(uint32_t frameIndex)
 {
     SceneUBO sceneUbo{
         .projection = glm::perspective(glm::radians(camera.Zoom),
@@ -959,20 +1434,33 @@ void DeferredRenderer::updateDeferredBuffers(uint32_t frameIndex)
     lightUbo.lights[3] = { .position = glm::vec4(0.0f, animCos * 12.0f, 8.0f, 1.0f), .color = glm::vec4(1.0f, 0.8f, 1.0f, 180.0f * lightIntensityScale) };
     std::memcpy(lightUboResources.BuffersMapped[frameIndex], &lightUbo, sizeof(lightUbo));
 
-    DeferredSettingsUBO settings{};
-    settings.params0 = glm::vec4(ambientStrength, exposure, gamma, lightIntensityScale);
-    settings.debug = glm::ivec4(debugView, 0, 0, 0);
-    std::memcpy(deferredSettingsUboResources.BuffersMapped[frameIndex], &settings, sizeof(settings));
+    SsaoSettingsUBO ssaoSettings{};
+    ssaoSettings.invProjection = sceneUbo.invProjection;
+    ssaoSettings.invView = sceneUbo.invView;
+    ssaoSettings.params0 = glm::vec4(ssaoRadius, ssaoBias, ssaoIntensity, ssaoEnabled ? 1.0f : 0.0f);
+    ssaoSettings.flags = glm::ivec4(debugView, 0, 0, 0);
+    for (int i = 0; i < SSAO_SAMPLE_COUNT; ++i)
+    {
+        ssaoSettings.kernel[i] = ssaoKernel[i];
+    }
+    std::memcpy(ssaoSettingsUboResources.BuffersMapped[frameIndex], &ssaoSettings, sizeof(ssaoSettings));
+
+    BlurUBO blurUbo{};
+    blurUbo.texelSize = glm::vec2(1.0f / static_cast<float>(swapChainExtent.width), 1.0f / static_cast<float>(swapChainExtent.height));
+    std::memcpy(ssaoBlurUboResources.BuffersMapped[frameIndex], &blurUbo, sizeof(blurUbo));
 }
 
-bool DeferredRenderer::recreateDeferredSizedResources()
+bool GIRenderer::recreateSizedResources()
 {
     if (!createGBufferResources()) return false;
-    createDeferredDescriptorSets();
+    if (!createSsaoResources()) return false;
+    createSsaoDescriptorSets();
+    createSsaoBlurDescriptorSets();
+    createLightingDescriptorSets();
     return true;
 }
 
-void DeferredRenderer::recordCommandBuffer(uint32_t imageIndex)
+void GIRenderer::recordCommandBuffer(uint32_t imageIndex)
 {
     auto& commandBuffer = commandBuffers[currentFrame];
     commandBuffer.begin({});
@@ -1116,6 +1604,96 @@ void DeferredRenderer::recordCommandBuffer(uint32_t imageIndex)
     gbufferDepth.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
 
     transition_image_layout(
+        ssaoColor.texture.textureImage,
+        ssaoColor.layout,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        {},
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::PipelineStageFlagBits2::eAllCommands,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::ImageAspectFlagBits::eColor);
+    ssaoColor.layout = vk::ImageLayout::eColorAttachmentOptimal;
+
+    vk::RenderingAttachmentInfo ssaoAttachment{
+        .imageView = ssaoColor.texture.textureImageView,
+        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eClear,
+        .storeOp = vk::AttachmentStoreOp::eStore,
+        .clearValue = vk::ClearColorValue(std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f})
+    };
+
+    vk::RenderingInfo ssaoRenderingInfo{
+        .renderArea = { .offset = {0, 0}, .extent = swapChainExtent },
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &ssaoAttachment
+    };
+
+    commandBuffer.beginRendering(ssaoRenderingInfo);
+    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *ssaoPipeline);
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *ssaoPipelineLayout, 0, *ssaoSettingsUboResources.descriptorSets[currentFrame], nullptr);
+    commandBuffer.draw(3, 1, 0, 0);
+    commandBuffer.endRendering();
+
+    transition_image_layout(
+        ssaoColor.texture.textureImage,
+        ssaoColor.layout,
+        vk::ImageLayout::eShaderReadOnlyOptimal,
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::AccessFlagBits2::eShaderRead,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::PipelineStageFlagBits2::eFragmentShader,
+        vk::ImageAspectFlagBits::eColor);
+    ssaoColor.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+
+    transition_image_layout(
+        ssaoBlurColor.texture.textureImage,
+        ssaoBlurColor.layout,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        {},
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::PipelineStageFlagBits2::eAllCommands,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::ImageAspectFlagBits::eColor);
+    ssaoBlurColor.layout = vk::ImageLayout::eColorAttachmentOptimal;
+
+    vk::RenderingAttachmentInfo ssaoBlurAttachment{
+        .imageView = ssaoBlurColor.texture.textureImageView,
+        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eClear,
+        .storeOp = vk::AttachmentStoreOp::eStore,
+        .clearValue = vk::ClearColorValue(std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f})
+    };
+
+    vk::RenderingInfo ssaoBlurRenderingInfo{
+        .renderArea = { .offset = {0, 0}, .extent = swapChainExtent },
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &ssaoBlurAttachment
+    };
+
+    commandBuffer.beginRendering(ssaoBlurRenderingInfo);
+    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *ssaoBlurPipeline);
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *ssaoBlurPipelineLayout, 0, *ssaoBlurColor.descriptorSet[currentFrame], nullptr);
+    commandBuffer.draw(3, 1, 0, 0);
+    commandBuffer.endRendering();
+
+    transition_image_layout(
+        ssaoBlurColor.texture.textureImage,
+        ssaoBlurColor.layout,
+        vk::ImageLayout::eShaderReadOnlyOptimal,
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::AccessFlagBits2::eShaderRead,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::PipelineStageFlagBits2::eFragmentShader,
+        vk::ImageAspectFlagBits::eColor);
+    ssaoBlurColor.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+
+    transition_image_layout(
         swapChainImages[imageIndex],
         swapChainImageLayouts[imageIndex],
         vk::ImageLayout::eColorAttachmentOptimal,
@@ -1144,8 +1722,8 @@ void DeferredRenderer::recordCommandBuffer(uint32_t imageIndex)
     commandBuffer.beginRendering(lightingRenderingInfo);
     commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
     commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
-    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *deferredPipeline);
-    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *deferredPipelineLayout, 0, *lightUboResources.descriptorSets[currentFrame], nullptr);
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *lightingPipeline);
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *lightingPipelineLayout, 0, *lightUboResources.descriptorSets[currentFrame], nullptr);
     commandBuffer.draw(3, 1, 0, 0);
     commandBuffer.endRendering();
 
@@ -1182,7 +1760,7 @@ void DeferredRenderer::recordCommandBuffer(uint32_t imageIndex)
     commandBuffer.end();
 }
 
-void DeferredRenderer::render()
+void GIRenderer::render()
 {
     const auto fenceResult = device.waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
     if (fenceResult != vk::Result::eSuccess)
@@ -1194,9 +1772,9 @@ void DeferredRenderer::render()
     if (result == vk::Result::eErrorOutOfDateKHR)
     {
         recreateSwapChain();
-        if (!recreateDeferredSizedResources())
+        if (!recreateSizedResources())
         {
-            throw std::runtime_error("failed to recreate deferred resources after swapchain resize");
+            throw std::runtime_error("failed to recreate GI resources after swapchain resize");
         }
         return;
     }
@@ -1205,7 +1783,7 @@ void DeferredRenderer::render()
     commandBuffers[currentFrame].reset();
 
     updateUIFrame();
-    updateDeferredBuffers(currentFrame);
+    updateBuffers(currentFrame);
     recordCommandBuffer(imageIndex);
 
     const vk::PipelineStageFlags waitStage(vk::PipelineStageFlagBits::eColorAttachmentOutput);
@@ -1233,9 +1811,9 @@ void DeferredRenderer::render()
     {
         framebufferResized = false;
         recreateSwapChain();
-        if (!recreateDeferredSizedResources())
+        if (!recreateSizedResources())
         {
-            throw std::runtime_error("failed to recreate deferred resources after present");
+            throw std::runtime_error("failed to recreate GI resources after present");
         }
     }
 
