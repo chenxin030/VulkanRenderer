@@ -10,6 +10,22 @@ struct MeshBuffer {
 	std::vector<vk::raii::DeviceMemory> BuffersMemory;
 	std::vector<void*> BuffersMapped;
 	std::vector<vk::raii::DescriptorSet> descriptorSets;
+
+	void clear()
+	{
+		for (size_t i = 0; i < BuffersMapped.size(); ++i)
+		{
+			if (BuffersMapped[i] != nullptr)
+			{
+				BuffersMemory[i].unmapMemory();
+				BuffersMapped[i] = nullptr;
+			}
+		}
+		descriptorSets.clear();
+		BuffersMapped.clear();
+		BuffersMemory.clear();
+		Buffers.clear();
+	}
 };
 
 struct TextureData {

@@ -108,16 +108,12 @@ void PostFXRenderer::cleanup()
 {
     shutdownUI();
 
-    // Destroy descriptor pools first (automatically frees all their sets)
-    gbufferDescriptorPool = nullptr;
-    deferredDescriptorPool = nullptr;
-    bloomExtractDescriptorPool = nullptr;
-    blurDescriptorPool = nullptr;
-    bloomCompositeDescriptorPool = nullptr;
-    uiDescriptorPool = nullptr;
-
-    destroyPostBuffersPerFrame();
-    destroyGBufferResources();
+    // Clear MeshBuffers: unmap → descriptorSets → BuffersMapped → BuffersMemory → Buffers
+    sceneUboResources.clear();
+    lightUboResources.clear();
+    deferredSettingsUboResources.clear();
+    postFxSettingsUboResources.clear();
+    instanceBufferResources.clear();
 }
 
 void PostFXRenderer::createDeferredBuffers()
@@ -1353,10 +1349,9 @@ void PostFXRenderer::shutdownUI()
 
     uiPipeline = vk::raii::Pipeline(nullptr);
     uiPipelineLayout = vk::raii::PipelineLayout(nullptr);
-    uiDescriptorSetLayout = vk::raii::DescriptorSetLayout(nullptr);
-    // Destroy pool before sets so each set's destructor finds a valid pool.
-    uiDescriptorPool = vk::raii::DescriptorPool(nullptr);
     uiDescriptorSets = vk::raii::DescriptorSets(nullptr);
+    uiDescriptorPool = vk::raii::DescriptorPool(nullptr);
+    uiDescriptorSetLayout = vk::raii::DescriptorSetLayout(nullptr);
 
     uiFontTexture.textureSampler = vk::raii::Sampler(nullptr);
     uiFontTexture.textureImageView = vk::raii::ImageView(nullptr);
