@@ -31,12 +31,6 @@ bool AtmosphericRenderer::prepareResource()
 void AtmosphericRenderer::cleanup()
 {
     shutdownUI();
-
-    skyPipeline = vk::raii::Pipeline(nullptr);
-    skyPipelineLayout = vk::raii::PipelineLayout(nullptr);
-    skyDescriptorSets = vk::raii::DescriptorSets(nullptr);
-    skyDescriptorPool = vk::raii::DescriptorPool(nullptr);
-    skyDescriptorSetLayout = vk::raii::DescriptorSetLayout(nullptr);
 }
 
 bool AtmosphericRenderer::createSkyDescriptorSetLayout()
@@ -131,8 +125,7 @@ bool AtmosphericRenderer::createSkyPipeline()
             .attachmentCount = 1,
             .pAttachments = &colorBlendAttachment
         };
-
-        // Push constants: pass atmospheric parameters
+        
         vk::PushConstantRange pushConstRange{
             .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
             .offset = 0,
@@ -180,10 +173,6 @@ bool AtmosphericRenderer::createSkyPipeline()
         return false;
     }
 }
-
-// =====================================================================
-// UI
-// =====================================================================
 
 bool AtmosphericRenderer::initUI()
 {
@@ -492,10 +481,6 @@ void AtmosphericRenderer::recordUI(vk::raii::CommandBuffer& commandBuffer)
     }
 }
 
-// =====================================================================
-// Command buffer recording
-// =====================================================================
-
 void AtmosphericRenderer::recordCommandBuffer(uint32_t imageIndex)
 {
     auto& commandBuffer = commandBuffers[currentFrame];
@@ -555,12 +540,10 @@ void AtmosphericRenderer::recordCommandBuffer(uint32_t imageIndex)
     commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *skyPipeline);
     commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *skyPipelineLayout, 0, *skyDescriptorSets[currentFrame], nullptr);
 
-    // Push atmospheric constants
     PushConstants pc{};
     pc.invView = glm::inverse(camera.GetViewMatrix());
     pc.invProjection = glm::inverse(glm::perspective(glm::radians(camera.Zoom),
         static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 600.0f));
-    pc.invProjection[1][1] *= -1;
     pc.cameraPos = glm::vec4(camera.Position, 1.0f);
     pc.viewportSize = glm::vec2(static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height));
     pc.sunElevation = sunElevation;
