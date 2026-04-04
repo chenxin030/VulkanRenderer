@@ -29,7 +29,7 @@ bool VulkanBase::createCommandBuffers()
         vk::CommandBufferAllocateInfo allocInfo{
             .commandPool = *commandPool,
             .level = vk::CommandBufferLevel::ePrimary,
-            .commandBufferCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)
+            .commandBufferCount = MAX_FRAMES_IN_FLIGHT
         };
 
         commandBuffers = vk::raii::CommandBuffers(device, allocInfo);
@@ -46,26 +46,19 @@ bool VulkanBase::createSyncObjects()
 {
     try
     {
-        presentCompleteSemaphores.clear();
-        renderFinishedSemaphores.clear();
-        inFlightFences.clear();
-
-        const auto semaphoreCount = static_cast<uint32_t>(swapChainImages.size());
-        presentCompleteSemaphores.reserve(semaphoreCount);
-        renderFinishedSemaphores.reserve(semaphoreCount);
-        inFlightFences.reserve(MAX_FRAMES_IN_FLIGHT);
+        assert(presentCompleteSemaphores.empty() && renderFinishedSemaphores.empty() && inFlightFences.empty());
 
         vk::SemaphoreCreateInfo semaphoreInfo{};
-        for (uint32_t i = 0; i < semaphoreCount; i++)
-        {
-            presentCompleteSemaphores.emplace_back(device, semaphoreInfo);
-            renderFinishedSemaphores.emplace_back(device, semaphoreInfo);
-        }
-
         vk::FenceCreateInfo fenceInfo{ .flags = vk::FenceCreateFlagBits::eSignaled };
         for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
         {
+            presentCompleteSemaphores.emplace_back(device, semaphoreInfo);
             inFlightFences.emplace_back(device, fenceInfo);
+        }
+
+        for (uint32_t i = 0; i < swapChainImages.size(); i++)
+        {
+            renderFinishedSemaphores.emplace_back(device, semaphoreInfo);
         }
         return true;
     }

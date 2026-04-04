@@ -15,9 +15,6 @@ public:
     void cleanup();
     void waitIdle() { device.waitIdle(); }
 
-    bool createSyncObjects() override;
-    bool createCommandBuffers() override;
-
     struct SceneUBO
     {
         glm::mat4 projection;
@@ -72,6 +69,7 @@ public:
     float frameMs = 0.0f;
     float fps = 0.0f;
     uint32_t avgLightsPerCluster = 0;
+    uint32_t allocatedTotalClusters = 0;
 
     vk::raii::DescriptorSetLayout clusteredDescriptorSetLayout = nullptr;
     vk::raii::DescriptorPool clusteredDescriptorPool = nullptr;
@@ -105,7 +103,7 @@ public:
     vk::raii::DeviceMemory lightGridReadbackMemory = nullptr;
     void* lightGridReadbackMapped = nullptr;
 
-    vk::raii::Fence computeFence = nullptr;
+    std::vector<vk::raii::Fence> computeFences;
 
     vk::raii::CommandPool computeCommandPool = nullptr;
     std::vector<vk::raii::CommandBuffer> computeCommandBuffers;
@@ -138,14 +136,18 @@ public:
     void updateLightBuffer(uint32_t frameIndex);
     void updateClusterStats();
 
-    void recordComputeCommandBuffer();
-    void recordCommandBuffer(uint32_t imageIndex);
+    void recordComputeCommandBuffer(uint32_t frameIndex);
+    void recordCommandBuffer(uint32_t frameIndex);
 
     bool initUI();
     void updateUIFrame();
     void updateClusteredUI();
-    void recordUI(vk::raii::CommandBuffer& commandBuffer);
+    void recordUI(vk::raii::CommandBuffer& commandBuffer, uint32_t frameIndex);
 
     uint32_t getTotalClusters() const { return clusterX * clusterY * clusterZ; }
     uint32_t getLightIndexBufferSize() const { return getTotalClusters() * MAX_LIGHTS_PER_CLUSTER; }
+
+private:
+    void recreateSwapChain() override;
+    uint32_t swapChainImageCount = 0;
 };

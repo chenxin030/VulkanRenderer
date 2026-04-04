@@ -19,7 +19,6 @@ function(vkr_add_example_slang_shaders target_name shader_source_dir shader_outp
         return()
     endif()
 
-    # 将 shader 编译步骤直接挂在 example 目标上，避免生成独立 *_shaders 工程
     find_program(SLANGC_EXECUTABLE
         NAMES slangc slangc.exe
         HINTS ${CMAKE_SOURCE_DIR}/external/slang/bin
@@ -53,6 +52,15 @@ function(vkr_add_example_slang_shaders target_name shader_source_dir shader_outp
             COMMENT "Compiling ${SHADER_NAME}.slang for ${target_name}"
             VERBATIM
         )
+
+        # Also copy to target output directory so runtime can find it there
+        add_custom_command(TARGET ${target_name} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${FINAL_OUTPUT}
+                $<TARGET_FILE_DIR:${target_name}>
+            COMMENT "Copying ${SHADER_NAME}.spv to output"
+            VERBATIM
+        )
     endforeach()
 
     target_sources(${target_name} PRIVATE ${EXAMPLE_SHADER_SOURCES})
@@ -71,10 +79,7 @@ add_subdirectory(ssr)
 add_subdirectory(culling)
 add_subdirectory(deferredShading)
 add_subdirectory(postfx)
-add_subdirectory(atmospheric)
 add_subdirectory(gi)
 add_subdirectory(clustered)
 add_subdirectory(skinning)
 add_subdirectory(particles)
-
-

@@ -108,11 +108,11 @@ struct VulkanBase {
     bool createLogicalDevice();
     bool createSwapChain();
     void cleanupSwapChain();
-    void recreateSwapChain();
+    virtual void recreateSwapChain();
     bool createImageViews();
     bool createCommandPool();
-    virtual bool createCommandBuffers();
-    virtual bool createSyncObjects();
+    bool createCommandBuffers();
+    bool createSyncObjects();
     bool createDepthResources();
 
     bool checkValidationLayerSupport() const;

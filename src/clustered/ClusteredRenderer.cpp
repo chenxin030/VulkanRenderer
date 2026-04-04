@@ -37,7 +37,12 @@ void ClusteredRenderer::initialize(Platform* _platform)
 bool ClusteredRenderer::initVulkan()
 {
     camera = Camera(glm::vec3(0.0f, 5.0f, 25.0f));
-    return VulkanBase::initVulkan("VulkanRenderer - 12_clustered");
+    bool ok = VulkanBase::initVulkan("VulkanRenderer - 12_clustered");
+    if (ok)
+    {
+        swapChainImageCount = static_cast<uint32_t>(swapChainImages.size());
+    }
+    return ok;
 }
 
 bool ClusteredRenderer::prepareResource()
@@ -68,6 +73,7 @@ bool ClusteredRenderer::prepareResource()
     if (!createComputePipeline()) return false;
 
     if (!createClusterCommandPool()) return false;
+    if (!createClusterCommandBuffers()) return false;
     if (!createComputeSyncObjects()) return false;
 
     if (!initUI()) return false;
@@ -118,17 +124,18 @@ bool ClusteredRenderer::createClusterBuffers()
 {
     try
     {
-        createUniformBuffers(sceneUboResources, sizeof(SceneUBO));
-        createUniformBuffers(clusterParamsResources, sizeof(ClusterParamsUBO));
-        createUniformBuffers(groundUboResources, sizeof(GroundUBO));
+        createUniformBuffers(sceneUboResources, sizeof(SceneUBO), swapChainImageCount);
+        createUniformBuffers(clusterParamsResources, sizeof(ClusterParamsUBO), swapChainImageCount);
+        createUniformBuffers(groundUboResources, sizeof(GroundUBO), swapChainImageCount);
 
-        createStorageBuffers(lightBufferResources, sizeof(PointLight) * MAX_LIGHTS);
+        createStorageBuffers(lightBufferResources, sizeof(PointLight) * MAX_LIGHTS, vk::BufferUsageFlagBits::eStorageBuffer, swapChainImageCount);
 
         const uint32_t totalClusters = getTotalClusters();
+        allocatedTotalClusters = totalClusters;
 
         createBuffer(
             totalClusters * sizeof(uint32_t) * 2,
-            vk::BufferUsageFlagBits::eStorageBuffer,
+            vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc,
             vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
             lightGridBuffer,
             lightGridMemory);
@@ -150,7 +157,12 @@ bool ClusteredRenderer::createClusterBuffers()
             lightGridReadbackMemory);
         lightGridReadbackMapped = lightGridReadbackMemory.mapMemory(0, getTotalClusters() * sizeof(uint32_t) * 2);
 
-        computeFence = vk::raii::Fence(device, vk::FenceCreateInfo{});
+        computeFences.clear();
+        computeFences.reserve(swapChainImageCount);
+        for (uint32_t i = 0; i < swapChainImageCount; ++i)
+        {
+            computeFences.emplace_back(device, vk::FenceCreateInfo{});
+        }
 
         return true;
     }
@@ -190,13 +202,13 @@ bool ClusteredRenderer::createClusteredDescriptorPool()
     try
     {
         std::vector<vk::DescriptorPoolSize> poolSizes = {
-            { .type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 3u },
-            { .type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 4u }
+            { .type = vk::DescriptorType::eUniformBuffer, .descriptorCount = swapChainImageCount * 3u },
+            { .type = vk::DescriptorType::eStorageBuffer, .descriptorCount = swapChainImageCount * 4u }
         };
 
         clusteredDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
             .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-            .maxSets = MAX_FRAMES_IN_FLIGHT * 2u,
+            .maxSets = swapChainImageCount * 2u,
             .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
             .pPoolSizes = poolSizes.data() });
         return true;
@@ -210,13 +222,13 @@ bool ClusteredRenderer::createClusteredDescriptorPool()
 
 void ClusteredRenderer::createClusteredDescriptorSets()
 {
-    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *clusteredDescriptorSetLayout);
+    std::vector<vk::DescriptorSetLayout> layouts(swapChainImageCount, *clusteredDescriptorSetLayout);
     clusteredDescriptorSets = vk::raii::DescriptorSets(device, vk::DescriptorSetAllocateInfo{
         .descriptorPool = *clusteredDescriptorPool,
-        .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+        .descriptorSetCount = swapChainImageCount,
         .pSetLayouts = layouts.data() });
 
-    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    for (uint32_t i = 0; i < swapChainImageCount; ++i)
     {
         vk::DescriptorBufferInfo sceneInfo{ .buffer = *sceneUboResources.Buffers[i], .offset = 0, .range = sizeof(SceneUBO) };
         vk::DescriptorBufferInfo lightInfo{ .buffer = *lightBufferResources.Buffers[i], .offset = 0, .range = sizeof(PointLight) * MAX_LIGHTS };
@@ -254,7 +266,7 @@ bool ClusteredRenderer::createClusteredPipeline()
         vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
             .vertexBindingDescriptionCount = 1,
             .pVertexBindingDescriptions = &bindingDescription,
-            .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
+            .vertexAttributeDescriptionCount = 2,
             .pVertexAttributeDescriptions = attributeDescriptions.data()
         };
         vk::PipelineInputAssemblyStateCreateInfo inputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = vk::False };
@@ -351,13 +363,13 @@ bool ClusteredRenderer::createComputeDescriptorPool()
     try
     {
         std::vector<vk::DescriptorPoolSize> poolSizes = {
-            { .type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 3u },
-            { .type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u }
+            { .type = vk::DescriptorType::eStorageBuffer, .descriptorCount = swapChainImageCount * 3u },
+            { .type = vk::DescriptorType::eUniformBuffer, .descriptorCount = swapChainImageCount * 2u }
         };
 
         computeDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
             .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-            .maxSets = MAX_FRAMES_IN_FLIGHT,
+            .maxSets = swapChainImageCount,
             .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
             .pPoolSizes = poolSizes.data() });
         return true;
@@ -371,13 +383,13 @@ bool ClusteredRenderer::createComputeDescriptorPool()
 
 void ClusteredRenderer::createComputeDescriptorSets()
 {
-    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *computeDescriptorSetLayout);
+    std::vector<vk::DescriptorSetLayout> layouts(swapChainImageCount, *computeDescriptorSetLayout);
     computeDescriptorSets = vk::raii::DescriptorSets(device, vk::DescriptorSetAllocateInfo{
         .descriptorPool = *computeDescriptorPool,
-        .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+        .descriptorSetCount = swapChainImageCount,
         .pSetLayouts = layouts.data() });
 
-    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    for (uint32_t i = 0; i < swapChainImageCount; ++i)
     {
         vk::DescriptorBufferInfo lightInfo{ .buffer = *lightBufferResources.Buffers[i], .offset = 0, .range = sizeof(PointLight) * MAX_LIGHTS };
         vk::DescriptorBufferInfo gridInfo{ .buffer = lightGridBuffer, .offset = 0, .range = getTotalClusters() * sizeof(uint32_t) * 2 };
@@ -440,7 +452,7 @@ bool ClusteredRenderer::createClusterCommandBuffers()
         computeCommandBuffers = vk::raii::CommandBuffers(device, vk::CommandBufferAllocateInfo{
             .commandPool = *computeCommandPool,
             .level = vk::CommandBufferLevel::ePrimary,
-            .commandBufferCount = MAX_FRAMES_IN_FLIGHT });
+            .commandBufferCount = swapChainImageCount });
         return true;
     }
     catch (const std::exception& e)
@@ -455,8 +467,8 @@ bool ClusteredRenderer::createComputeSyncObjects()
     try
     {
         computeCompleteSemaphores.clear();
-        computeCompleteSemaphores.reserve(MAX_FRAMES_IN_FLIGHT);
-        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+        computeCompleteSemaphores.reserve(swapChainImageCount);
+        for (uint32_t i = 0; i < swapChainImageCount; ++i)
         {
             computeCompleteSemaphores.emplace_back(device, vk::SemaphoreCreateInfo{});
         }
@@ -469,90 +481,41 @@ bool ClusteredRenderer::createComputeSyncObjects()
     }
 }
 
-bool ClusteredRenderer::createSyncObjects()
-{
-    try
-    {
-        presentCompleteSemaphores.clear();
-        renderFinishedSemaphores.clear();
-        inFlightFences.clear();
-
-        const auto count = static_cast<uint32_t>(swapChainImages.size());
-        presentCompleteSemaphores.reserve(count);
-        renderFinishedSemaphores.reserve(count);
-        inFlightFences.reserve(count);
-
-        vk::SemaphoreCreateInfo semaphoreInfo{};
-        for (uint32_t i = 0; i < count; i++)
-        {
-            presentCompleteSemaphores.emplace_back(device, semaphoreInfo);
-            renderFinishedSemaphores.emplace_back(device, semaphoreInfo);
-        }
-
-        vk::FenceCreateInfo fenceInfo{ .flags = vk::FenceCreateFlagBits::eSignaled };
-        for (uint32_t i = 0; i < count; i++)
-        {
-            inFlightFences.emplace_back(device, fenceInfo);
-        }
-        return true;
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Failed to create sync objects: " << e.what() << std::endl;
-        return false;
-    }
-}
-
-bool ClusteredRenderer::createCommandBuffers()
-{
-    try
-    {
-        commandBuffers.clear();
-        commandBuffers.reserve(swapChainImages.size());
-
-        vk::CommandBufferAllocateInfo allocInfo{
-            .commandPool = *commandPool,
-            .level = vk::CommandBufferLevel::ePrimary,
-            .commandBufferCount = static_cast<uint32_t>(swapChainImages.size())
-        };
-
-        commandBuffers = vk::raii::CommandBuffers(device, allocInfo);
-        computeCommandBuffers.clear();
-        computeCommandBuffers.reserve(swapChainImages.size());
-        vk::CommandBufferAllocateInfo computeAllocInfo{
-            .commandPool = *computeCommandPool,
-            .level = vk::CommandBufferLevel::ePrimary,
-            .commandBufferCount = static_cast<uint32_t>(swapChainImages.size())
-        };
-        computeCommandBuffers = vk::raii::CommandBuffers(device, computeAllocInfo);
-        uiFrameBuffers.resize(swapChainImages.size());
-        return true;
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Failed to create command buffers: " << e.what() << std::endl;
-        return false;
-    }
-}
-
 void ClusteredRenderer::updateClusterStats()
 {
+    const uint32_t totalClusters = getTotalClusters();
+    const uint32_t validClusters = std::min(totalClusters, allocatedTotalClusters);
+    if (validClusters == 0)
+    {
+        avgLightsPerCluster = 0;
+        return;
+    }
+
     auto cmdBuffer = beginSingleTimeCommands();
-    vk::DeviceSize copySize = static_cast<vk::DeviceSize>(getTotalClusters()) * sizeof(uint32_t) * 2;
+    vk::DeviceSize copySize = static_cast<vk::DeviceSize>(validClusters) * sizeof(uint32_t) * 2;
     cmdBuffer->copyBuffer(*lightGridBuffer, *lightGridReadbackBuffer, {vk::BufferCopy{0, 0, copySize}});
     endSingleTimeCommands(*cmdBuffer);
 
     auto* gridData = static_cast<uint32_t*>(lightGridReadbackMapped);
     uint64_t totalLights = 0;
     uint32_t nonEmptyClusters = 0;
-    const uint32_t totalClusters = getTotalClusters();
-    for (uint32_t i = 0; i < totalClusters; ++i)
+    for (uint32_t i = 0; i < validClusters; ++i)
     {
         uint32_t count = gridData[i * 2 + 1];
         totalLights += count;
         if (count > 0) nonEmptyClusters++;
     }
     avgLightsPerCluster = nonEmptyClusters > 0 ? static_cast<uint32_t>(totalLights / nonEmptyClusters) : 0;
+}
+
+void ClusteredRenderer::updateLightBuffer(uint32_t frameIndex)
+{
+    if (frameIndex >= lightBufferResources.BuffersMapped.size() || sceneLights.empty())
+    {
+        return;
+    }
+
+    std::memcpy(lightBufferResources.BuffersMapped[frameIndex], sceneLights.data(), sizeof(PointLight) * sceneLights.size());
 }
 
 void ClusteredRenderer::updateClusterBuffers(uint32_t frameIndex)
@@ -579,11 +542,6 @@ void ClusteredRenderer::updateClusterBuffers(uint32_t frameIndex)
     const float tileX = 2.0f / static_cast<float>(clusterX);
     const float tileY = 2.0f / static_cast<float>(clusterY);
 
-    float aspect = static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height);
-    float fovY = glm::radians(camera.Zoom);
-    float tanHalfFovY = std::tan(fovY * 0.5f);
-    float tanHalfFovX = tanHalfFovY * aspect;
-
     ClusterParamsUBO params{};
     params.clusterX = clusterX;
     params.clusterY = clusterY;
@@ -592,8 +550,6 @@ void ClusteredRenderer::updateClusterBuffers(uint32_t frameIndex)
     params.tileSize = glm::vec3(tileX, tileY, 0.0f);
     params.cameraPos = camera.Position;
     params.farZ = CLUSTER_Z_FAR;
-
-    float logFn = std::log(CLUSTER_Z_FAR / CLUSTER_Z_NEAR);
     params.zCount = static_cast<float>(clusterZ);
     params.zMin = CLUSTER_Z_NEAR;
     params.zMax = CLUSTER_Z_FAR;
@@ -610,7 +566,7 @@ void ClusteredRenderer::updateClusterBuffers(uint32_t frameIndex)
         light.position.y = 0.5f + std::abs(std::sin(phase * 0.7f + static_cast<float>(i) * 0.2f)) * 6.0f;
         light.position.z = std::cos(phase + static_cast<float>(i) * 0.3f) * 15.0f;
     }
-    std::memcpy(lightBufferResources.BuffersMapped[frameIndex], sceneLights.data(), sizeof(PointLight) * sceneLights.size());
+    updateLightBuffer(frameIndex);
 
     GroundUBO groundUbo{};
     groundUbo.model = glm::mat4(1.0f);
@@ -619,13 +575,13 @@ void ClusteredRenderer::updateClusterBuffers(uint32_t frameIndex)
     std::memcpy(groundUboResources.BuffersMapped[frameIndex], &groundUbo, sizeof(groundUbo));
 }
 
-void ClusteredRenderer::recordComputeCommandBuffer()
+void ClusteredRenderer::recordComputeCommandBuffer(uint32_t frameIndex)
 {
-    auto& commandBuffer = computeCommandBuffers[currentFrame];
+    auto& commandBuffer = computeCommandBuffers[frameIndex];
     commandBuffer.begin({});
 
     commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *computePipeline);
-    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *computePipelineLayout, 0, *computeDescriptorSets[currentFrame], nullptr);
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *computePipelineLayout, 0, *computeDescriptorSets[frameIndex], nullptr);
 
     uint32_t dispatchX = (clusterX + 7u) / 8u;
     uint32_t dispatchY = (clusterY + 7u) / 8u;
@@ -808,7 +764,7 @@ bool ClusteredRenderer::initUI()
     };
     uiPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
 
-    uiFrameBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    uiFrameBuffers.resize(swapChainImageCount);
     return true;
 }
 
@@ -862,7 +818,7 @@ void ClusteredRenderer::updateUIFrame()
     ImGui::Render();
 }
 
-void ClusteredRenderer::recordUI(vk::raii::CommandBuffer& commandBuffer)
+void ClusteredRenderer::recordUI(vk::raii::CommandBuffer& commandBuffer, uint32_t frameIndex)
 {
     if (!uiEnabled || ImGui::GetCurrentContext() == nullptr || uiPipeline == vk::raii::Pipeline(nullptr))
     {
@@ -875,7 +831,7 @@ void ClusteredRenderer::recordUI(vk::raii::CommandBuffer& commandBuffer)
         return;
     }
 
-    auto& fb = uiFrameBuffers[currentFrame];
+    auto& fb = uiFrameBuffers[frameIndex];
     size_t vertexBytes = static_cast<size_t>(drawData->TotalVtxCount) * sizeof(ImDrawVert);
     size_t indexBytes = static_cast<size_t>(drawData->TotalIdxCount) * sizeof(ImDrawIdx);
 
@@ -1030,7 +986,7 @@ void ClusteredRenderer::recordCommandBuffer(uint32_t imageIndex)
     commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
 
     commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *clusteredPipeline);
-    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *clusteredPipelineLayout, 0, *clusteredDescriptorSets[currentFrame], nullptr);
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *clusteredPipelineLayout, 0, *clusteredDescriptorSets[imageIndex], nullptr);
 
     commandBuffer.bindVertexBuffers(0, *planeMesh.vertexBuffer, { 0 });
     commandBuffer.bindIndexBuffer(*planeMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(planeMesh.indices)::value_type>::value);
@@ -1058,7 +1014,7 @@ void ClusteredRenderer::recordCommandBuffer(uint32_t imageIndex)
     commandBuffer.beginRendering(uiRenderingInfo);
     commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, float(swapChainExtent.width), float(swapChainExtent.height), 0.0f, 1.0f));
     commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
-    recordUI(commandBuffer);
+    recordUI(commandBuffer, imageIndex);
     commandBuffer.endRendering();
 
     transition_image_layout(
@@ -1077,71 +1033,72 @@ void ClusteredRenderer::recordCommandBuffer(uint32_t imageIndex)
 
 void ClusteredRenderer::render()
 {
-    uint32_t imageIndex = 0;
-    auto [result, acquiredIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[imageIndex], nullptr);
+    const auto fenceResult = device.waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
+    if (fenceResult != vk::Result::eSuccess) {
+        throw std::runtime_error("failed to wait for fence!");
+    }
+
+    auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[currentFrame], nullptr);
     if (result == vk::Result::eErrorOutOfDateKHR)
     {
         recreateSwapChain();
         return;
     }
-    imageIndex = acquiredIndex;
-
-    const auto fenceResult = device.waitForFences(*inFlightFences[imageIndex], vk::True, UINT64_MAX);
-    if (fenceResult != vk::Result::eSuccess)
-    {
-        throw std::runtime_error("failed to wait for fence!");
-    }
-
-    device.resetFences(*inFlightFences[imageIndex]);
-    commandBuffers[imageIndex].reset();
-    computeCommandBuffers[imageIndex].reset();
 
     updateClusterBuffers(imageIndex);
     updateUIFrame();
 
     if (clusteredShadingEnabled)
     {
-        device.resetFences(*computeFence);
+        // device.waitForFences(*computeFences[imageIndex], vk::True, UINT64_MAX);
+        // device.resetFences(*computeFences[imageIndex]);
+        computeCommandBuffers[imageIndex].reset();
+        recordComputeCommandBuffer(imageIndex);
 
-        recordComputeCommandBuffer();
         vk::SubmitInfo cullSubmitInfo{
             .commandBufferCount = 1,
             .pCommandBuffers = &*computeCommandBuffers[imageIndex],
             .signalSemaphoreCount = 1,
             .pSignalSemaphores = &*computeCompleteSemaphores[imageIndex]
         };
-        computeQueue.submit(cullSubmitInfo, *computeFence);
+        computeQueue.submit(cullSubmitInfo, nullptr);
 
-        (void)device.waitForFences(*computeFence, vk::True, UINT64_MAX);
         updateClusterStats();
 
-        vk::Semaphore waitSemaphores[] = { *presentCompleteSemaphores[imageIndex], *computeCompleteSemaphores[imageIndex] };
-        vk::PipelineStageFlags waitStages[] = { vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eComputeShader };
+        device.resetFences(*inFlightFences[currentFrame]);
+        commandBuffers[currentFrame].reset();
+        recordCommandBuffer(imageIndex);
+
+        vk::Semaphore waitSemaphores[] = { *presentCompleteSemaphores[currentFrame], *computeCompleteSemaphores[imageIndex] };
+        vk::PipelineStageFlags waitStages[] = { vk::PipelineStageFlagBits::eColorAttachmentOutput, vk::PipelineStageFlagBits::eFragmentShader };
         const vk::SubmitInfo submitInfo{
             .waitSemaphoreCount = 2,
             .pWaitSemaphores = waitSemaphores,
             .pWaitDstStageMask = waitStages,
             .commandBufferCount = 1,
-            .pCommandBuffers = &*commandBuffers[imageIndex],
+            .pCommandBuffers = &*commandBuffers[currentFrame],
             .signalSemaphoreCount = 1,
             .pSignalSemaphores = &*renderFinishedSemaphores[imageIndex]
         };
-        graphicsQueue.submit(submitInfo, *inFlightFences[imageIndex]);
+        graphicsQueue.submit(submitInfo, *inFlightFences[currentFrame]);
     }
     else
     {
+        device.resetFences(*inFlightFences[currentFrame]);
+        commandBuffers[currentFrame].reset();
+
         recordCommandBuffer(imageIndex);
         const vk::PipelineStageFlags waitStage(vk::PipelineStageFlagBits::eColorAttachmentOutput);
         const vk::SubmitInfo submitInfo{
             .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &*presentCompleteSemaphores[imageIndex],
+            .pWaitSemaphores = &*presentCompleteSemaphores[currentFrame],
             .pWaitDstStageMask = &waitStage,
             .commandBufferCount = 1,
-            .pCommandBuffers = &*commandBuffers[imageIndex],
+            .pCommandBuffers = &*commandBuffers[currentFrame],
             .signalSemaphoreCount = 1,
             .pSignalSemaphores = &*renderFinishedSemaphores[imageIndex]
         };
-        graphicsQueue.submit(submitInfo, *inFlightFences[imageIndex]);
+        graphicsQueue.submit(submitInfo, *inFlightFences[currentFrame]);
     }
 
     const vk::PresentInfoKHR presentInfo{
@@ -1153,13 +1110,74 @@ void ClusteredRenderer::render()
     };
     result = presentQueue.presentKHR(presentInfo);
 
-    if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || framebufferResized)
-    {
+    if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || framebufferResized) {
         framebufferResized = false;
         recreateSwapChain();
     }
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+
+void ClusteredRenderer::recreateSwapChain()
+{
+    VulkanBase::recreateSwapChain();
+    device.waitIdle();
+
+    swapChainImageCount = static_cast<uint32_t>(swapChainImages.size());
+
+    commandBuffers = vk::raii::CommandBuffers(device, vk::CommandBufferAllocateInfo{
+        .commandPool = *commandPool,
+        .level = vk::CommandBufferLevel::ePrimary,
+        .commandBufferCount = swapChainImageCount });
+
+    computeFences.clear();
+    for (uint32_t i = 0; i < swapChainImageCount; ++i)
+    {
+        computeFences.emplace_back(device, vk::FenceCreateInfo{});
+    }
+    computeCompleteSemaphores.clear();
+    for (uint32_t i = 0; i < swapChainImageCount; ++i)
+    {
+        computeCompleteSemaphores.emplace_back(device, vk::SemaphoreCreateInfo{});
+    }
+    computeCommandBuffers = vk::raii::CommandBuffers(device, vk::CommandBufferAllocateInfo{
+        .commandPool = *computeCommandPool,
+        .level = vk::CommandBufferLevel::ePrimary,
+        .commandBufferCount = swapChainImageCount });
+
+    sceneUboResources.clear();
+    createUniformBuffers(sceneUboResources, sizeof(SceneUBO), swapChainImageCount);
+    clusterParamsResources.clear();
+    createUniformBuffers(clusterParamsResources, sizeof(ClusterParamsUBO), swapChainImageCount);
+    groundUboResources.clear();
+    createUniformBuffers(groundUboResources, sizeof(GroundUBO), swapChainImageCount);
+    lightBufferResources.clear();
+    createStorageBuffers(lightBufferResources, sizeof(PointLight) * MAX_LIGHTS, vk::BufferUsageFlagBits::eStorageBuffer, swapChainImageCount);
+
+    std::array<vk::DescriptorPoolSize, 2> clusteredPoolSizes = {{
+        { vk::DescriptorType::eUniformBuffer, swapChainImageCount * 3u },
+        { vk::DescriptorType::eStorageBuffer, swapChainImageCount * 4u }
+    }};
+    clusteredDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
+        .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+        .maxSets = swapChainImageCount * 2u,
+        .poolSizeCount = 2u,
+        .pPoolSizes = clusteredPoolSizes.data()
+    });
+    createClusteredDescriptorSets();
+
+    std::array<vk::DescriptorPoolSize, 2> computePoolSizes = {{
+        { vk::DescriptorType::eStorageBuffer, swapChainImageCount * 3u },
+        { vk::DescriptorType::eUniformBuffer, swapChainImageCount * 2u }
+    }};
+    computeDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
+        .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+        .maxSets = swapChainImageCount,
+        .poolSizeCount = 2u,
+        .pPoolSizes = computePoolSizes.data()
+    });
+    createComputeDescriptorSets();
+    uiFrameBuffers.resize(swapChainImageCount);
 }
 
 void ClusteredRenderer::cleanup()

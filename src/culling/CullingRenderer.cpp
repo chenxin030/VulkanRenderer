@@ -1390,8 +1390,7 @@ void CullingRenderer::updateCullingStats()
 void CullingRenderer::render()
 {
     const auto fenceResult = device.waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
-    if (fenceResult != vk::Result::eSuccess)
-    {
+    if (fenceResult != vk::Result::eSuccess) {
         throw std::runtime_error("failed to wait for fence!");
     }
 
@@ -1408,6 +1407,7 @@ void CullingRenderer::render()
 
     updateCullingBuffers(currentFrame);
     updateUIFrame();
+
     computeCommandBuffers[currentFrame].reset();
     recordCullingCommandBuffer(imageIndex);
 

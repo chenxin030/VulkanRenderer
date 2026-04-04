@@ -68,8 +68,7 @@ void IBLPBRRenderer::initialize(Platform* _platform)
 bool IBLPBRRenderer::initVulkan()
 {
     camera = Camera(glm::vec3(0.0f, -1.0f, 15.0f));
-    if (!VulkanBase::initVulkan("VulkanRenderer - 2_pbr")) return false;
-    return true;
+	return VulkanBase::initVulkan("VulkanRenderer - 2_pbr");
 }
 
 bool IBLPBRRenderer::prepareResource()
