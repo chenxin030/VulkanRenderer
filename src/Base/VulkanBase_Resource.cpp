@@ -20,61 +20,6 @@ void VulkanBase::createVertexBuffer(Mesh& mesh) {
     copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
 }
 
-void VulkanBase::createSkinnedVertexBuffer(Mesh& mesh) {
-    auto& vertices = mesh.vertices;
-    auto& jointIndices = mesh.jointIndices;
-    auto& jointWeights = mesh.jointWeights;
-    auto& vertexBuffer = mesh.vertexBuffer;
-    auto& vertexBufferMemory = mesh.vertexBufferMemory;
-
-    struct SkinnedVertex
-    {
-        glm::vec3 pos;
-        glm::vec3 normal;
-        glm::uvec4 jointIndices;
-        glm::vec4 jointWeights;
-    };
-
-    std::vector<SkinnedVertex> skinnedVerts;
-    skinnedVerts.reserve(vertices.size());
-
-    for (size_t i = 0; i < vertices.size(); ++i)
-    {
-        SkinnedVertex sv;
-        sv.pos = vertices[i].pos;
-        sv.normal = vertices[i].normal;
-        if (i < jointIndices.size() && i < jointWeights.size())
-        {
-            sv.jointIndices = glm::uvec4(jointIndices[i][0], jointIndices[i][1],
-                                         jointIndices[i][2], jointIndices[i][3]);
-            sv.jointWeights = glm::vec4(jointWeights[i][0], jointWeights[i][1],
-                                        jointWeights[i][2], jointWeights[i][3]);
-        }
-        else
-        {
-            sv.jointIndices = glm::uvec4(0, 0, 0, 0);
-            sv.jointWeights = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
-        }
-        skinnedVerts.push_back(sv);
-    }
-
-    vk::DeviceSize bufferSize = sizeof(SkinnedVertex) * skinnedVerts.size();
-    vk::raii::Buffer stagingBuffer({});
-    vk::raii::DeviceMemory stagingBufferMemory({});
-    createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
-        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-        stagingBuffer, stagingBufferMemory);
-
-    void* dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
-    memcpy(dataStaging, skinnedVerts.data(), static_cast<size_t>(bufferSize));
-    stagingBufferMemory.unmapMemory();
-
-    createBuffer(bufferSize,
-        vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer,
-        vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer, vertexBufferMemory);
-
-    copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
-}
 void VulkanBase::createIndexBuffer(Mesh& mesh) {
     auto& indices = mesh.indices;
     auto& indexBuffer = mesh.indexBuffer;

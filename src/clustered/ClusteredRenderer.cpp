@@ -1108,11 +1108,22 @@ void ClusteredRenderer::render()
         .pSwapchains = &*swapChain,
         .pImageIndices = &imageIndex
     };
-    result = presentQueue.presentKHR(presentInfo);
+
+    try
+    {
+        result = presentQueue.presentKHR(presentInfo);
+    }
+    catch (const vk::OutOfDateKHRError&)
+    {
+        framebufferResized = false;
+        recreateSwapChain();
+        return;
+    }
 
     if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || framebufferResized) {
         framebufferResized = false;
         recreateSwapChain();
+        return;
     }
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -1121,7 +1132,6 @@ void ClusteredRenderer::render()
 void ClusteredRenderer::recreateSwapChain()
 {
     VulkanBase::recreateSwapChain();
-    device.waitIdle();
 
     swapChainImageCount = static_cast<uint32_t>(swapChainImages.size());
 
@@ -1153,6 +1163,12 @@ void ClusteredRenderer::recreateSwapChain()
     createUniformBuffers(groundUboResources, sizeof(GroundUBO), swapChainImageCount);
     lightBufferResources.clear();
     createStorageBuffers(lightBufferResources, sizeof(PointLight) * MAX_LIGHTS, vk::BufferUsageFlagBits::eStorageBuffer, swapChainImageCount);
+
+    // Release old descriptor sets before recreating pools to avoid invalid frees.
+    clusteredDescriptorSets = vk::raii::DescriptorSets(nullptr);
+    computeDescriptorSets = vk::raii::DescriptorSets(nullptr);
+    clusteredDescriptorPool = vk::raii::DescriptorPool(nullptr);
+    computeDescriptorPool = vk::raii::DescriptorPool(nullptr);
 
     std::array<vk::DescriptorPoolSize, 2> clusteredPoolSizes = {{
         { vk::DescriptorType::eUniformBuffer, swapChainImageCount * 3u },

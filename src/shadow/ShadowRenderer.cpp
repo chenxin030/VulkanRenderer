@@ -948,12 +948,23 @@ void ShadowRenderer::render()
         .pSwapchains = &*swapChain,
         .pImageIndices = &imageIndex
     };
-    result = presentQueue.presentKHR(presentInfo);
+
+    try
+    {
+        result = presentQueue.presentKHR(presentInfo);
+    }
+    catch (const vk::OutOfDateKHRError&)
+    {
+        framebufferResized = false;
+        recreateSwapChain();
+        return;
+    }
 
     if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || framebufferResized)
     {
         framebufferResized = false;
         recreateSwapChain();
+        return;
     }
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;

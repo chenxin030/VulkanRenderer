@@ -79,7 +79,7 @@
 职责：**构建每个 cluster 对应的灯光列表**。
 
 - 线程组织：`[numthreads(8,8,8)]`，dispatch 覆盖 
-  \(clusterX \times clusterY \times clusterZ\) 三维簇网格。
+  \($clusterX \times clusterY \times clusterZ$\) 三维簇网格。
 - 每个线程处理一个 cluster：
   1. 根据 `dispatchThreadID` 得到 cluster 坐标 `(x,y,z)`。
   2. 通过 `getClusterMin/getClusterMax` 计算该 cluster 在视锥空间近似 AABB。

@@ -2023,7 +2023,19 @@ void PostFXRenderer::render()
         .pSwapchains = &*swapChain,
         .pImageIndices = &imageIndex
     };
-    result = presentQueue.presentKHR(presentInfo);
+
+    try
+    {
+        result = presentQueue.presentKHR(presentInfo);
+    }
+    catch (const vk::OutOfDateKHRError&)
+    {
+        framebufferResized = false;
+        recreateSwapChain();
+        if (!recreateGBufferSizedResources()) throw std::runtime_error("failed to recreate gbuffer resources");
+        if (!recreatePostSizedResources()) throw std::runtime_error("failed to recreate post resources");
+        return;
+    }
 
     if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || framebufferResized)
     {
@@ -2031,6 +2043,7 @@ void PostFXRenderer::render()
         recreateSwapChain();
         if (!recreateGBufferSizedResources()) throw std::runtime_error("failed to recreate gbuffer resources");
         if (!recreatePostSizedResources()) throw std::runtime_error("failed to recreate post resources");
+        return;
     }
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;

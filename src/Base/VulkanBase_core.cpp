@@ -14,10 +14,6 @@ static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallbackVkHpp(
     {
         std::cerr << "Validation layer Warning/Error: " << pCallbackData->pMessage << std::endl << std::endl;
     }
-    else
-    {
-        std::cout << "Validation layer Verbose/Info: " << pCallbackData->pMessage << std::endl << std::endl;
-    }
     return vk::False;
 }
 

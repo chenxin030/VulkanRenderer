@@ -3,13 +3,10 @@
 #include <Base/Mesh.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <glm/gtc/matrix_transform.hpp>
 #include <imgui.h>
-
-static_assert(sizeof(ParticleRenderer::Particle) % 16 == 0, "Particle must be 16-byte aligned");
-static_assert(sizeof(ParticleRenderer::ParticleParamsUBO) % 16 == 0, "ParticleParamsUBO must be 16-byte aligned");
-static_assert(sizeof(ParticleRenderer::SceneUBO) % 16 == 0, "SceneUBO must be 16-byte aligned");
 
 void ParticleRenderer::initialize(Platform* _platform)
 {
@@ -20,7 +17,9 @@ bool ParticleRenderer::initVulkan()
 {
     camera = Camera(glm::vec3(0.0f, 5.0f, 25.0f));
     rng.seed(1337u);
-    return VulkanBase::initVulkan("VulkanRenderer - 14_particles");
+
+    const bool ok = VulkanBase::initVulkan("VulkanRenderer - 14_particles");
+    return ok;
 }
 
 bool ParticleRenderer::prepareResource()
@@ -29,15 +28,17 @@ bool ParticleRenderer::prepareResource()
     if (!createParticleDescriptorSetLayouts()) return false;
     if (!createParticleDescriptorPools()) return false;
     createParticleDescriptorSets();
+
     if (!createParticlePipeline()) return false;
     if (!createComputePipeline()) return false;
+
     if (!createComputeCommandPool()) return false;
     if (!createComputeCommandBuffers()) return false;
     if (!createComputeSyncObjects()) return false;
+
     if (!initUI()) return false;
 
     generateInitialParticles();
-
     return true;
 }
 
@@ -65,6 +66,7 @@ bool ParticleRenderer::createParticleDescriptorSetLayouts()
             { .binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex },
             { .binding = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex }
         };
+
         particleDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, vk::DescriptorSetLayoutCreateInfo{
             .bindingCount = static_cast<uint32_t>(renderBindings.size()),
             .pBindings = renderBindings.data() });
@@ -73,6 +75,7 @@ bool ParticleRenderer::createParticleDescriptorSetLayouts()
             { .binding = 0, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute },
             { .binding = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute }
         };
+
         computeDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, vk::DescriptorSetLayoutCreateInfo{
             .bindingCount = static_cast<uint32_t>(computeBindings.size()),
             .pBindings = computeBindings.data() });
@@ -94,6 +97,7 @@ bool ParticleRenderer::createParticleDescriptorPools()
             { .type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
             { .type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT }
         };
+
         particleDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
             .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
             .maxSets = MAX_FRAMES_IN_FLIGHT,
@@ -104,6 +108,7 @@ bool ParticleRenderer::createParticleDescriptorPools()
             { .type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
             { .type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT }
         };
+
         computeDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
             .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
             .maxSets = MAX_FRAMES_IN_FLIGHT,
@@ -123,45 +128,41 @@ void ParticleRenderer::createParticleDescriptorSets()
 {
     {
         std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *particleDescriptorSetLayout);
-        vk::DescriptorSetAllocateInfo allocInfo{
+        particleDescriptorSets = vk::raii::DescriptorSets(device, vk::DescriptorSetAllocateInfo{
             .descriptorPool = *particleDescriptorPool,
             .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
-            .pSetLayouts = layouts.data()
-        };
-        particleDescriptorSets = vk::raii::DescriptorSets(device, allocInfo);
+            .pSetLayouts = layouts.data() });
 
-        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
         {
-            vk::DescriptorBufferInfo sceneBufferInfo{ .buffer = *sceneUboResources.Buffers[i], .offset = 0, .range = sizeof(SceneUBO) };
-            vk::DescriptorBufferInfo particleBufferInfo{ .buffer = *particleBufferResources.Buffers[i], .offset = 0, .range = sizeof(Particle) * MAX_PARTICLES };
+            vk::DescriptorBufferInfo sceneInfo{ .buffer = *sceneUboResources.Buffers[i], .offset = 0, .range = sizeof(SceneUBO) };
+            vk::DescriptorBufferInfo particleInfo{ .buffer = *particleBufferResources.Buffers[i], .offset = 0, .range = sizeof(Particle) * MAX_PARTICLES };
 
-            std::vector<vk::WriteDescriptorSet> descriptorWrites = {
-                { .dstSet = *particleDescriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &sceneBufferInfo },
-                { .dstSet = *particleDescriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &particleBufferInfo }
+            std::vector<vk::WriteDescriptorSet> writes = {
+                { .dstSet = *particleDescriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &sceneInfo },
+                { .dstSet = *particleDescriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &particleInfo }
             };
-            device.updateDescriptorSets(descriptorWrites, nullptr);
+            device.updateDescriptorSets(writes, nullptr);
         }
     }
 
     {
         std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *computeDescriptorSetLayout);
-        vk::DescriptorSetAllocateInfo allocInfo{
+        computeDescriptorSets = vk::raii::DescriptorSets(device, vk::DescriptorSetAllocateInfo{
             .descriptorPool = *computeDescriptorPool,
             .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
-            .pSetLayouts = layouts.data()
-        };
-        computeDescriptorSets = vk::raii::DescriptorSets(device, allocInfo);
+            .pSetLayouts = layouts.data() });
 
-        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
         {
-            vk::DescriptorBufferInfo particleBufferInfo{ .buffer = *particleBufferResources.Buffers[i], .offset = 0, .range = sizeof(Particle) * MAX_PARTICLES };
-            vk::DescriptorBufferInfo paramsBufferInfo{ .buffer = *particleParamsBufferResources.Buffers[i], .offset = 0, .range = sizeof(ParticleParamsUBO) };
+            vk::DescriptorBufferInfo particleInfo{ .buffer = *particleBufferResources.Buffers[i], .offset = 0, .range = sizeof(Particle) * MAX_PARTICLES };
+            vk::DescriptorBufferInfo paramsInfo{ .buffer = *particleParamsBufferResources.Buffers[i], .offset = 0, .range = sizeof(ParticleParamsUBO) };
 
-            std::vector<vk::WriteDescriptorSet> descriptorWrites = {
-                { .dstSet = *computeDescriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &particleBufferInfo },
-                { .dstSet = *computeDescriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &paramsBufferInfo }
+            std::vector<vk::WriteDescriptorSet> writes = {
+                { .dstSet = *computeDescriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &particleInfo },
+                { .dstSet = *computeDescriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &paramsInfo }
             };
-            device.updateDescriptorSets(descriptorWrites, nullptr);
+            device.updateDescriptorSets(writes, nullptr);
         }
     }
 }
@@ -221,6 +222,7 @@ bool ParticleRenderer::createParticlePipeline()
             .alphaBlendOp = vk::BlendOp::eAdd,
             .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
         };
+
         vk::PipelineColorBlendStateCreateInfo colorBlending{
             .logicOpEnable = vk::False,
             .logicOp = vk::LogicOp::eCopy,
@@ -228,7 +230,7 @@ bool ParticleRenderer::createParticlePipeline()
             .pAttachments = &colorBlendAttachment
         };
 
-        std::vector dynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor, vk::DynamicState::ePointSize };
+        std::vector dynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
         vk::PipelineDynamicStateCreateInfo dynamicState{
             .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()),
             .pDynamicStates = dynamicStates.data()
@@ -277,8 +279,13 @@ bool ParticleRenderer::createComputePipeline()
 {
     try
     {
-        vk::raii::ShaderModule computeShader = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "particle_update.spv"));
-        vk::PipelineShaderStageCreateInfo computeShaderStage{ .stage = vk::ShaderStageFlagBits::eCompute, .module = computeShader, .pName = "compMain" };
+        vk::raii::ShaderModule computeShader = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "particle_update_comp.spv"));
+
+        vk::PipelineShaderStageCreateInfo computeShaderStage{
+            .stage = vk::ShaderStageFlagBits::eCompute,
+            .module = computeShader,
+            .pName = "compMain"
+        };
 
         computePipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
             .setLayoutCount = 1,
@@ -305,8 +312,8 @@ bool ParticleRenderer::createComputeCommandPool()
     try
     {
         computeCommandPool = vk::raii::CommandPool(device, vk::CommandPoolCreateInfo{
-            .queueFamilyIndex = queueFamilyIndices.computeFamily.value(),
-            .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer
+            .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+            .queueFamilyIndex = queueFamilyIndices.computeFamily.value()
         });
         return true;
     }
@@ -321,13 +328,20 @@ bool ParticleRenderer::createComputeCommandBuffers()
 {
     try
     {
-        computeCommandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+        computeCommandBuffers.clear();
+        computeCommandBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
+
         vk::CommandBufferAllocateInfo allocInfo{
             .commandPool = *computeCommandPool,
             .level = vk::CommandBufferLevel::ePrimary,
             .commandBufferCount = MAX_FRAMES_IN_FLIGHT
         };
-        computeCommandBuffers = device.allocateCommandBuffers(allocInfo);
+
+        auto buffers = device.allocateCommandBuffers(allocInfo);
+        for (auto& buffer : buffers)
+        {
+            computeCommandBuffers.emplace_back(std::move(buffer));
+        }
         return true;
     }
     catch (const std::exception& e)
@@ -341,10 +355,12 @@ bool ParticleRenderer::createComputeSyncObjects()
 {
     try
     {
-        computeCompleteSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+        computeCompleteSemaphores.clear();
+        computeCompleteSemaphores.reserve(MAX_FRAMES_IN_FLIGHT);
+
+        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
         {
-            computeCompleteSemaphores[i] = vk::raii::Semaphore(device, vk::SemaphoreCreateInfo{});
+            computeCompleteSemaphores.emplace_back(device, vk::SemaphoreCreateInfo{});
         }
         return true;
     }
@@ -357,31 +373,37 @@ bool ParticleRenderer::createComputeSyncObjects()
 
 void ParticleRenderer::generateInitialParticles()
 {
-    for (uint32_t i = 0; i < MAX_PARTICLES; i++)
+    for (uint32_t i = 0; i < MAX_PARTICLES; ++i)
     {
-        Particle p;
-        p.position = glm::vec3(0.0f, 0.0f, 0.0f);
-        p.velocity = glm::vec3(dist11(rng) * spread, velocity + dist01(rng) * velocity, dist11(rng) * spread);
-        p.lifetime = dist01(rng) * particleLifetime;
-        p.maxLifetime = particleLifetime;
-        p.color = glm::vec4(1.0f, 0.5f, 0.1f, 1.0f);
-        p.size = particleSize;
-        p.padding = glm::vec3(0.0f);
+        Particle particle{};
+        particle.position = glm::vec3(0.0f, 0.0f, 0.0f);
+        particle.velocity = glm::vec3(dist11(rng) * spread, velocity + dist01(rng) * velocity, dist11(rng) * spread);
+        particle.lifetime = dist01(rng) * particleLifetime;
+        particle.maxLifetime = particleLifetime;
+        particle.color = glm::vec4(1.0f, 0.5f, 0.1f, 1.0f);
+        particle.size = particleSize;
+        particle.padding = glm::vec3(0.0f);
 
-        std::memcpy(particleBufferResources.BuffersMapped[0] + i * sizeof(Particle), &p, sizeof(Particle));
+        std::memcpy(static_cast<std::byte*>(particleBufferResources.BuffersMapped[0]) + i * sizeof(Particle), &particle, sizeof(Particle));
     }
-    for (uint32_t f = 1; f < MAX_FRAMES_IN_FLIGHT; f++)
+
+    for (uint32_t frame = 1; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
     {
-        std::memcpy(particleBufferResources.BuffersMapped[f], particleBufferResources.BuffersMapped[0], sizeof(Particle) * MAX_PARTICLES);
+        std::memcpy(
+            particleBufferResources.BuffersMapped[frame],
+            particleBufferResources.BuffersMapped[0],
+            sizeof(Particle) * MAX_PARTICLES);
     }
 }
 
 void ParticleRenderer::updateParticleBuffers(uint32_t frameIndex)
 {
     SceneUBO sceneUbo{
-        .projection = glm::perspective(glm::radians(camera.Zoom),
+        .projection = glm::perspective(
+            glm::radians(camera.Zoom),
             static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height),
-            0.1f, 1000.0f),
+            0.1f,
+            1000.0f),
         .view = camera.GetViewMatrix(),
         .camPos = camera.Position
     };
@@ -403,16 +425,21 @@ void ParticleRenderer::updateParticleBuffers(uint32_t frameIndex)
 
 void ParticleRenderer::recordComputeCommandBuffer(uint32_t frameIndex)
 {
-    auto& cmdBuffer = computeCommandBuffers[frameIndex];
-    cmdBuffer.begin({});
+    auto& commandBuffer = computeCommandBuffers[frameIndex];
+    commandBuffer.begin({});
 
-    cmdBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *computePipeline);
-    cmdBuffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *computePipelineLayout, 0, *computeDescriptorSets[frameIndex], nullptr);
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, *computePipeline);
+    commandBuffer.bindDescriptorSets(
+        vk::PipelineBindPoint::eCompute,
+        *computePipelineLayout,
+        0,
+        *computeDescriptorSets[frameIndex],
+        nullptr);
 
-    uint32_t groupCount = (MAX_PARTICLES + COMPUTE_WORKGROUP_SIZE - 1) / COMPUTE_WORKGROUP_SIZE;
-    cmdBuffer.dispatch(groupCount, 1, 1);
+    const uint32_t groupCount = (MAX_PARTICLES + COMPUTE_WORKGROUP_SIZE - 1) / COMPUTE_WORKGROUP_SIZE;
+    commandBuffer.dispatch(groupCount, 1, 1);
 
-    cmdBuffer.end();
+    commandBuffer.end();
 }
 
 void ParticleRenderer::recordCommandBuffer(uint32_t imageIndex)
@@ -450,6 +477,7 @@ void ParticleRenderer::recordCommandBuffer(uint32_t imageIndex)
         .storeOp = vk::AttachmentStoreOp::eStore,
         .clearValue = clearColor
     };
+
     const vk::ClearValue clearDepth = vk::ClearDepthStencilValue(1.0f, 0);
     const vk::RenderingAttachmentInfo depthAttachmentInfo{
         .imageView = depthData.textureImageView,
@@ -458,8 +486,9 @@ void ParticleRenderer::recordCommandBuffer(uint32_t imageIndex)
         .storeOp = vk::AttachmentStoreOp::eDontCare,
         .clearValue = clearDepth
     };
+
     const vk::RenderingInfo renderingInfo{
-        .renderArea = { .offset = {0, 0}, .extent = swapChainExtent },
+        .renderArea = { .offset = { 0, 0 }, .extent = swapChainExtent },
         .layerCount = 1,
         .colorAttachmentCount = 1,
         .pColorAttachments = &attachmentInfo,
@@ -467,16 +496,54 @@ void ParticleRenderer::recordCommandBuffer(uint32_t imageIndex)
     };
 
     commandBuffer.beginRendering(renderingInfo);
-    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+    commandBuffer.setViewport(
+        0,
+        vk::Viewport(
+            0.0f,
+            0.0f,
+            static_cast<float>(swapChainExtent.width),
+            static_cast<float>(swapChainExtent.height),
+            0.0f,
+            1.0f));
     commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
-    commandBuffer.setPointSize(particleSize * 100.0f);
 
     commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *particlePipeline);
-    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *particlePipelineLayout, 0, *particleDescriptorSets[currentFrame], nullptr);
+    commandBuffer.bindDescriptorSets(
+        vk::PipelineBindPoint::eGraphics,
+        *particlePipelineLayout,
+        0,
+        *particleDescriptorSets[currentFrame],
+        nullptr);
     commandBuffer.draw(MAX_PARTICLES, 1, 0, 0);
+
     commandBuffer.endRendering();
 
+    const vk::RenderingAttachmentInfo uiAttachmentInfo{
+        .imageView = swapChainImageViews[imageIndex],
+        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eLoad,
+        .storeOp = vk::AttachmentStoreOp::eStore
+    };
+    const vk::RenderingInfo uiRenderingInfo{
+        .renderArea = { .offset = { 0, 0 }, .extent = swapChainExtent },
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &uiAttachmentInfo
+    };
+
+    commandBuffer.beginRendering(uiRenderingInfo);
+    commandBuffer.setViewport(
+        0,
+        vk::Viewport(
+            0.0f,
+            0.0f,
+            static_cast<float>(swapChainExtent.width),
+            static_cast<float>(swapChainExtent.height),
+            0.0f,
+            1.0f));
+    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
     recordUI(commandBuffer);
+    commandBuffer.endRendering();
 
     transition_image_layout(
         swapChainImages[imageIndex],
@@ -500,34 +567,45 @@ void ParticleRenderer::render()
         throw std::runtime_error("failed to wait for fence!");
     }
 
-    auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[currentFrame], nullptr);
-    if (result == vk::Result::eErrorOutOfDateKHR)
+    auto [acquireResult, imageIndex] = swapChain.acquireNextImage(
+        UINT64_MAX,
+        *presentCompleteSemaphores[currentFrame],
+        nullptr);
+
+    if (acquireResult == vk::Result::eErrorOutOfDateKHR)
     {
         recreateSwapChain();
         return;
     }
 
     device.resetFences(*inFlightFences[currentFrame]);
-
     updateParticleBuffers(currentFrame);
-    recordComputeCommandBuffer(currentFrame);
+    updateUIFrame();
 
+    recordComputeCommandBuffer(currentFrame);
     computeQueue.submit(vk::SubmitInfo{
         .waitSemaphoreCount = 0,
         .commandBufferCount = 1,
         .pCommandBuffers = &*computeCommandBuffers[currentFrame],
         .signalSemaphoreCount = 1,
         .pSignalSemaphores = &*computeCompleteSemaphores[currentFrame]
-    }, nullptr);
+        }, nullptr);
 
     commandBuffers[currentFrame].reset();
     recordCommandBuffer(imageIndex);
 
-    const vk::PipelineStageFlags waitStage(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+    const std::array<vk::Semaphore, 2> waitSemaphores = {
+        *presentCompleteSemaphores[currentFrame],
+        *computeCompleteSemaphores[currentFrame]
+    };
+    const std::array<vk::PipelineStageFlags, 2> waitStages = {
+        vk::PipelineStageFlagBits::eColorAttachmentOutput,
+        vk::PipelineStageFlagBits::eVertexInput
+    };
     const vk::SubmitInfo submitInfo{
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &*computeCompleteSemaphores[currentFrame],
-        .pWaitDstStageMask = &waitStage,
+        .waitSemaphoreCount = static_cast<uint32_t>(waitSemaphores.size()),
+        .pWaitSemaphores = waitSemaphores.data(),
+        .pWaitDstStageMask = waitStages.data(),
         .commandBufferCount = 1,
         .pCommandBuffers = &*commandBuffers[currentFrame],
         .signalSemaphoreCount = 1,
@@ -542,12 +620,26 @@ void ParticleRenderer::render()
         .pSwapchains = &*swapChain,
         .pImageIndices = &imageIndex
     };
-    result = presentQueue.presentKHR(presentInfo);
 
-    if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || framebufferResized)
+    vk::Result presentResult = vk::Result::eSuccess;
+    try
+    {
+        presentResult = presentQueue.presentKHR(presentInfo);
+    }
+    catch (const vk::OutOfDateKHRError&)
     {
         framebufferResized = false;
         recreateSwapChain();
+        return;
+    }
+
+    if (presentResult == vk::Result::eSuboptimalKHR ||
+        presentResult == vk::Result::eErrorOutOfDateKHR ||
+        framebufferResized)
+    {
+        framebufferResized = false;
+        recreateSwapChain();
+        return;
     }
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -568,6 +660,7 @@ bool ParticleRenderer::initUI()
             { .type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT }
         };
         uiDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
+            .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
             .maxSets = MAX_FRAMES_IN_FLIGHT,
             .poolSizeCount = static_cast<uint32_t>(uiPoolSizes.size()),
             .pPoolSizes = uiPoolSizes.data() });
@@ -581,59 +674,93 @@ bool ParticleRenderer::initUI()
         };
         uiFontTexture.textureSampler = vk::raii::Sampler(device, samplerInfo);
 
-        vk::ImageCreateInfo imageInfo{
-            .imageType = vk::ImageType::e2D,
-            .extent = { 1, 1, 1 },
-            .mipLevels = 1,
-            .arrayLayers = 1,
-            .format = vk::Format::eR8G8B8A8Unorm,
-            .tiling = vk::ImageTiling::eOptimal,
-            .initialLayout = vk::ImageLayout::eUndefined,
-            .usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled
-        };
-        uiFontTexture.textureImage = vk::raii::Image(device, imageInfo);
-        vk::MemoryRequirements memReqs = device.getImageMemoryRequirements(*uiFontTexture.textureImage);
-        vk::MemoryAllocateInfo allocInfo{ .allocationSize = memReqs.size, .memoryTypeIndex = findMemoryType(memReqs.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal) };
-        uiFontTexture.textureImageMemory = vk::raii::DeviceMemory(device, allocInfo);
-        device.bindImageMemory(*uiFontTexture.textureImage, *uiFontTexture.textureImageMemory, 0);
-        uiFontTexture.textureImageView = createImageView(uiFontTexture.textureImage, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor, 1);
-
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
         io.Fonts->AddFontDefault();
 
         unsigned char* fontPixels = nullptr;
-        int fontWidth = 0, fontHeight = 0;
+        int fontWidth = 0;
+        int fontHeight = 0;
         io.Fonts->GetTexDataAsRGBA32(&fontPixels, &fontWidth, &fontHeight);
 
-        vk::BufferCreateInfo bufferInfo{ .size = static_cast<vk::DeviceSize>(fontWidth * fontHeight * 4), .usage = vk::BufferUsageFlagBits::eTransferSrc };
-        vk::raii::Buffer fontStagingBuffer = vk::raii::Buffer(device, bufferInfo);
-        vk::MemoryRequirements fontMemReqs = device.getBufferMemoryRequirements(*fontStagingBuffer);
-        vk::MemoryAllocateInfo fontAllocInfo{ .allocationSize = fontMemReqs.size, .memoryTypeIndex = findMemoryType(fontMemReqs.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent) };
-        vk::raii::DeviceMemory fontStagingMemory = vk::raii::DeviceMemory(device, fontAllocInfo);
-        device.bindBufferMemory(*fontStagingBuffer, *fontStagingMemory, 0);
+        uiFontTexture.mipLevels = 1;
+        createImage(
+            static_cast<uint32_t>(fontWidth),
+            static_cast<uint32_t>(fontHeight),
+            1,
+            vk::Format::eR8G8B8A8Unorm,
+            vk::ImageTiling::eOptimal,
+            vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+            vk::MemoryPropertyFlagBits::eDeviceLocal,
+            uiFontTexture);
 
-        void* fontData = fontStagingMemory.mapMemory(0, bufferInfo.size);
-        std::memcpy(fontData, fontPixels, static_cast<size_t>(bufferInfo.size));
-        fontStagingMemory.unmapMemory();
+        transitionImageLayout(
+            uiFontTexture.textureImage,
+            vk::ImageLayout::eUndefined,
+            vk::ImageLayout::eTransferDstOptimal,
+            1);
 
-        transitionImageLayout(uiFontTexture.textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, 1);
+        vk::raii::Buffer stagingBuffer({});
+        vk::raii::DeviceMemory stagingBufferMemory({});
+        const vk::DeviceSize uploadSize = static_cast<vk::DeviceSize>(fontWidth) * static_cast<vk::DeviceSize>(fontHeight) * 4u;
+
+        createBuffer(
+            uploadSize,
+            vk::BufferUsageFlagBits::eTransferSrc,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+            stagingBuffer,
+            stagingBufferMemory);
+
+        void* mappedFontData = stagingBufferMemory.mapMemory(0, uploadSize);
+        std::memcpy(mappedFontData, fontPixels, static_cast<size_t>(uploadSize));
+        stagingBufferMemory.unmapMemory();
+
         auto cmdBuffer = beginSingleTimeCommands();
-        vk::BufferImageCopy region{ .bufferOffset = 0, .bufferRowLength = static_cast<uint32_t>(fontWidth), .bufferImageHeight = static_cast<uint32_t>(fontHeight), .imageSubresource = { vk::ImageAspectFlagBits::eColor, 0, 0, 1 }, .imageOffset = {0, 0, 0}, .imageExtent = {static_cast<uint32_t>(fontWidth), static_cast<uint32_t>(fontHeight), 1} };
-        cmdBuffer->copyBufferToImage(*fontStagingBuffer, *uiFontTexture.textureImage, vk::ImageLayout::eTransferDstOptimal, region);
+        vk::BufferImageCopy region{
+            .bufferOffset = 0,
+            .bufferRowLength = static_cast<uint32_t>(fontWidth),
+            .bufferImageHeight = static_cast<uint32_t>(fontHeight),
+            .imageSubresource = { vk::ImageAspectFlagBits::eColor, 0, 0, 1 },
+            .imageOffset = { 0, 0, 0 },
+            .imageExtent = { static_cast<uint32_t>(fontWidth), static_cast<uint32_t>(fontHeight), 1 }
+        };
+        cmdBuffer->copyBufferToImage(*stagingBuffer, *uiFontTexture.textureImage, vk::ImageLayout::eTransferDstOptimal, region);
         endSingleTimeCommands(*cmdBuffer);
-        transitionImageLayout(uiFontTexture.textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, 1);
+
+        transitionImageLayout(
+            uiFontTexture.textureImage,
+            vk::ImageLayout::eTransferDstOptimal,
+            vk::ImageLayout::eShaderReadOnlyOptimal,
+            1);
+
+        uiFontTexture.textureImageView = createImageView(
+            uiFontTexture.textureImage,
+            vk::Format::eR8G8B8A8Unorm,
+            vk::ImageAspectFlagBits::eColor,
+            1);
 
         io.Fonts->SetTexID(reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(0)));
 
         std::vector<vk::DescriptorSetLayout> uiLayouts(MAX_FRAMES_IN_FLIGHT, *uiDescriptorSetLayout);
-        vk::DescriptorSetAllocateInfo uiAllocInfo{ .descriptorPool = *uiDescriptorPool, .descriptorSetCount = MAX_FRAMES_IN_FLIGHT, .pSetLayouts = uiLayouts.data() };
-        uiDescriptorSets = vk::raii::DescriptorSets(device, uiAllocInfo);
+        uiDescriptorSets = vk::raii::DescriptorSets(device, vk::DescriptorSetAllocateInfo{
+            .descriptorPool = *uiDescriptorPool,
+            .descriptorSetCount = MAX_FRAMES_IN_FLIGHT,
+            .pSetLayouts = uiLayouts.data() });
 
-        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
         {
-            vk::DescriptorImageInfo imageInfo{ .sampler = *uiFontTexture.textureSampler, .imageView = *uiFontTexture.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
-            vk::WriteDescriptorSet write{ .dstSet = *uiDescriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &imageInfo };
+            vk::DescriptorImageInfo imageInfo{
+                .sampler = *uiFontTexture.textureSampler,
+                .imageView = *uiFontTexture.textureImageView,
+                .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+            };
+            vk::WriteDescriptorSet write{
+                .dstSet = *uiDescriptorSets[i],
+                .dstBinding = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                .pImageInfo = &imageInfo
+            };
             device.updateDescriptorSets(write, nullptr);
         }
 
@@ -642,19 +769,73 @@ bool ParticleRenderer::initUI()
         vk::PipelineShaderStageCreateInfo uiFragShaderStage{ .stage = vk::ShaderStageFlagBits::eFragment, .module = uiShaderModule, .pName = "fragMain" };
         vk::PipelineShaderStageCreateInfo uiShaderStages[] = { uiVertShaderStage, uiFragShaderStage };
 
-        vk::PipelineVertexInputStateCreateInfo uiVertexInputInfo{ .vertexBindingDescriptionCount = 0, .vertexAttributeDescriptionCount = 0 };
-        vk::PipelineInputAssemblyStateCreateInfo uiInputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList };
+        vk::VertexInputBindingDescription uiBindingDescription{
+            .binding = 0,
+            .stride = sizeof(ImDrawVert),
+            .inputRate = vk::VertexInputRate::eVertex
+        };
+        std::array<vk::VertexInputAttributeDescription, 3> uiAttributeDescriptions = {
+            vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32Sfloat, offsetof(ImDrawVert, pos)),
+            vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32Sfloat, offsetof(ImDrawVert, uv)),
+            vk::VertexInputAttributeDescription(2, 0, vk::Format::eR8G8B8A8Unorm, offsetof(ImDrawVert, col))
+        };
+        vk::PipelineVertexInputStateCreateInfo uiVertexInputInfo{
+            .vertexBindingDescriptionCount = 1,
+            .pVertexBindingDescriptions = &uiBindingDescription,
+            .vertexAttributeDescriptionCount = static_cast<uint32_t>(uiAttributeDescriptions.size()),
+            .pVertexAttributeDescriptions = uiAttributeDescriptions.data()
+        };
+
+        vk::PipelineInputAssemblyStateCreateInfo uiInputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = vk::False };
 
         vk::PipelineViewportStateCreateInfo uiViewportState{ .viewportCount = 1, .scissorCount = 1 };
-        vk::PipelineRasterizationStateCreateInfo uiRasterizer{ .depthClampEnable = vk::False, .rasterizerDiscardEnable = vk::False, .polygonMode = vk::PolygonMode::eFill, .cullMode = vk::CullModeFlagBits::eNone, .lineWidth = 1.0f };
-        vk::PipelineMultisampleStateCreateInfo uiMultisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1 };
-        vk::PipelineColorBlendAttachmentState uiColorBlendAttachment{ .blendEnable = vk::True, .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha, .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha, .colorBlendOp = vk::BlendOp::eAdd, .srcAlphaBlendFactor = vk::BlendFactor::eOne, .dstAlphaBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha, .alphaBlendOp = vk::BlendOp::eAdd, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA };
+        vk::PipelineRasterizationStateCreateInfo uiRasterizer{
+            .depthClampEnable = vk::False,
+            .rasterizerDiscardEnable = vk::False,
+            .polygonMode = vk::PolygonMode::eFill,
+            .cullMode = vk::CullModeFlagBits::eNone,
+            .frontFace = vk::FrontFace::eCounterClockwise,
+            .lineWidth = 1.0f
+        };
+        vk::PipelineMultisampleStateCreateInfo uiMultisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False };
+
+        vk::PipelineDepthStencilStateCreateInfo uiDepthStencil{
+            .depthTestEnable = vk::False,
+            .depthWriteEnable = vk::False,
+            .depthCompareOp = vk::CompareOp::eAlways,
+            .depthBoundsTestEnable = vk::False,
+            .stencilTestEnable = vk::False
+        };
+
+        vk::PipelineColorBlendAttachmentState uiColorBlendAttachment{
+            .blendEnable = vk::True,
+            .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
+            .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
+            .colorBlendOp = vk::BlendOp::eAdd,
+            .srcAlphaBlendFactor = vk::BlendFactor::eOne,
+            .dstAlphaBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
+            .alphaBlendOp = vk::BlendOp::eAdd,
+            .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
+        };
         vk::PipelineColorBlendStateCreateInfo uiColorBlending{ .attachmentCount = 1, .pAttachments = &uiColorBlendAttachment };
 
         std::vector uiDynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
-        vk::PipelineDynamicStateCreateInfo uiDynamicState{ .dynamicStateCount = static_cast<uint32_t>(uiDynamicStates.size()), .pDynamicStates = uiDynamicStates.data() };
+        vk::PipelineDynamicStateCreateInfo uiDynamicState{
+            .dynamicStateCount = static_cast<uint32_t>(uiDynamicStates.size()),
+            .pDynamicStates = uiDynamicStates.data()
+        };
 
-        uiPipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{ .setLayoutCount = 1, .pSetLayouts = &*uiDescriptorSetLayout });
+        vk::PushConstantRange uiPushConstants{
+            .stageFlags = vk::ShaderStageFlagBits::eVertex,
+            .offset = 0,
+            .size = 16u
+        };
+        uiPipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
+            .setLayoutCount = 1,
+            .pSetLayouts = &*uiDescriptorSetLayout,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = &uiPushConstants
+        });
 
         vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> uiPipelineChain = {
             {
@@ -665,6 +846,7 @@ bool ParticleRenderer::initUI()
                 .pViewportState = &uiViewportState,
                 .pRasterizationState = &uiRasterizer,
                 .pMultisampleState = &uiMultisampling,
+                .pDepthStencilState = &uiDepthStencil,
                 .pColorBlendState = &uiColorBlending,
                 .pDynamicState = &uiDynamicState,
                 .layout = uiPipelineLayout,
@@ -678,7 +860,23 @@ bool ParticleRenderer::initUI()
 
         uiPipeline = vk::raii::Pipeline(device, nullptr, uiPipelineChain.get<vk::GraphicsPipelineCreateInfo>());
 
-        uiFrameBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+        uiFrameBuffers.clear();
+        uiFrameBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
+        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+        {
+            uiFrameBuffers.emplace_back(
+                vk::raii::Buffer{ nullptr },
+                vk::raii::DeviceMemory{ nullptr },
+                nullptr,
+                0,
+                0,
+                vk::raii::Buffer{ nullptr },
+                vk::raii::DeviceMemory{ nullptr },
+                nullptr,
+                0,
+                0);
+        }
+
         return true;
     }
     catch (const std::exception& e)
@@ -690,79 +888,106 @@ bool ParticleRenderer::initUI()
 
 void ParticleRenderer::updateUIFrame()
 {
+    if (ImGui::GetCurrentContext() == nullptr)
+    {
+        return;
+    }
+
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize = ImVec2(static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height));
+    io.DeltaTime = platform->frameTimer > 0.0f ? platform->frameTimer : (1.0f / 60.0f);
+
+    double mouseX = 0.0;
+    double mouseY = 0.0;
+    glfwGetCursorPos(platform->window, &mouseX, &mouseY);
+    io.MousePos = ImVec2(static_cast<float>(mouseX), static_cast<float>(mouseY));
+    io.MouseDown[0] = glfwGetMouseButton(platform->window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+    io.MouseDown[1] = glfwGetMouseButton(platform->window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+    io.MouseDown[2] = glfwGetMouseButton(platform->window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
+
+    ImGui::NewFrame();
+    updateParticleUI();
+    ImGui::Render();
 
     ImDrawData* drawData = ImGui::GetDrawData();
-    if (!drawData || drawData->TotalVtxCount == 0)
+    if (!drawData || drawData->TotalVtxCount <= 0)
     {
-        for (auto& fb : uiFrameBuffers)
+        for (auto& frameBuffer : uiFrameBuffers)
         {
-            fb.vertexSize = 0;
-            fb.indexSize = 0;
+            frameBuffer.vertexSize = 0;
+            frameBuffer.indexSize = 0;
         }
         return;
     }
 
-    for (int32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    // Only touch resources for the frame we just synchronized with.
+    // Updating/reallocating other in-flight frame buffers can destroy buffers still in GPU use.
+    auto& frameBuffer = uiFrameBuffers[currentFrame];
+    frameBuffer.vertexSize = drawData->TotalVtxCount * sizeof(ImDrawVert);
+    frameBuffer.indexSize = drawData->TotalIdxCount * sizeof(ImDrawIdx);
+
+    if (frameBuffer.vertexBufferSize < frameBuffer.vertexSize)
     {
-        auto& fb = uiFrameBuffers[i];
-        fb.vertexSize = drawData->TotalVtxCount * sizeof(ImDrawVert);
-        fb.indexSize = drawData->TotalIdxCount * sizeof(ImDrawIdx);
-
-        if (!fb.vertexBuffer || fb.vertexBufferSize < fb.vertexSize)
+        if (frameBuffer.vertexMapped != nullptr)
         {
-            fb.vertexBuffer = nullptr;
-            fb.vertexBufferMemory = nullptr;
-            vk::BufferCreateInfo vbInfo{ .size = fb.vertexSize, .usage = vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer };
-            fb.vertexBuffer = vk::raii::Buffer(device, vbInfo);
-            vk::MemoryRequirements vbMemReqs = device.getBufferMemoryRequirements(*fb.vertexBuffer);
-            vk::MemoryAllocateInfo vbAllocInfo{ .allocationSize = vbMemReqs.size, .memoryTypeIndex = findMemoryType(vbMemReqs.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible) };
-            fb.vertexBufferMemory = vk::raii::DeviceMemory(device, vbAllocInfo);
-            device.bindBufferMemory(*fb.vertexBuffer, *fb.vertexBufferMemory, 0);
-            fb.vertexBufferSize = fb.vertexSize;
-            fb.vertexMapped = nullptr;
+            frameBuffer.vertexBufferMemory.unmapMemory();
+            frameBuffer.vertexMapped = nullptr;
         }
-
-        if (!fb.indexBuffer || fb.indexBufferSize < fb.indexSize)
-        {
-            fb.indexBuffer = nullptr;
-            fb.indexBufferMemory = nullptr;
-            vk::BufferCreateInfo ibInfo{ .size = fb.indexSize, .usage = vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer };
-            fb.indexBuffer = vk::raii::Buffer(device, ibInfo);
-            vk::MemoryRequirements ibMemReqs = device.getBufferMemoryRequirements(*fb.indexBuffer);
-            vk::MemoryAllocateInfo ibAllocInfo{ .allocationSize = ibMemReqs.size, .memoryTypeIndex = findMemoryType(ibMemReqs.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible) };
-            fb.indexBufferMemory = vk::raii::DeviceMemory(device, ibAllocInfo);
-            device.bindBufferMemory(*fb.indexBuffer, *fb.indexBufferMemory, 0);
-            fb.indexBufferSize = fb.indexSize;
-            fb.indexMapped = nullptr;
-        }
-
-        if (!fb.vertexMapped)
-        {
-            fb.vertexMapped = fb.vertexBufferMemory.mapMemory(0, fb.vertexBufferSize);
-        }
-        if (!fb.indexMapped)
-        {
-            fb.indexMapped = fb.indexBufferMemory.mapMemory(0, fb.indexBufferSize);
-        }
-
-        uint8_t* vtxDst = static_cast<uint8_t*>(fb.vertexMapped);
-        uint8_t* idxDst = static_cast<uint8_t*>(fb.indexMapped);
-        for (int n = 0; n < drawData->CmdListsCount; n++)
-        {
-            const ImDrawList* cmdList = drawData->CmdLists[n];
-            std::memcpy(vtxDst, cmdList->VtxBuffer.Data, cmdList->VtxBuffer.Size * sizeof(ImDrawVert));
-            std::memcpy(idxDst, cmdList->IdxBuffer.Data, cmdList->IdxBuffer.Size * sizeof(ImDrawIdx));
-            vtxDst += cmdList->VtxBuffer.Size * sizeof(ImDrawVert);
-            idxDst += cmdList->IdxBuffer.Size * sizeof(ImDrawIdx);
-        }
-
-        fb.vertexBufferMemory.unmapMemory();
-        fb.indexBufferMemory.unmapMemory();
-        fb.vertexMapped = nullptr;
-        fb.indexMapped = nullptr;
+        frameBuffer.vertexBuffer = vk::raii::Buffer(nullptr);
+        frameBuffer.vertexBufferMemory = vk::raii::DeviceMemory(nullptr);
+        createBuffer(
+            frameBuffer.vertexSize,
+            vk::BufferUsageFlagBits::eVertexBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+            frameBuffer.vertexBuffer,
+            frameBuffer.vertexBufferMemory);
+        frameBuffer.vertexMapped = frameBuffer.vertexBufferMemory.mapMemory(0, frameBuffer.vertexSize);
+        frameBuffer.vertexBufferSize = frameBuffer.vertexSize;
     }
+
+    if (frameBuffer.indexBufferSize < frameBuffer.indexSize)
+    {
+        if (frameBuffer.indexMapped != nullptr)
+        {
+            frameBuffer.indexBufferMemory.unmapMemory();
+            frameBuffer.indexMapped = nullptr;
+        }
+        frameBuffer.indexBuffer = vk::raii::Buffer(nullptr);
+        frameBuffer.indexBufferMemory = vk::raii::DeviceMemory(nullptr);
+        createBuffer(
+            frameBuffer.indexSize,
+            vk::BufferUsageFlagBits::eIndexBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+            frameBuffer.indexBuffer,
+            frameBuffer.indexBufferMemory);
+        frameBuffer.indexMapped = frameBuffer.indexBufferMemory.mapMemory(0, frameBuffer.indexSize);
+        frameBuffer.indexBufferSize = frameBuffer.indexSize;
+    }
+
+    if (!frameBuffer.vertexMapped)
+    {
+        frameBuffer.vertexMapped = frameBuffer.vertexBufferMemory.mapMemory(0, frameBuffer.vertexBufferSize);
+    }
+    if (!frameBuffer.indexMapped)
+    {
+        frameBuffer.indexMapped = frameBuffer.indexBufferMemory.mapMemory(0, frameBuffer.indexBufferSize);
+    }
+
+    uint8_t* vtxDst = static_cast<uint8_t*>(frameBuffer.vertexMapped);
+    uint8_t* idxDst = static_cast<uint8_t*>(frameBuffer.indexMapped);
+    for (int32_t cmdListIndex = 0; cmdListIndex < drawData->CmdListsCount; ++cmdListIndex)
+    {
+        const ImDrawList* cmdList = drawData->CmdLists[cmdListIndex];
+        std::memcpy(vtxDst, cmdList->VtxBuffer.Data, cmdList->VtxBuffer.Size * sizeof(ImDrawVert));
+        std::memcpy(idxDst, cmdList->IdxBuffer.Data, cmdList->IdxBuffer.Size * sizeof(ImDrawIdx));
+        vtxDst += cmdList->VtxBuffer.Size * sizeof(ImDrawVert);
+        idxDst += cmdList->IdxBuffer.Size * sizeof(ImDrawIdx);
+    }
+
+    frameBuffer.vertexBufferMemory.unmapMemory();
+    frameBuffer.indexBufferMemory.unmapMemory();
+    frameBuffer.vertexMapped = nullptr;
+    frameBuffer.indexMapped = nullptr;
 }
 
 void ParticleRenderer::updateParticleUI()
@@ -791,45 +1016,87 @@ void ParticleRenderer::updateParticleUI()
 
 void ParticleRenderer::recordUI(vk::raii::CommandBuffer& commandBuffer)
 {
-    ImGui::Render();
     ImDrawData* drawData = ImGui::GetDrawData();
-    if (!drawData || drawData->TotalVtxCount == 0) return;
+    if (!drawData || drawData->TotalVtxCount == 0)
+    {
+        return;
+    }
 
-    auto& fb = uiFrameBuffers[currentFrame];
-    if (fb.vertexSize == 0 || fb.indexSize == 0) return;
+    auto& frameBuffer = uiFrameBuffers[currentFrame];
+    if (frameBuffer.vertexSize == 0 || frameBuffer.indexSize == 0)
+    {
+        return;
+    }
 
     commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *uiPipeline);
     commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *uiPipelineLayout, 0, *uiDescriptorSets[currentFrame], nullptr);
 
     vk::DeviceSize offsets[] = { 0 };
-    commandBuffer.bindVertexBuffers(0, *fb.vertexBuffer, offsets);
-    commandBuffer.bindIndexBuffer(*fb.indexBuffer, 0, vk::IndexType::eUint16);
+    commandBuffer.bindVertexBuffers(0, *frameBuffer.vertexBuffer, offsets);
+    commandBuffer.bindIndexBuffer(
+        *frameBuffer.indexBuffer,
+        0,
+        sizeof(ImDrawIdx) == 2 ? vk::IndexType::eUint16 : vk::IndexType::eUint32);
 
-    ImVec2 displayPos = drawData->DisplayPos;
-    int32_t idxOffset = 0;
-    for (int32_t n = 0; n < drawData->CmdListsCount; n++)
+    struct UiPushConsts
     {
-        const ImDrawList* cmdList = drawData->CmdLists[n];
-        for (int32_t i = 0; i < cmdList->CmdBuffer.Size; i++)
-        {
-            const ImDrawCmd* cmd = &cmdList->CmdBuffer[i];
-            ImVec4 clipRect;
-            clipRect.x = cmd->ClipRect.x - displayPos.x;
-            clipRect.y = cmd->ClipRect.y - displayPos.y;
-            clipRect.z = cmd->ClipRect.z - displayPos.x;
-            clipRect.w = cmd->ClipRect.w - displayPos.y;
+        glm::vec2 scale;
+        glm::vec2 translate;
+    };
 
-            if (clipRect.x < swapChainExtent.width && clipRect.y < swapChainExtent.height && clipRect.z >= 0.0f && clipRect.w >= 0.0f)
+    UiPushConsts pushConsts{};
+    pushConsts.scale = glm::vec2(2.0f / float(drawData->DisplaySize.x), 2.0f / float(drawData->DisplaySize.y));
+    pushConsts.translate = glm::vec2(-1.0f, -1.0f);
+    commandBuffer.pushConstants(
+        *uiPipelineLayout,
+        vk::ShaderStageFlagBits::eVertex,
+        0,
+        vk::ArrayProxy<const UiPushConsts>(1, &pushConsts));
+
+    int32_t globalVertexOffset = 0;
+    uint32_t globalIndexOffset = 0;
+    const ImVec2 clipOff = drawData->DisplayPos;
+    const ImVec2 clipScale = ImVec2(1.0f, 1.0f);
+
+    for (int32_t listIndex = 0; listIndex < drawData->CmdListsCount; ++listIndex)
+    {
+        const ImDrawList* cmdList = drawData->CmdLists[listIndex];
+        uint32_t cmdListIndexOffset = 0;
+
+        for (int32_t cmdIndex = 0; cmdIndex < cmdList->CmdBuffer.Size; ++cmdIndex)
+        {
+            const ImDrawCmd* cmd = &cmdList->CmdBuffer[cmdIndex];
+
+            ImVec4 clipRect;
+            clipRect.x = (cmd->ClipRect.x - clipOff.x) * clipScale.x;
+            clipRect.y = (cmd->ClipRect.y - clipOff.y) * clipScale.y;
+            clipRect.z = (cmd->ClipRect.z - clipOff.x) * clipScale.x;
+            clipRect.w = (cmd->ClipRect.w - clipOff.y) * clipScale.y;
+
+            if (clipRect.x < float(swapChainExtent.width) &&
+                clipRect.y < float(swapChainExtent.height) &&
+                clipRect.z >= 0.0f &&
+                clipRect.w >= 0.0f)
             {
-                vk::Rect2D scissor{
-                    .offset = { .x = static_cast<int32_t>(std::max(0.0f, clipRect.x)), .y = static_cast<int32_t>(std::max(0.0f, clipRect.y)) },
-                    .extent = { .width = static_cast<uint32_t>(clipRect.z - clipRect.x), .height = static_cast<uint32_t>(clipRect.w - clipRect.y) }
-                };
+                vk::Rect2D scissor;
+                scissor.offset.x = static_cast<int32_t>(clipRect.x > 0.0f ? clipRect.x : 0.0f);
+                scissor.offset.y = static_cast<int32_t>(clipRect.y > 0.0f ? clipRect.y : 0.0f);
+                float scissorWidth = clipRect.z - clipRect.x;
+                float scissorHeight = clipRect.w - clipRect.y;
+                if (scissorWidth < 0.0f) scissorWidth = 0.0f;
+                if (scissorHeight < 0.0f) scissorHeight = 0.0f;
+                scissor.extent.width = static_cast<uint32_t>(scissorWidth);
+                scissor.extent.height = static_cast<uint32_t>(scissorHeight);
+
                 commandBuffer.setScissor(0, scissor);
-                commandBuffer.drawIndexed(cmd->ElemCount, 1, idxOffset, 0, 0);
+                commandBuffer.drawIndexed(cmd->ElemCount, 1, globalIndexOffset + cmdListIndexOffset, globalVertexOffset, 0);
             }
-            idxOffset += cmd->ElemCount;
+
+            cmdListIndexOffset += cmd->ElemCount;
         }
+
+        globalIndexOffset += static_cast<uint32_t>(cmdList->IdxBuffer.Size);
+        globalVertexOffset += cmdList->VtxBuffer.Size;
     }
 }
 
@@ -838,14 +1105,6 @@ void ParticleRenderer::cleanup()
     device.waitIdle();
     shutdownUI();
 
-    computePipeline = nullptr;
-    computePipelineLayout = nullptr;
-    computeDescriptorPool = nullptr;
-    computeDescriptorSetLayout = nullptr;
-    computeCommandPool = nullptr;
-
-    particlePipeline = nullptr;
-    particlePipelineLayout = nullptr;
-    particleDescriptorPool = nullptr;
-    particleDescriptorSetLayout = nullptr;
+    computeCompleteSemaphores.clear();
+    computeCommandBuffers.clear();
 }

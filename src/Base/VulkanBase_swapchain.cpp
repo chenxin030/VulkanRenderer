@@ -74,11 +74,36 @@ void VulkanBase::recreateSwapChain()
         glfwWaitEvents();
     }
 
+    // Ensure no pending work still references old swapchain resources.
     device.waitIdle();
 
     cleanupSwapChain();
     createSwapChain();
     createImageViews();
+
+    // Depth attachment must be recreated to match new swapchain extent.
+    depthData.textureImageView = vk::raii::ImageView(nullptr);
+    depthData.textureImage = vk::raii::Image(nullptr);
+    depthData.textureImageMemory = vk::raii::DeviceMemory(nullptr);
+    if (!createDepthResources())
+    {
+        throw std::runtime_error("failed to recreate depth resources");
+    }
+
+    // renderFinishedSemaphores is indexed by acquired swapchain image index.
+    // Rebuild it whenever swapchain image count changes after a resize.
+    renderFinishedSemaphores.clear();
+    renderFinishedSemaphores.reserve(swapChainImages.size());
+    vk::SemaphoreCreateInfo semaphoreInfo{};
+    for (size_t i = 0; i < swapChainImages.size(); ++i)
+    {
+        renderFinishedSemaphores.emplace_back(device, semaphoreInfo);
+    }
+
+    // UI buffers are commonly managed per swapchain image.
+    uiFrameBuffers.resize(swapChainImages.size());
+
+    currentFrame = 0;
 }
 
 bool VulkanBase::createImageViews()

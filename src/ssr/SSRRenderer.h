@@ -14,6 +14,8 @@ public:
     void waitIdle() { device.waitIdle(); }
 
 private:
+    void recreateSwapChain() override;
+
     struct SSRSceneUBO
     {
         glm::mat4 projection;

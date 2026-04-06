@@ -14,6 +14,7 @@ public:
     void waitIdle() { device.waitIdle(); }
 
 private:
+    void recreateSwapChain() override;
 
     struct TAAUParamsUBO
     {

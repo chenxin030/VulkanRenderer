@@ -1445,7 +1445,21 @@ void CullingRenderer::render()
         .pSwapchains = &*swapChain,
         .pImageIndices = &imageIndex
     };
-    result = presentQueue.presentKHR(presentInfo);
+
+    try
+    {
+        result = presentQueue.presentKHR(presentInfo);
+    }
+    catch (const vk::OutOfDateKHRError&)
+    {
+        framebufferResized = false;
+        recreateSwapChain();
+        if (!rebuildSwapchainDependentResources())
+        {
+            throw std::runtime_error("failed to rebuild culling resources after swapchain recreation");
+        }
+        return;
+    }
 
     if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || framebufferResized)
     {
@@ -1455,6 +1469,7 @@ void CullingRenderer::render()
         {
             throw std::runtime_error("failed to rebuild culling resources after swapchain recreation");
         }
+        return;
     }
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;

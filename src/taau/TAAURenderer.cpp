@@ -1425,6 +1425,47 @@ void TAAURenderer::recordCommandBuffer(uint32_t imageIndex)
     commandBuffer.end();
 }
 
+void TAAURenderer::recreateSwapChain()
+{
+    VulkanBase::recreateSwapChain();
+
+    // Recreate all size-dependent offscreen resources used by TAAU passes.
+    taauInputColorData.textureImageView = vk::raii::ImageView(nullptr);
+    taauInputColorData.textureImage = vk::raii::Image(nullptr);
+    taauInputColorData.textureImageMemory = vk::raii::DeviceMemory(nullptr);
+
+    taauVelocityData.textureImageView = vk::raii::ImageView(nullptr);
+    taauVelocityData.textureImage = vk::raii::Image(nullptr);
+    taauVelocityData.textureImageMemory = vk::raii::DeviceMemory(nullptr);
+
+    taauDepthData.textureImageView = vk::raii::ImageView(nullptr);
+    taauDepthData.textureImage = vk::raii::Image(nullptr);
+    taauDepthData.textureImageMemory = vk::raii::DeviceMemory(nullptr);
+
+    for (int i = 0; i < 2; ++i)
+    {
+        taauHistoryColorData[i].textureImageView = vk::raii::ImageView(nullptr);
+        taauHistoryColorData[i].textureImage = vk::raii::Image(nullptr);
+        taauHistoryColorData[i].textureImageMemory = vk::raii::DeviceMemory(nullptr);
+        taauHistoryLayouts[i] = vk::ImageLayout::eUndefined;
+    }
+
+    taauDescriptorSets = vk::raii::DescriptorSets(nullptr);
+    taauDescriptorPool = vk::raii::DescriptorPool(nullptr);
+
+    if (!createTAAUResources())
+    {
+        throw std::runtime_error("failed to recreate TAAU resources");
+    }
+    if (!createTAAUDescriptorPool())
+    {
+        throw std::runtime_error("failed to recreate TAAU descriptor pool");
+    }
+    createTAAUDescriptorSets();
+
+    taauHistoryValid = false;
+}
+
 void TAAURenderer::render()
 {
     const auto fenceResult = device.waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
@@ -1472,12 +1513,23 @@ void TAAURenderer::render()
         .pSwapchains = &*swapChain,
         .pImageIndices = &imageIndex
     };
-    result = presentQueue.presentKHR(presentInfo);
+
+    try
+    {
+        result = presentQueue.presentKHR(presentInfo);
+    }
+    catch (const vk::OutOfDateKHRError&)
+    {
+        framebufferResized = false;
+        recreateSwapChain();
+        return;
+    }
 
     if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || framebufferResized)
     {
         framebufferResized = false;
         recreateSwapChain();
+        return;
     }
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;

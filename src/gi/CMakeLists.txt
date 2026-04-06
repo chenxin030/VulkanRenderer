@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-set(EXAMPLE_NAME 11_gi)
+set(EXAMPLE_NAME 10_gi)
 
 add_executable(${EXAMPLE_NAME}
     ${CMAKE_CURRENT_SOURCE_DIR}/StandaloneMain.cpp

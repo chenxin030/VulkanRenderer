@@ -930,7 +930,18 @@ void DeferredRenderer::updateDeferredBuffers(uint32_t frameIndex)
 bool DeferredRenderer::recreateDeferredSizedResources()
 {
     if (!createGBufferResources()) return false;
+
+    // Destroy old descriptor sets BEFORE the pool to avoid vkFreeDescriptorSets on an invalid pool.
+    gbufferInstanceBufferResources.descriptorSets = vk::raii::DescriptorSets(nullptr);
+    gbufferDescriptorPool = vk::raii::DescriptorPool(nullptr);
+    if (!createGBufferDescriptorPool()) return false;
+    createGBufferDescriptorSets();
+
+    lightUboResources.descriptorSets = vk::raii::DescriptorSets(nullptr);
+    deferredDescriptorPool = vk::raii::DescriptorPool(nullptr);
+    if (!createDeferredDescriptorPool()) return false;
     createDeferredDescriptorSets();
+
     return true;
 }
 
@@ -1189,7 +1200,21 @@ void DeferredRenderer::render()
         .pSwapchains = &*swapChain,
         .pImageIndices = &imageIndex
     };
-    result = presentQueue.presentKHR(presentInfo);
+
+    try
+    {
+        result = presentQueue.presentKHR(presentInfo);
+    }
+    catch (const vk::OutOfDateKHRError&)
+    {
+        framebufferResized = false;
+        recreateSwapChain();
+        if (!recreateDeferredSizedResources())
+        {
+            throw std::runtime_error("failed to recreate deferred resources after present");
+        }
+        return;
+    }
 
     if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || framebufferResized)
     {
@@ -1199,6 +1224,7 @@ void DeferredRenderer::render()
         {
             throw std::runtime_error("failed to recreate deferred resources after present");
         }
+        return;
     }
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;

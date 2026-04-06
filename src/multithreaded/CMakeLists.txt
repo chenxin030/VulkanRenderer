@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-set(EXAMPLE_NAME 13_skinning)
-set(EXAMPLE_SHADER_DIR "${CMAKE_SOURCE_DIR}/shaders/13_skinning")
+set(EXAMPLE_NAME 13_multithreaded)
 
 add_executable(${EXAMPLE_NAME}
     ${CMAKE_CURRENT_SOURCE_DIR}/StandaloneMain.cpp
@@ -9,17 +8,25 @@ add_executable(${EXAMPLE_NAME}
 
 target_include_directories(${EXAMPLE_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/Base
 )
 
 target_sources(${EXAMPLE_NAME} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/SkinningRenderer.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/MultithreadedRenderer.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/MultithreadedRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ThreadPool.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/ThreadPool.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/RenderBatcher.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/RenderBatcher.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/FrameGraph.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/FrameGraph.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/GpuProfiler.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/GpuProfiler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/StandaloneMain.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/SkinningRenderer.cpp
 )
 
 file(GLOB EXAMPLE_SHADER_FILES CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/shaders/13_skinning/*.slang"
+    "${CMAKE_SOURCE_DIR}/shaders/15_multithreaded/*.slang"
 )
 if(EXAMPLE_SHADER_FILES)
     set_source_files_properties(${EXAMPLE_SHADER_FILES} PROPERTIES HEADER_FILE_ONLY TRUE)
@@ -28,7 +35,7 @@ if(EXAMPLE_SHADER_FILES)
 endif()
 
 vkr_add_example_slang_shaders(${EXAMPLE_NAME}
-    "${CMAKE_SOURCE_DIR}/shaders/13_skinning"
+    "${CMAKE_SOURCE_DIR}/shaders/15_multithreaded"
     "${CMAKE_SOURCE_DIR}/shaders"
 )
 

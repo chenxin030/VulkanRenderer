@@ -1,4 +1,4 @@
-#include "SkinningRenderer.h"
+#include "MultithreadedRenderer.h"
 
 #include <Base/Platform.h>
 
@@ -11,10 +11,10 @@ int main()
     try
     {
         Platform platform;
-        platform.SetBaseTitle("VulkanRenderer - 13_skinning");
+        platform.SetBaseTitle("VulkanRenderer - 15_multithreaded");
         platform.initWindow();
 
-        SkinningRenderer renderer;
+        MultithreadedRenderer renderer;
         renderer.initialize(&platform);
         if (!renderer.initVulkan())
         {

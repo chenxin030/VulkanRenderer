@@ -184,7 +184,6 @@ vk::Format VulkanBase::findDepthFormat() {
             { vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint },
             vk::ImageTiling::eOptimal,
             vk::FormatFeatureFlagBits::eDepthStencilAttachment);
-        std::cout << "Found depth format: " << static_cast<int>(depthFormat) << std::endl;
         return depthFormat;
     }
     catch (const std::exception& e) {

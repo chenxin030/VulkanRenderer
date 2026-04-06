@@ -143,7 +143,6 @@ struct VulkanBase {
         vk::ImageAspectFlags image_aspect_flags);
 
     void createVertexBuffer(Mesh& mesh);
-    void createSkinnedVertexBuffer(Mesh& mesh);
     void createIndexBuffer(Mesh& mesh);
     void createUniformBuffers(MeshBuffer& meshResource, vk::DeviceSize size);
     void createUniformBuffers(MeshBuffer& meshResource, vk::DeviceSize size, uint32_t count);
@@ -156,8 +155,6 @@ struct VulkanBase {
         vk::MemoryPropertyFlags properties,
         vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory);
     void copyBuffer(vk::raii::Buffer& srcBuffer, vk::raii::Buffer& dstBuffer, vk::DeviceSize size);
-    void createMeshes();
-    void loadTextures();
     void LoadHDRTextureFromFile(const std::string& path, TextureData& texData);
     void LoadTextureFromFile(const std::string& path, TextureData& texData);
     void generateMipmaps(vk::raii::Image& image, vk::Format imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels);

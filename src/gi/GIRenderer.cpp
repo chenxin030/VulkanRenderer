@@ -1416,6 +1416,17 @@ bool GIRenderer::recreateSizedResources()
 {
     if (!createGBufferResources()) return false;
     if (!createSsaoResources()) return false;
+
+    // Descriptor sets are re-allocated on every resize.
+    // Explicitly release previous sets and reset pools first to avoid pool exhaustion.
+    ssaoSettingsUboResources.descriptorSets = vk::raii::DescriptorSets(nullptr);
+    ssaoBlurColor.descriptorSet = vk::raii::DescriptorSets(nullptr);
+    lightUboResources.descriptorSets = vk::raii::DescriptorSets(nullptr);
+
+    if (!createSsaoDescriptorPool()) return false;
+    if (!createSsaoBlurDescriptorPool()) return false;
+    if (!createLightingDescriptorPool()) return false;
+
     createSsaoDescriptorSets();
     createSsaoBlurDescriptorSets();
     createLightingDescriptorSets();
@@ -1767,7 +1778,21 @@ void GIRenderer::render()
         .pSwapchains = &*swapChain,
         .pImageIndices = &imageIndex
     };
-    result = presentQueue.presentKHR(presentInfo);
+
+    try
+    {
+        result = presentQueue.presentKHR(presentInfo);
+    }
+    catch (const vk::OutOfDateKHRError&)
+    {
+        framebufferResized = false;
+        recreateSwapChain();
+        if (!recreateSizedResources())
+        {
+            throw std::runtime_error("failed to recreate GI resources after present");
+        }
+        return;
+    }
 
     if ((result == vk::Result::eSuboptimalKHR) || (result == vk::Result::eErrorOutOfDateKHR) || framebufferResized)
     {
@@ -1777,6 +1802,7 @@ void GIRenderer::render()
         {
             throw std::runtime_error("failed to recreate GI resources after present");
         }
+        return;
     }
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;

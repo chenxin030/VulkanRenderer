@@ -1373,6 +1373,44 @@ void SSRRenderer::recordCommandBuffer(uint32_t imageIndex)
     commandBuffer.end();
 }
 
+void SSRRenderer::recreateSwapChain()
+{
+    VulkanBase::recreateSwapChain();
+
+    // Recreate all SSR size-dependent resources (offscreen color/normal/depth + descriptors).
+    ssrDescriptorSets = vk::raii::DescriptorSets(nullptr);
+    ssrDescriptorPool = vk::raii::DescriptorPool(nullptr);
+
+    ssrSceneUboResources.clear();
+    ssrParamsUboResources.clear();
+
+    ssrColorData.textureImageView = vk::raii::ImageView(nullptr);
+    ssrColorData.textureImage = vk::raii::Image(nullptr);
+    ssrColorData.textureImageMemory = vk::raii::DeviceMemory(nullptr);
+
+    ssrNormalData.textureImageView = vk::raii::ImageView(nullptr);
+    ssrNormalData.textureImage = vk::raii::Image(nullptr);
+    ssrNormalData.textureImageMemory = vk::raii::DeviceMemory(nullptr);
+
+    ssrDepthData.textureImageView = vk::raii::ImageView(nullptr);
+    ssrDepthData.textureImage = vk::raii::Image(nullptr);
+    ssrDepthData.textureImageMemory = vk::raii::DeviceMemory(nullptr);
+
+    ssrColorLayout = vk::ImageLayout::eUndefined;
+    ssrNormalLayout = vk::ImageLayout::eUndefined;
+    ssrDepthLayout = vk::ImageLayout::eUndefined;
+
+    if (!createSSRResources())
+    {
+        throw std::runtime_error("failed to recreate SSR resources");
+    }
+    if (!createSSRDescriptorPool())
+    {
+        throw std::runtime_error("failed to recreate SSR descriptor pool");
+    }
+    createSSRDescriptorSets();
+}
+
 void SSRRenderer::render()
 {
     try

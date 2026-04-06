@@ -51,11 +51,11 @@ float noise(float3 p)
     f = f * f * (3.0 - 2.0 * f);
 
     float n = i.x + i.y * 57.0 + i.z * 113.0;
-    return mix(
-        mix(mix(hash(n), hash(n + 1.0), f.x),
-            mix(hash(n + 57.0), hash(n + 58.0), f.x), f.y),
-        mix(mix(hash(n + 113.0), hash(n + 114.0), f.x),
-            mix(hash(n + 170.0), hash(n + 171.0), f.x), f.y), f.z);
+    return lerp(
+        lerp(lerp(hash(n), hash(n + 1.0), f.x),
+            lerp(hash(n + 57.0), hash(n + 58.0), f.x), f.y),
+        lerp(lerp(hash(n + 113.0), hash(n + 114.0), f.x),
+            lerp(hash(n + 170.0), hash(n + 171.0), f.x), f.y), f.z);
 }
 
 float3 noise3D(float3 p)
@@ -115,11 +115,11 @@ void compMain(uint3 dispatchThreadID : SV_DispatchThreadID)
 
         if (lifeRatio < 0.3)
         {
-            p.color = float4(mix(youngColor, midColor, lifeRatio / 0.3), 1.0);
+            p.color = float4(lerp(youngColor, midColor, lifeRatio / 0.3), 1.0);
         }
         else
         {
-            p.color = float4(mix(midColor, oldColor, (lifeRatio - 0.3) / 0.7), 1.0);
+            p.color = float4(lerp(midColor, oldColor, (lifeRatio - 0.3) / 0.7), 1.0);
         }
 
         p.color.a = 1.0;
