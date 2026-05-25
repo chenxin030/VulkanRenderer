@@ -21,12 +21,6 @@ struct ShadowUBO
     float4x4 prevViewProj;
     float4 dirLightDirIntensity;
     float4 dirLightColor;
-    float4 pointLightPosIntensity;
-    float4 pointLightColor;
-    float4 areaLightPosIntensity;
-    float4 areaLightColor;
-    float4 areaLightU;
-    float4 areaLightV;
 };
 [[vk::binding(2, 0)]]
 ConstantBuffer<ShadowUBO> shadowUbo;
@@ -34,7 +28,6 @@ ConstantBuffer<ShadowUBO> shadowUbo;
 struct ShadowParamsUBO
 {
     int shadowFilterMode;
-    float pcfRadiusTexels;
     float pcssLightSizeTexels;
     float shadowBiasMin;
     float2 invShadowMapSize;
@@ -59,6 +52,8 @@ struct VSOutput
     float3 worldNormal;
     float4 shadowPos;
     float4 color;
+    float4 currClipPos;
+    float4 prevClipPos;
 };
 
 [shader("vertex")]
@@ -73,11 +68,19 @@ VSOutput vertMain(VSInput input, uint instanceID: SV_InstanceID)
     float3x3 normalMat = (float3x3)model;
     float3 worldNormal = normalize(mul(normalMat, input.inNormal));
 
-    output.pos = mul(sceneUbo.projection, mul(sceneUbo.view, float4(worldPos, 1.0)));
+    float4x4 view = sceneUbo.view;
+    float4x4 projection = sceneUbo.projection;
+
+    float4 clipPos = mul(projection, mul(view, float4(worldPos, 1.0)));
+    float4 prevClipPos = mul(shadowUbo.prevViewProj, float4(worldPos, 1.0));
+
+    output.pos = clipPos;
     output.worldPos = worldPos;
     output.worldNormal = worldNormal;
     output.shadowPos = mul(shadowUbo.lightViewProj, float4(worldPos, 1.0));
     output.color = instanceBuffer[instanceID].color;
+    output.currClipPos = clipPos;
+    output.prevClipPos = prevClipPos;
     return output;
 }
 
@@ -117,27 +120,6 @@ float computeShadow(float4 shadowPos, float3 normal, float3 lightDir)
         float2(0.14383161, -0.14100790)
     };
 
-    if (shadowParams.shadowFilterMode == 0)
-    {
-        float closestDepth = shadowMap.Sample(uv).x;
-        float visibility = (currentDepth - bias) > closestDepth ? 0.0 : 1.0;
-        return lerp(0.25, 1.0, visibility);
-    }
-
-    if (shadowParams.shadowFilterMode == 1)
-    {
-        float2 radius = shadowParams.pcfRadiusTexels * texelSize;
-        float sum = 0.0;
-        for (int i = 0; i < 16; ++i)
-        {
-            float2 suv = uv + poisson[i] * radius;
-            float closestDepth = shadowMap.Sample(suv).x;
-            sum += (currentDepth - bias) > closestDepth ? 0.0 : 1.0;
-        }
-        float visibility = sum / 16.0;
-        return lerp(0.25, 1.0, visibility);
-    }
-
     float2 searchRadius = shadowParams.pcssLightSizeTexels * texelSize;
     float blockerSum = 0.0;
     float blockerCount = 0.0;
@@ -173,7 +155,7 @@ float computeShadow(float4 shadowPos, float3 normal, float3 lightDir)
 }
 
 [shader("fragment")]
-float4 fragMain(VSOutput input) : SV_TARGET
+void fragMain(VSOutput input, out float4 color : SV_TARGET0, out float2 velocity : SV_TARGET1)
 {
     float3 baseColor = input.color.xyz;
     float3 normal = normalize(input.worldNormal);
@@ -192,44 +174,10 @@ float4 fragMain(VSOutput input) : SV_TARGET
     float3 dirDiffuse = baseColor * dirNdotl * dirIntensity * dirColor;
     float3 dirSpecular = dirSpec.xxx * 0.25 * dirIntensity * dirColor;
 
-    float3 pointPos = shadowUbo.pointLightPosIntensity.xyz;
-    float pointIntensity = shadowUbo.pointLightPosIntensity.w;
-    float3 pointColor = shadowUbo.pointLightColor.xyz;
-    float3 pointVec = pointPos - input.worldPos;
-    float pointDist = length(pointVec);
-    float3 pointL = pointVec / max(pointDist, 1e-4);
-    float pointAtt = 1.0 / (1.0 + pointDist * pointDist);
-    float pointNdotl = saturate(dot(normal, pointL));
-    float3 pointHalf = normalize(pointL + viewDir);
-    float pointSpec = pow(saturate(dot(normal, pointHalf)), 64.0);
-    float3 pointDiffuse = baseColor * pointNdotl * pointIntensity * pointAtt * pointColor;
-    float3 pointSpecular = pointSpec.xxx * 0.20 * pointIntensity * pointAtt * pointColor;
+    color = float4(ambient + dirShadow * (dirDiffuse + dirSpecular), 1.0);
 
-    float3 areaCenter = shadowUbo.areaLightPosIntensity.xyz;
-    float areaIntensity = shadowUbo.areaLightPosIntensity.w;
-    float3 areaColor = shadowUbo.areaLightColor.xyz;
-    float3 areaU = shadowUbo.areaLightU.xyz;
-    float3 areaV = shadowUbo.areaLightV.xyz;
-    float2 areaOffsets[4] = { float2(-1.0, -1.0), float2(-1.0, 1.0), float2(1.0, -1.0), float2(1.0, 1.0) };
-
-    float3 areaSum = float3(0.0);
-    for (int i = 0; i < 4; ++i)
-    {
-        float3 samplePos = areaCenter + areaU * areaOffsets[i].x + areaV * areaOffsets[i].y;
-        float3 v = samplePos - input.worldPos;
-        float dist = length(v);
-        float3 L = v / max(dist, 1e-4);
-        float att = 1.0 / (1.0 + dist * dist);
-        float ndotl = saturate(dot(normal, L));
-        float3 H = normalize(L + viewDir);
-        float spec = pow(saturate(dot(normal, H)), 64.0);
-        float3 diff = baseColor * ndotl;
-        float3 sp = spec.xxx * 0.15;
-        areaSum += (diff + sp) * att;
-    }
-    float3 areaLight = areaSum * (areaIntensity * 0.25) * areaColor;
-
-    float3 color = ambient + dirShadow * (dirDiffuse + dirSpecular) + pointDiffuse + pointSpecular + areaLight;
-    return float4(color, 1.0);
+    float2 currNDC = input.currClipPos.xy / input.currClipPos.w;
+    float2 prevNDC = input.prevClipPos.xy / input.prevClipPos.w;
+    velocity = currNDC - prevNDC;
 }
 

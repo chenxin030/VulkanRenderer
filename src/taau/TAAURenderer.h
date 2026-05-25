@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Base/VulkanBase.h>
+#include <Base/VulkanBase_UI.h>
 
 struct TAAURenderer final : VulkanBase
 {
@@ -47,12 +48,9 @@ private:
     vk::ImageLayout shadowMapLayout = vk::ImageLayout::eUndefined;
 
     int shadowFilterMode = 2;
-    float pcfRadiusTexels = 2.0f;
     float pcssLightSizeTexels = 25.0f;
 
     float dirLightIntensity = 0.5f;
-    float pointLightIntensity = 3.5f;
-    float areaLightIntensity = 2.5f;
 
     vk::raii::DescriptorSetLayout taauDescriptorSetLayout = nullptr;
     vk::raii::DescriptorPool taauDescriptorPool = nullptr;
@@ -116,9 +114,7 @@ private:
     void updateTAAUHistory(const glm::mat4& currentViewProj);
 
     bool initUI();
-    void updateUIFrame();
-    void recordUI(vk::raii::CommandBuffer& commandBuffer);
-    void updateTAAUUI();
+    void updateUIPanel() override;
 
     void recordCommandBuffer(uint32_t imageIndex);
 
