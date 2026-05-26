@@ -1,423 +1,465 @@
-# Culling（`RENDERING_LEVEL == 8`）数据流与渲染流程（按代码执行顺序）
+# Culling 数据流与渲染流程
 
 [返回目录](../../README.md)
 
-本文只描述 **`RENDERING_LEVEL==8`** 在当前代码中的执行顺序：
-- CPU 每帧如何准备数据
+- 每帧 CPU 如何准备数据
 - Compute 命令里如何做 Depth Prepass / Hi-Z / Culling
-- Graphics 阶段如何使用 culling 的结果
-- 统计数据如何回读到 UI
+- 统计数据如何回读
+- Graphics 阶段如何使用 culling 结果并呈现
 
 ---
 
-## 1. 初始化阶段（一次性）
+## 1. 初始化阶段（一次性资源）
 
-`src/Core/Renderer_Culling.cpp` 
+`src/culling/CullingRenderer.cpp`
 
 ### 1.1 Buffer 创建（`createCullingBuffers`）
 
-创建并长期复用以下资源：
+创建并长期复用的资源：
 
-- `cullingGlobalUboResources`：每帧 `SceneUBO`
-- `cullingInstanceBufferResources`：每帧实例数据 `CullingInstanceData[]`
-- `cullingIndirectBufferResources`：每帧 `DrawCommand`（compute 写，draw indirect 读）
-- `cullingVisibleBufferResources`：每帧可见实例索引 `uint[]`
-- `cullingStatsBufferResources`：每帧统计 `CullingStats`
-- `cullingParamsBufferResources`：每帧 `CullingParamsUBO`
-- `cullingVisibleCountBuffer`：全局计数器（GPU device local，compute 原子加）
-- `cullingStatsReadbackBuffer`：统计，GPU->CPU 回读
-- `cullingVisibleReadbackBuffer`：可见数，GPU->CPU 回读
-- `cullingTimestampQueryPool`：每帧 2 个 timestamp（开头/结尾）
+| 资源 | 类型 | 大小 | 用途 | CPU 访问 |
+|---|---|---|---|---|
+| `cullingGlobalUboResources` | UBO | `sizeof(SceneUBO)` | 相机 VP 矩阵 | 每帧 memcpy → GPU |
+| `cullingInstanceBufferResources` | StorageBuffer | `MAX_INSTANCES × sizeof(CullingInstanceData)` | 所有实例 model+color | 每帧 memcpy → GPU |
+| `cullingIndirectBufferResources` | Storage+Indirect | `sizeof(DrawCommand)` | 间接绘制命令（instanceCount 由 Compute 写入） | 每帧初值 memcpy → GPU |
+| `cullingVisibleBufferResources` | StorageBuffer | `MAX_INSTANCES × uint32` | 可见实例索引列表 | GPU 写（Compute），GPU 读（Draw） |
+| `cullingStatsBufferResources` | Storage+TransferSrc | `sizeof(CullingStats)` | 统计 {totalCount, visibleCount} | GPU 写（Compute），GPU→CPU 回读 |
+| `cullingParamsBufferResources` | UBO | `sizeof(CullingParamsUBO)` | 视锥平面、Hi-Z 参数 | 每帧 memcpy → GPU |
+| `cullingVisibleCountBuffer` | Storage+TransferDst+TransferSrc | `sizeof(uint32)` | 可见计数器（Compute 原子加） | Transfer 清零、GPU 原子写、GPU→CPU 回读 |
+| `cullingStatsReadbackBuffer` | TransferDst | `sizeof(CullingStats)` | stats GPU→CPU 回读目标 | HostVisible+HostCoherent |
+| `cullingVisibleReadbackBuffer` | TransferDst | `sizeof(uint32)` | 可见数 GPU→CPU 回读目标 | HostVisible+HostCoherent |
+| `cullingTimestampQueryPool` | Timestamp Query | `MAX_FRAMES_IN_FLIGHT × 2` | 每帧记录 compute 阶段耗时 | GPU→CPU 回读 |
 
-### 1.2 Descriptor Layout / Pool / Set
+### 1.2 Descriptor Set Layouts（4 个 Pass）
 
 #### Depth Pass（`cullingDepthDescriptorSetLayout`）
-- `binding0`: `SceneUBO`
-- `binding1`: `instanceBuffer`
+- `binding=0`: `SceneUBO`（UniformBuffer，Vertex Shader 读）
+- `binding=1`: `instanceBuffer`（StorageBuffer，Vertex Shader 读）
 
-#### Hi-Z Build Compute（`cullingHiZDescriptorSetLayout`，对应 `shaders/culling_hiz_build.slang`）
-- `binding0`: `RWTexture2D<float> outHiZ`
-  - 当前 mip 的输出目标（写入 `cullingHiZTexture` 的第 `mip` 级）
-- `binding1`: `RWTexture2D<float> unusedOut`
-  - 目前实现中未使用（与 `binding0` 指向同一 mip view）
-- `binding2`: `Texture2D<float> srcDepth`
-  - `mip0` 时读取 `cullingDepthTexture`
-  - `mip>0` 时读取 `cullingHiZTexture` 的上一 mip
-- `binding3`: `SamplerState srcSampler`
-  - 采样 `srcDepth` 使用的采样器
-
-补充：`culling_hiz_build.slang` 的 `compMain` 以 `numthreads(8,8,1)` 运行，对每个目标像素做 2x2 采样并取 `maxDepth`，构建保守遮挡用的 max-depth Hi-Z。
+#### Hi-Z Build Compute（`cullingHiZDescriptorSetLayout`）
+- `binding=0`: `outHiZ`（StorageImage，Compute 写，当前 mip 输出）
+- `binding=1`: `unusedOut`（StorageImage，当前实现未使用）
+- `binding=2`: `srcDepth`（CombinedImageSampler，Compute 读）
+  - mip=0：采样 `cullingDepthTexture`（深度 prepass 结果）
+  - mip>0：采样 `cullingHiZTexture` 的上一 mip level
+- `binding=3`: `srcSampler`（Sampler，采样参数，与 binding2 配套）
 
 #### Culling Compute（`cullingDescriptorSetLayout`）
-- `binding0`: `SceneUBO`
-- `binding1`: `instanceBuffer`
-- `binding2`: `drawCommands`（RW）
-- `binding3`: `visibleIndices`（RW）
-- `binding4`: `stats`（RW）
-- `binding5`: `visibleCountBuffer`（RW）
-- `binding6`: `CullingParamsUBO`
-- `binding7`: `hiZTexture`（采样）
-- `binding8`: `hiZSampler`
+- `binding=0`: `SceneUBO`（UniformBuffer，Compute 读）
+- `binding=1`: `instanceBuffer`（StorageBuffer，Compute 读）
+- `binding=2`: `drawCommands`（RWStructuredBuffer，Compute 写 instanceCount）
+- `binding=3`: `visibleIndices`（RWStructuredBuffer，Compute 写可见索引）
+- `binding=4`: `stats`（RWStructuredBuffer，Compute 写统计）
+- `binding=5`: `visibleCountBuffer`（RWStructuredBuffer，Compute 原子加）
+- `binding=6`: `CullingParamsUBO`（UniformBuffer，Compute 读视锥/Hi-Z 参数）
+- `binding=7`: `hiZTexture`（CombinedImageSampler，Compute 读 Hi-Z）
+- `binding=8`: `hiZSampler`（Sampler，与 binding7 配套）
 
 #### Draw Pass（`cullingDrawDescriptorSetLayout`）
-- `binding0`: `SceneUBO`
-- `binding1`: `instanceBuffer`
-- `binding2`: `visibleIndices`
+- `binding=0`: `SceneUBO`（UniformBuffer，Vertex Shader 读）
+- `binding=1`: `instanceBuffer`（StorageBuffer，Vertex Shader 读）
+- `binding=2`: `visibleIndices`（StructuredBuffer，Vertex Shader 读 — 间接索引真实实例）
 
 ### 1.3 Pipeline 创建（`createCullingPipelines` + `createCullingHiZPipeline`）
 
-- Compute Culling：`culling_comp.spv`
-- Depth Prepass：`culling_depth.spv`
-- Draw Pass：`culling_draw.spv`
-- Hi-Z 构建 Compute：`culling_hiz_build.spv`
+| Pipeline | Shader | 入口 | 用途 |
+|---|---|---|---|
+| `cullingPipeline` | `culling_comp.spv` | `compMain` | GPU-Driven 视锥+遮挡剔除 |
+| `cullingDepthPipeline` | `culling_depth.spv` | `vertMain` | Depth Prepass（全实例） |
+| `cullingDrawPipeline` | `culling_draw.spv` | `vertMain/fragMain` | 可见实例最终绘制 |
+| `cullingHiZPipeline` | `culling_hiz_build.spv` | `compMain` | 从深度图构建 Hi-Z 金字塔 |
 
 ### 1.4 深度与 Hi-Z 资源
 
 - `createCullingDepthResources`：创建 `cullingDepthTexture`（深度 prepass 目标）
-- `createCullingHiZResources`：创建 `cullingHiZTexture`（R32Sfloat，多 mip）及每级 mip view
-- `createCullingHiZDescriptorSets`：为每帧、每 mip 建 descriptor set
+  - 尺寸：`swapChainExtent`（与屏幕分辨率相同）
+  - 格式：`findDepthFormat()`
+  - usage：`eDepthStencilAttachment | eSampled`
+  - Sampler：Nearest + ClampToEdge + CompareOp=Always
+- `createCullingHiZResources`：创建 `cullingHiZTexture`（R32Sfloat，多 mip）
+  - 尺寸：与 `cullingDepthExtent` 相同
+  - mipCount：`floor(log2(max(width, height))) + 1`
+  - usage：`eStorage | eSampled`
+- `createCullingHiZDescriptorSets`：为每帧 × 每 mip（共 `MAX_FRAMES_IN_FLIGHT × cullingHiZMipCount` 个）建 descriptor set
 
-### 1.5 Compute 命令与同步
+### 1.5 Compute 命令与同步对象
 
-- `createCullingCommandPool` / `createCullingCommandBuffers`
-- `createCullingSyncObjects`（`cullingCompleteSemaphores`）
+- `createCullingCommandPool`：从 `queueFamilyIndices.computeFamily` 创建（独占 compute 队列）
+- `createCullingCommandBuffers`：为 `MAX_FRAMES_IN_FLIGHT` 帧各分配一个 compute command buffer
+- `createCullingSyncObjects`：创建 `cullingCompleteSemaphores[MAX_FRAMES_IN_FLIGHT]`，用于 Compute→Graphics 同步
+
+### 1.6 场景实例（`buildStressScene`）
+
+生成城市网格状密集场景：
+- 网格：`180×180 = 32400` 个立方体实例
+- 位置：X/Z 范围约 ±216，带随机抖动
+- 缩放：Y ∈ [0.6, 3.0] 随机高度
+- 旋转：Y 轴随机旋转
+- 颜色：HSV 蓝色调，部分街道区域偏暗
 
 ---
 
-## 2. 每帧 CPU 数据准备（先执行）
+## 2. 每帧 CPU 数据准备
 
-函数：`updateCullingBuffers(currentImage)`
+函数：`updateCullingBuffers(currentFrame)`
 
 ### 2.1 写入 `SceneUBO`
 
-CPU 计算并上传：
-- `projection`
-- `view`
-- `camPos`
+```cpp
+sceneUbo.projection = glm::perspective(fov=45°, aspect, near=0.1, far=600)
+sceneUbo.view = camera.GetViewMatrix()
+sceneUbo.camPos = camera.Position
+```
+写入 `cullingGlobalUboResources.BuffersMapped[currentFrame]`
 
-### 2.2 收集实例数据model + color并上传 `instanceBuffer`
+### 2.2 写入实例数据
 
-- 调用 `scene->world.collectRenderInstances(...)`
-- 将 `model + color` 写入 `cullingInstanceBufferResources.BuffersMapped[currentImage]`
-- 得到 `cullingTotalCountCpu`
+```cpp
+memcpy(instanceBufferMapped, sceneInstances.data(), sizeof(CullingInstanceData) * sceneInstances.size())
+```
+`totalInstanceCount` 固定为 32400（由 `buildStressScene` 在初始化时确定）。
 
-### 2.3 初始化 `DrawCommand`
+### 2.3 写入初始 `DrawCommand`
 
-- `indexCount` 来自 mesh 索引数
-- `instanceCount`：
-  - 若开启剔除：先置 0，等待 compute 写入可见数量
-  - 若关闭剔除：直接置总实例数
+```cpp
+drawCmd.indexCount = cubeMesh.indices.size()
+drawCmd.instanceCount = cullingEnabled ? 0 : totalInstanceCount
+drawCmd.firstIndex = 0
+drawCmd.vertexOffset = 0
+drawCmd.firstInstance = 0
+```
+若开启剔除：初值为 0，等待 compute 原子写入；若关闭剔除：直接置总实例数（全可见路径）。
 
 ### 2.4 写入 `CullingParamsUBO`
 
-- 从 `projection * view` 提取 6 个视锥平面
-- 写入本地 AABB（当前是立方体 `[-0.5,0.5]`）
-- 写入 Hi-Z 信息：`width / height / mipCount / depthBias`
-- 写入 `totalInstances`
-- 写入 `useCulling`
+```cpp
+extractFrustumPlanes(projection * view, params.frustumPlanes)  // 6 个归一化平面
+params.aabbMin = {-0.5, -0.5, -0.5}
+params.aabbMax = {0.5, 0.5, 0.5}
+params.hiZInfo = {width, height, mipCount, 0.0015f}  // depthBias=0.0015
+params.totalInstances = totalInstanceCount
+params.useCulling = cullingEnabled ? 1 : 0
+```
 
 ---
 
-## 3. 每帧 Compute 命令录制（核心流程）
+## 3. 每帧 Compute 命令录制与执行
 
-函数：`recordCullingCommandBuffer(imageIndex)`
-
-按命令顺序如下。
+函数：`recordCullingCommandBuffer(imageIndex)`，录制到 `computeCommandBuffers[currentFrame]`。
 
 ### 3.1 计时起点
 
-- reset 当前帧 query
-- 写入 start timestamp（TopOfPipe）
+```cpp
+commandBuffer.resetQueryPool(cullingTimestampQueryPool, currentFrame*2, 2)
+commandBuffer.writeTimestamp(PipelineStage::TopOfPipe, queryPool, currentFrame*2)  // 帧 N 的起点
+```
 
-### 3.2 Depth Prepass
+### 3.2 Depth Prepass（全实例绘制到独立深度图）
 
-1. Barrier：`cullingDepthTexture`
-   - `oldLayout -> eDepthAttachmentOptimal`
-2. 开始动态渲染（仅深度附件）
-3. 绑定 `cullingDepthPipeline` + depth descriptor set
-4. 绘制 **全部实例**：
-   - `drawIndexed(..., instanceCount = cullingTotalCountCpu, ...)`
-5. 结束渲染
-6. Barrier：深度图
-   - `eDepthAttachmentOptimal -> eDepthReadOnlyOptimal`
+1. **Barrier**：`cullingDepthTexture` 从 `cullingDepthLayout` → `eDepthAttachmentOptimal`
+2. **动态渲染**（仅深度附件）：
+   - `loadOp = Clear`，清为 1.0
+   - `storeOp = Store`
+3. 绑定 `cullingDepthPipeline` + `cullingDepthDescriptorSets[currentFrame]`
+4. 绑定 `cubeMesh` 的顶点/索引缓冲
+5. **全实例绘制**：
+   ```cpp
+   cmdBuffer.drawIndexed(indices.size(), totalInstanceCount, 0, 0, 0)
+   // SV_InstanceID 在 culling_depth.vertMain 中直接索引 instanceBuffer
+   ```
+   此处绘制全部实例，**与 cullingEnabled 开关无关**（culling 在后续 compute pass 中才生效）。
+6. 结束渲染
+7. **Barrier**：`cullingDepthTexture` → `eDepthReadOnlyOptimal`
+   - 保证后续 Hi-Z Compute 可采样此深度图
 
-> 结果：得到当前视角深度图，供 Hi-Z 构建与后续 culling 采样。
+> 结果：得到当前视角的完整深度图，供 Hi-Z 构建使用。
 
 ### 3.3 构建 Hi-Z（`recordCullingHiZ`）
 
-1. Barrier：`cullingHiZTexture`
-   - `oldLayout -> eGeneral`（允许 compute 写）
-2. 对每个 mip 逐级 dispatch
-   - `mip0` 源是深度图
-   - `mip>0` 源是上一 mip
-3. 每级 mip 后插入 compute 内存屏障，保证下一级可读
-4. 全部完成后 Barrier：
-   - `eGeneral -> eShaderReadOnlyOptimal`
+逐级构建保守遮挡的 max-depth Hi-Z 金字塔：
 
-> 结果：得到可被 culling compute 采样的 Hi-Z 金字塔。
+1. **Barrier**：`cullingHiZTexture` 从 `cullingHiZLayout` → `eGeneral`
+2. **循环 mip=0 到 mipCount-1**：
+   - 绑定 `cullingHiZDescriptorSets[currentFrame * mipCount + mip]`
+   - `dispatch((mipWidth+7)/8, (mipHeight+7)/8, 1)`（`numthreads(8,8,1)`）
+   - `culling_hiz_build.compMain` 对目标像素做 2x2 采样取 maxDepth
+   - mip0 源：`cullingDepthTexture`（经过 `eDepthReadOnlyOptimal` 转换）
+   - mip>0 源：`cullingHiZTexture` 的上一 mip level
+   - 每级间插入 `ComputeShaderWrite → ComputeShaderRead/Write` barrier
+3. **最终 Barrier**：`cullingHiZTexture` → `eShaderReadOnlyOptimal`
+
+> 结果：得到可被 culling compute 采样的 Hi-Z 金字塔，mip 级别按 `floor(log2(radiusPx))` 动态选择。
 
 ### 3.4 清零可见计数器
 
-- `fillBuffer(cullingVisibleCountBuffer, 0)`
-- transfer->compute barrier，保证清零结果对 compute 可见
+```cpp
+commandBuffer.fillBuffer(cullingVisibleCountBuffer, 0, sizeof(uint32), 0u)
+```
+Transfer→Compute barrier（`TransferWrite → ShaderRead/ShaderWrite`），保证清零对新提交的 compute 可见。
 
 ### 3.5 执行 Culling Compute
 
-1. 绑定 `cullingPipeline`
-2. 绑定 `cullingDescriptorSets[currentFrame]`
-3. `dispatch(ceil(totalInstances/64), 1, 1)`
+```cpp
+commandBuffer.dispatch((totalInstanceCount + 63) / 64, 1, 1)
+```
 
-`culling_comp.slang` 内数据流：
-- 每线程处理一个实例 `index`
-- 读取该实例的数据 `instanceBuffer[index]`
-- 先视锥测试（`sphereInsideFrustum`）
-- 再遮挡测试（`occlusionTest`，按包围球屏幕尺寸选 mip 采样 Hi-Z）
-- 若可见：
-  - 原子增加 `drawCommands[0].instanceCount`
-  - 写 `visibleIndices[dstIndex] = index`
-  - 原子增加 `visibleCountBuffer[0]`
+**`culling_comp.slang` 数据流**（每线程处理一个实例，index = dispatchThreadID.x）：
 
-`useCulling == 0` 时：
-- 直接全可见路径，`instanceCount = totalInstances`
+```
+1. if index >= totalInstances → return
+2. if index == 0 → stats[0].totalCount = totalInstances
+3. if useCulling == 0（全可见路径）:
+   visibleIndices[index] = index
+   visibleCountBuffer[0] = totalInstances
+   drawCommands[0].instanceCount = totalInstances
+   stats[0].visibleCount = totalInstances
+   return
+4. 读取 instanceBuffer[index].model → center = mul(model, {0,0,0,1})
+5. 视锥剔除：sphereInsideFrustum(center, radius)
+   - 对 6 个视锥平面逐一测试（[unroll]）
+6. 遮挡剔除：occlusionTest(center, radius)
+   - projectToClip(center) → NDC → UV
+   - radiusPx = radius * hiZInfo.x / clip.w
+   - mip = clamp(floor(log2(radiusPx)), 0, mipCount-1)
+   - sampleHiZ(uv, mip) → maxDepth
+   - depthTest = projectedDepth - radiusProj <= maxDepth + depthBias
+7. 若可见：
+   InterlockedAdd(drawCommands[0].instanceCount, 1) → dstIndex
+   visibleIndices[dstIndex] = index
+   InterlockedAdd(visibleCountBuffer[0], 1)
+```
 
 ### 3.6 Compute 结果转可回读
 
-1. compute->transfer barrier：
-   - `statsBuffer`、`visibleCountBuffer` 从 shader write 变为 transfer read
-2. `copyBuffer`：
-   - `stats -> cullingStatsReadbackBuffer`
-   - `visibleCount -> cullingVisibleReadbackBuffer`
+1. **双重 barrier**（`ShaderWrite → TransferRead`）：
+   - `cullingStatsBufferResources[currentFrame]`：stats buffer
+   - `cullingVisibleCountBuffer`：可见计数器
+2. **Copy 到 GPU staging buffer**：
+   ```cpp
+   copyBuffer(statsBuffer → cullingStatsReadbackBuffer, sizeof(CullingStats))
+   copyBuffer(visibleCountBuffer → cullingVisibleReadbackBuffer, sizeof(uint32))
+   ```
 
 ### 3.7 计时终点
 
-- 写入 end timestamp（BottomOfPipe）
-- 结束 compute command buffer
+```cpp
+commandBuffer.writeTimestamp(PipelineStage::BottomOfPipe, queryPool, currentFrame*2+1)
+commandBuffer.end()
+```
 
 ---
 
-## 4. Graphics 阶段使用 Culling 结果
+## 4. Compute → Graphics 同步与 CPU 回读
 
-函数：`recordCullingDrawCommands(commandBuffer)`
+### 4.1 同步机制
 
-顺序：
-1. 绑定 `cullingDrawPipeline`
-2. 绑定 `cullingDrawDescriptorSets[currentFrame]`
-3. 绑定 mesh 顶点/索引缓冲
-4. 调用 `drawIndexedIndirect(cullingIndirectBuffer[currentFrame], ...)`
+```
+computeQueue.submit(signal=cullingCompleteSemaphores[currentFrame])
+  ↓（GPU 产生信号）
+graphicsQueue.submit(wait=cullingCompleteSemaphores[currentFrame])
+```
 
-关键点：
-- 本帧实际绘制实例数来自 `DrawCommand.instanceCount`
-- 该值由 compute 阶段在 GPU 端写入
-- CPU 不需要回传每个可见实例列表再发 draw call
+Compute 的 `copyBuffer` 在 compute queue 执行；Graphics 的 `drawIndexedIndirect` 在 graphics queue 执行。信号量保证 Graphics 开始前，Compute 的回读数据已写入 staging buffer。
 
----
+### 4.2 CPU 读回统计（`updateCullingStats`）
 
-## 5. CPU 读回统计并显示 UI
+**时序**：在 `render()` 中，`updateCullingStats()` 发生在 `computeQueue.submit()` **之后**、`graphicsQueue.submit()` **之前**。
 
-### 5.1 读回统计（`updateCullingStats`）
+**等待机制**：通过 `device.waitForFences(inFlightFences[currentFrame])` — 等待的是上一帧（N-1）Graphics 完成时设置的 fence。因此读回的数据是 Frame N-1 的 stats，存在一帧延迟。
 
-- 从 `QueryPool` 读取本帧前后 timestamp，计算 `cullingGpuMs`
-- 从 `cullingStatsReadbackMapped` 读取 `totalCount/visibleCount`
-- 从 `cullingVisibleCountMapped` 读取可见数（最终覆盖到 `cullingVisibleCountCpu`）
+```
+waitForFences(F(N-1))   // N-1 帧 graphics 完成才返回
+  ↓
+computeQueue.submit(Frame N)  // Frame N 的 compute（含 copyBuffer）
+  ↓
+updateCullingStats()          // 读 Frame N-1 的 stats（已由 F(N-1) 保证完成）
+```
 
-### 5.2 UI（`updateCullingUI`）
+**读回内容**：
+- 从 `QueryPool` 读取 timestamp N×2 和 N×2+1，计算 `cullingGpuMs = (ts[1]-ts[0]) * timestampPeriod * 1e-6`
+  - 注：timestamp 对应 Frame N-1 的 compute 阶段执行时间
+- 从 `cullingStatsReadbackMapped` 读取 `visibleCountCpu = stats->visibleCount`（来自 N-1 帧）
+- 从 `cullingVisibleCountMapped` 读取 `visibleCountCpu`（覆盖，来自 N-1 帧）
 
-显示：
-- 是否开启 culling
-- 总实例数 `Instances`
-- 可见数 `Visible`
-- CPU 帧时间 `Frame`
-- GPU culling 时间 `Culling GPU`
+> **一帧延迟说明**：UI 显示的 visibleCount 是上一帧的结果，这对 UI 展示是可接受的。如需当前帧数据，需在 Graphics 完成后才读回（再增加一次 fence 等待）。
 
----
+### 4.3 UI 统计展示（`updateUIPanel`）
 
-## 6. 一张“按执行先后”的总流程图（文字版）
-
-1. `updateCullingBuffers`（CPU写UBO/实例/参数/初始DrawCommand）
-2. `recordCullingCommandBuffer`：
-   - 深度 prepass（全实例）
-   - 构建 Hi-Z
-   - 清零 visibleCount
-   - compute culling（写 visibleIndices + indirect instanceCount + stats）
-   - copy 到 readback
-3. graphics 主渲染调用 `recordCullingDrawCommands`：
-   - `drawIndexedIndirect` 只画可见实例
-4. `updateCullingStats` 回读
-5. `updateCullingUI` 显示
+每 0.3s 平滑刷新一次显示值：
+- `Enable Culling`：复选框，开关 GPU culling
+- `Instances`：总实例数（32400）
+- `Visible`：上一帧可见数
+- `Frame`：CPU 帧耗时（ms）
+- `FPS`：计算得出
+- `Culling GPU`：上一帧 compute 阶段耗时（ms）
 
 ---
 
-## 7. 当前实现的数据读写关系速查
+## 5. Graphics 阶段绘制可见实例
 
-- CPU -> GPU（每帧）
-  - `SceneUBO`
-  - `instanceBuffer`
-  - `CullingParamsUBO`
-  - `DrawCommand(初值)`
+### 5.1 命令录制（`recordCommandBuffer`）
 
-- GPU Compute 写
-  - `drawCommands[0].instanceCount`
-  - `visibleIndices[]`
-  - `visibleCountBuffer[0]`
-  - `stats[0]`
+1. **Transition** swapChain image → `eColorAttachmentOptimal`
+2. **Transition** 主 depth image → `eDepthAttachmentOptimal`
+3. **动态渲染**（Color + Depth）：
+   - `loadOp = Clear`，清为背景色 / 1.0
+   - `storeOp = Color=Store / Depth=DontCare`
+   - 绑定 `cullingDrawPipeline` + `cullingDrawDescriptorSets[currentFrame]`
+   - 调用 `recordCullingDrawCommands(commandBuffer)`
+4. **UI 渲染**：单独一个 RenderingPass，`loadOp = Load`，绘制 ImGui
+5. **Transition**：swapChain → `ePresentSrcKHR`
+6. `commandBuffer.end()`
 
-- GPU Graphics 读
-  - `drawIndexedIndirect` 读取 `drawCommands`
-  - Draw VS 通过 `visibleIndices` 间接索引真实实例
+### 5.2 实际绘制（`recordCullingDrawCommands`）
 
-- GPU -> CPU 回读
-  - `statsBuffer -> statsReadback`
-  - `visibleCountBuffer -> visibleReadback`
-  - `timestamp query -> cullingGpuMs`
+```cpp
+cmdBuffer.drawIndexedIndirect(cullingIndirectBufferResources.Buffers[currentFrame], 0, 1, sizeof(DrawCommand))
+```
 
----
+**`culling_draw.vertMain` 如何消费可见性数据**：
+- `SV_InstanceID` 由 Vulkan 自动从 0 递增到 `DrawCommand.instanceCount - 1`
+- `visibleIndex = visibleIndices[instanceID]`
+- `instanceData = instanceBuffer[visibleIndex]` — 通过间接索引取到真实实例的 model+color
 
-## 8. 为了完成这些数据流向，`usage / DescriptorSetLayout` 应该如何选择
+**关键**：`DrawCommand.instanceCount` 由 Compute Shader 在 GPU 端原子写入，CPU 无需知道哪些实例可见，绘制命令自动反映 culling 结果。
 
-为了实现这些功能，创建资源时要选择什么类型。
+### 5.3 提交与呈现
 
-### 8.1 Buffer `usage` 
+```cpp
+// 等 present + compute 完成
+vk::Semaphore waitSemaphores[] = {presentCompleteSemaphores, cullingCompleteSemaphores}
+vk::PipelineStageFlags waitStages[] = {ColorAttachmentOutput, VertexInput}
 
-#### 8.1.1 `cullingIndirectBufferResources`（`DrawCommand`）
+graphicsQueue.submit({
+    .waitSemaphoreCount = 2,
+    .pWaitSemaphores = waitSemaphores,
+    .pWaitDstStageMask = waitStages,
+    .commandBufferCount = 1,
+    .pCommandBuffers = &commandBuffers[currentFrame],
+    .signalSemaphoreCount = 1,
+    .pSignalSemaphores = &renderFinishedSemaphores[imageIndex]
+}, *inFlightFences[currentFrame])
 
-数据流：
-- Compute 写 `instanceCount`
-- Graphics `drawIndexedIndirect` 读取命令
-
- `eStorageBuffer | eIndirectBuffer` （compute RW + indirect draw 参数源）。
-
-#### 8.1.2 `cullingVisibleBufferResources`（`visibleIndices[]`）
-
-数据流：
-- Compute 写可见实例索引
-- Draw 阶段读取该索引表
-
-`eStorageBuffer`（该资源是“GPU 读写的大数组”，不是 uniform）。
-
-#### 8.1.3 `cullingStatsBufferResources`（`CullingStats`）
-
-数据流：
-- Compute 写统计
-- Transfer copy 到 readback
-
-`eStorageBuffer | eIndirectBuffer`
-#### 8.1.4 `cullingVisibleCountBuffer`（单值计数器）
-
-数据流：
-- 每帧 `fillBuffer` 清零
-- Compute 原子加
-- Transfer copy 回读
-
-- `eStorageBuffer` | `eTransferDst`（接受 `fillBuffer`）| `eTransferSrc`（作为 copy 源）
-
-#### 8.1.5 回读 Buffer（`statsReadback/visibleReadback`）
-
-数据流：
-- 仅作为 copy 目标并由 CPU 读取
-
-应包含：
-- `eTransferDst`
-- 内存属性：`HostVisible | HostCoherent`
+presentQueue.presentKHR(wait=renderFinishedSemaphores[imageIndex])
+```
 
 ---
 
-### 8.2 Image `usage` 与 layout 
+## 6. 完整执行顺序总览（Frame N）
 
-#### 8.2.1 `cullingDepthTexture`
-
-数据流：
-- Depth Prepass 写
-- Hi-Z 构建采样读
-
-- `eDepthStencilAttachment | eSampled`
-
-layout：
-- `Undefined -> eDepthAttachmentOptimal -> eDepthReadOnlyOptimal`
-
-#### 8.2.2 `cullingHiZTexture`
-
-数据流：
-- Hi-Z Build Compute 写（逐 mip）
-- Culling Compute 采样读
-
-- `eStorage`（compute 写 image）| `eSampled`（后续采样）
-
-layout：
-- 构建时：`eGeneral`
-- 构建后供采样：`eShaderReadOnlyOptimal`
-
----
-
-### 8.3 DescriptorSetLayout （按 Pass 拆分）
-
-#### 8.3.1 Depth Pass（`cullingDepthDescriptorSetLayout`）
-- `binding0`：`eUniformBuffer`（SceneUBO）
-- `binding1`：`eStorageBuffer`（instanceBuffer）
-
-用途单一：只服务 depth prepass，保持最小绑定集。
-
-#### 8.3.2 Culling Compute（`cullingDescriptorSetLayout`）
-- 输入：`SceneUBO`、`instanceBuffer`、`params`、`hiZTexture+sampler`
-- 输出：`drawCommands`、`visibleIndices`、`stats`、`visibleCount`
-
-对应类型：
-- 固定小参数：`eUniformBuffer`
-- 大数组/原子写回：`eStorageBuffer`
-- 采样图：`eCombinedImageSampler`
-
-#### 8.3.3 Draw Pass（`cullingDrawDescriptorSetLayout`）
-- `binding0`：SceneUBO
-- `binding1`：instanceBuffer
-- `binding2`：visibleIndices
-
-关键点：draw 只保留“绘制所需最小集”，不混入 stats/count。
-
-#### 8.3.4 Hi-Z Build（`cullingHiZDescriptorSetLayout`）
-结合 `shaders/culling_hiz_build.slang`：
-- `binding0`：`eStorageImage`（输出 mip）
-- `binding1`：`eStorageImage`（当前实现未实际使用）
-- `binding2`：`eCombinedImageSampler`（源深度/上一 mip）
-- `binding3`：`eCombinedImageSampler`（同源采样信息，兼容位）
-
-说明：当前 shader 的 `binding1`/`binding3` 偏“兼容保留位”，后续可以在重构时收敛。
+```
+┌─────────────────────────────────────────────────────────┐
+│ T=0: device.waitForFences(F(N-1))  ← 等待 N-1 帧 graphics 完成      │
+│                                                            │
+│ T=1: swapChain.acquireNextImage()                         │
+│                                                            │
+│ T=2: updateCullingBuffers(N)                              │
+│      ├─ memcpy(SceneUBO)                                  │
+│      ├─ memcpy(instanceBuffer) → 32400 个实例             │
+│      ├─ memcpy(DrawCommand 初值)                          │
+│      └─ memcpy(CullingParamsUBO)                         │
+│                                                            │
+│ T=3: recordCullingCommandBuffer(N)                        │
+│      ├─ writeTimestamp(TopOfPipe)                         │
+│      ├─ Depth Prepass（全实例绘制到 cullingDepthTexture）  │
+│      ├─ Hi-Z Build（逐 mip 构建金字塔）                   │
+│      ├─ fillBuffer(visibleCountBuffer, 0)                 │
+│      ├─ compute culling（原子写入 instanceCount + visibleIndices）│
+│      ├─ barrier + copyBuffer(stats/count → readback)     │
+│      ├─ writeTimestamp(BottomOfPipe)                      │
+│      └─ end()                                            │
+│                                                            │
+│ T=4: computeQueue.submit(signal=computeSemaphore[N])      │
+│                                                            │
+│ T=5: updateCullingStats()  ← 读 Frame N-1 的 stats       │
+│      ├─ getQueryPoolResults(timestamps) → cullingGpuMs   │
+│      └─ memcpy(statsReadback/visibleReadback → CPU       │
+│                                                            │
+│ T=6: device.resetFences(F(N))                             │
+│                                                            │
+│ T=7: recordCommandBuffer(N)                                │
+│      ├─ 过渡 swapChain/depth image                        │
+│      ├─ 动态渲染 → recordCullingDrawCommands()            │
+│      │   └─ drawIndexedIndirect()（可见实例）             │
+│      ├─ UI 渲染（ImGui）                                   │
+│      └─ 过渡 swapChain → PresentSrc                       │
+│                                                            │
+│ T=8: graphicsQueue.submit(                                │
+│         wait=presentSemaphore[N] + computeSemaphore[N],   │
+│         signal=renderFinishedSemaphore[imageIndex],       │
+│         fence=F(N))                                       │
+│                                                            │
+│ T=9: presentQueue.presentKHR(wait=renderFinishedSemaphore)│
+└─────────────────────────────────────────────────────────┘
+```
 
 ---
 
-### 8.4 同步点为什么这样选（与数据流一一对应）
+## 7. 数据读写关系速查
 
-1. 深度写 -> 深度采样
-- `DepthAttachmentWrite -> ShaderSampledRead`
-- 用于 Hi-Z 构建读取 prepass 深度。
-
-2. Hi-Z mip N 写 -> mip N+1 读
-- `Compute ShaderWrite -> Compute ShaderRead`
-- 每级 mip 之后插入 compute barrier。
-
-3. 计数器清零 -> Compute 原子加
-- `TransferWrite -> ShaderRead/ShaderWrite`
-- 避免沿用上一帧值。
-
-4. Compute 写 stats/count -> Transfer copy
-- `ShaderWrite -> TransferRead`
-- 保证回读看到的是本帧新值。
+| 方向 | 资源 | 操作 |
+|---|---|---|
+| **CPU→GPU（每帧）** | `sceneUboResources` | memcpy → UBO |
+| **CPU→GPU（每帧）** | `instanceBufferResources` | memcpy → StorageBuffer（32400 实例） |
+| **CPU→GPU（每帧）** | `cullingParamsBufferResources` | memcpy → UBO（视锥+Hi-Z 参数） |
+| **CPU→GPU（每帧）** | `cullingIndirectBufferResources` | memcpy → DrawCommand 初值 |
+| **GPU Depth 写** | `cullingDepthTexture` | Depth Prepass（全部 32400 实例） |
+| **GPU Compute 写** | `cullingHiZTexture` | Hi-Z Build（逐 mip） |
+| **GPU Compute 写** | `drawCommands[0].instanceCount` | Culling Compute 原子写入 |
+| **GPU Compute 写** | `visibleIndices[]` | Culling Compute 顺序写入 |
+| **GPU Compute 写** | `visibleCountBuffer[0]` | Culling Compute InterlockedAdd |
+| **GPU Compute 写** | `stats[0]` | Culling Compute 写入 totalCount/visibleCount |
+| **GPU Compute 读** | `cullingDepthTexture` | Hi-Z Build mip=0 源 |
+| **GPU Compute 读** | `cullingHiZTexture` | Hi-Z Build mip>0 源、occlusionTest |
+| **GPU Compute 读** | `instanceBuffer` | culling pass 逐实例读取 model 矩阵 |
+| **GPU Compute 读** | `sceneUbo` + `cullingParams` | 视锥平面、相机矩阵 |
+| **GPU Graphics 读** | `cullingIndirectBuffer` | drawIndexedIndirect 参数源 |
+| **GPU Graphics 读** | `instanceBuffer` | draw pass 经 visibleIndices 间接索引 |
+| **GPU Graphics 读** | `visibleIndices` | SV_InstanceID → 真实实例索引 |
+| **GPU→CPU 回读** | `cullingStatsReadbackBuffer` | copyBuffer → CPU memcpy（延迟一帧） |
+| **GPU→CPU 回读** | `cullingVisibleReadbackBuffer` | copyBuffer → CPU memcpy（延迟一帧） |
+| **GPU→CPU 回读** | `cullingTimestampQueryPool` | getQueryPoolResults → GPU 耗时 |
 
 ---
 
-### 8.5 可复用的决策步骤（以后新增资源可照此做）
+## 8. 资源类型决策汇总
 
-1. 先画数据流：谁写、谁读、在哪个 pass。
-2. 反推 `usage`：
-   - compute RW -> `eStorageBuffer/eStorageImage`
-   - indirect draw -> `eIndirectBuffer`
-   - copy 源/目标 -> `eTransferSrc/eTransferDst`
-   - 采样读 -> `eSampled`
-3. 再选 descriptor type：
-   - 固定参数 -> `eUniformBuffer`
-   - 大数组/写回 -> `eStorageBuffer`
-   - 采样纹理 -> `eCombinedImageSampler`
-   - compute 写纹理 -> `eStorageImage`
-4. 最后补齐 barrier/layout：
-   - 只要阶段 A 写、阶段 B 读，就显式声明 stage/access/layout 转换。
+### 8.1 Buffer `usage` 选择
 
-按这 4 步，能保证“资源声明、shader 绑定、命令顺序、同步关系”一致。
+| 资源 | 使用的 `usage` 标志 | 原因 |
+|---|---|---|
+| `cullingIndirectBufferResources` | `eStorageBuffer \| eIndirectBuffer` | Compute 原子写 instanceCount；Graphics `drawIndexedIndirect` 读取 |
+| `cullingVisibleBufferResources` | `eStorageBuffer`（createStorageBuffers 默认） | Compute 写可见索引；Draw Vertex Shader 读 |
+| `cullingStatsBufferResources` | `eStorageBuffer \| eTransferSrc` | Compute 写；Transfer copy 源 |
+| `cullingVisibleCountBuffer` | `eStorageBuffer \| eTransferDst \| eTransferSrc` | `fillBuffer` 目标；Compute 原子加；Transfer copy 源 |
+| `cullingStatsReadbackBuffer` | `eTransferDst` + HostVisible+HostCoherent | 仅作 copy 目标，CPU 读取 |
+| `cullingVisibleReadbackBuffer` | `eTransferDst` + HostVisible+HostCoherent | 仅作 copy 目标，CPU 读取 |
 
+### 8.2 Image `usage` 与 layout
+
+| 资源 | `usage` | Layout 转换路径 |
+|---|---|---|
+| `cullingDepthTexture` | `eDepthStencilAttachment \| eSampled` | `Undefined → DepthAttachmentOptimal(prepass) → DepthReadOnlyOptimal(Hi-Z采样) → DepthAttachmentOptimal(下帧)` |
+| `cullingHiZTexture` | `eStorage \| eSampled` | `Undefined → General(逐mip构建) → ShaderReadOnlyOptimal(culling采样) → General(下帧)` |
+
+### 8.3 同步屏障一览
+
+| # | 源操作 | 目标操作 | Stage Mask | Access Mask |
+|---|---|---|---|---|
+| 1 | Depth Prepass 写 | Hi-Z Build 读 | `LateFragmentTests → ComputeShader` | `DepthStencilAttachmentWrite → ShaderSampledRead` |
+| 2 | Hi-Z mip N 写 | Hi-Z mip N+1 读 | `ComputeShader → ComputeShader` | `ShaderWrite → ShaderRead\|ShaderWrite` |
+| 3 | Hi-Z 全部写完 | Culling Compute 读 | `ComputeShader → ComputeShader` | `ShaderWrite → ShaderSampledRead` |
+| 4 | fillBuffer 写 | Culling Compute 原子加 | `Transfer → ComputeShader` | `TransferWrite → ShaderRead\|ShaderWrite` |
+| 5 | Culling Compute 写 stats | Transfer copy | `ComputeShader → Transfer` | `ShaderWrite → TransferRead` |
+| 6 | Culling Compute 写 count | Transfer copy | `ComputeShader → Transfer` | `ShaderWrite → TransferRead` |
+
+---
+
+## 9. Descriptor Set Layout 按 Pass 汇总
+
+| Pass | Layout | Bindings |
+|---|---|---|
+| Depth Prepass | `cullingDepthDescriptorSetLayout` | b0: SceneUBO(Uniform), b1: instanceBuffer(Storage) |
+| Hi-Z Build | `cullingHiZDescriptorSetLayout` | b0: outHiZ(StorageImage), b1: unusedOut, b2: srcDepth(Sampler), b3: srcSampler |
+| Culling Compute | `cullingDescriptorSetLayout` | b0: SceneUBO, b1: instanceBuffer, b2: drawCommands, b3: visibleIndices, b4: stats, b5: visibleCount, b6: params, b7: hiZTexture, b8: hiZSampler |
+| Draw | `cullingDrawDescriptorSetLayout` | b0: SceneUBO, b1: instanceBuffer, b2: visibleIndices |
