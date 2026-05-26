@@ -59,10 +59,13 @@ static float3 reconstructViewPos(float2 uv, float depth)
     return view.xyz / max(view.w, 1e-6);
 }
 
-static float3 sampleNormalVS(float2 uv)
+static float3 sampleNormalVS(float2 uv, out float outRoughness)
 {
     // 从法线纹理读取世界法线（编码在 [0,1]），再转回视空间
-    float3 nWorld = normalTex.Sample(uv).xyz * 2.0 - 1.0;
+    // roughness 编码在 alpha 通道
+    float4 normalData = normalTex.Sample(uv);
+    outRoughness = normalData.a;
+    float3 nWorld = normalData.xyz * 2.0 - 1.0;
     nWorld = normalize(nWorld);
 
     float3x3 viewRot = (float3x3)sceneUbo.view;
@@ -85,6 +88,8 @@ static float hash12(float2 p)
 
 static bool raymarchSSR(float3 originVS, float3 dirVS, float jitter01, out float2 hitUV, out float hitSteps)
 {
+    hitUV = float2(0.0, 0.0);
+    hitSteps = 0.0;
     float t = ssrParams.stride * (0.5 + jitter01);
     float maxT = ssrParams.maxRayDistance;
     float lastT = 0.0;
@@ -101,7 +106,7 @@ static bool raymarchSSR(float3 originVS, float3 dirVS, float jitter01, out float
         float3 scenePos = reconstructViewPos(uv, sceneDepth);
         float dz = scenePos.z - p.z;
 
-        // 仅接受“ray 点在表面后方一点点”的命中，避免白块和穿帮
+        // 仅接受"ray 点在表面后方一点点"的命中，避免白块和穿帮
         if (dz > 0.0 && dz < ssrParams.thickness)
         {
             float refineStart = lastT;
@@ -161,7 +166,8 @@ float4 fragMain(VSOut i) : SV_TARGET
     }
 
     float3 posVS = reconstructViewPos(uv, depth);
-    float3 N = sampleNormalVS(uv);
+    float roughness;
+    float3 N = sampleNormalVS(uv, roughness);
     float3 V = normalize(-posVS);
     float3 R = normalize(reflect(-V, N));
 
@@ -215,20 +221,6 @@ float4 fragMain(VSOut i) : SV_TARGET
     float edge = max(abs(uv.x - 0.5) * 2.0, abs(uv.y - 0.5) * 2.0);
     float fade = smoothstep(1.0, 0.85, edge);
 
-    // 仅让“白色地板(白色 cube 顶面)”拥有反射：
-    // 1) 亮度高且低饱和（近白）
-    // 2) 法线朝上（接近世界上方向）
-    float luminance = dot(baseColor, float3(0.2126, 0.7152, 0.0722));
-    float maxC = max(baseColor.r, max(baseColor.g, baseColor.b));
-    float minC = min(baseColor.r, min(baseColor.g, baseColor.b));
-    float saturation = maxC - minC;
-
-    float whiteMask = smoothstep(0.55, 0.85, luminance) * (1.0 - smoothstep(0.10, 0.35, saturation));
-
-    float3 worldUpVS = normalize(mul(sceneUbo.view, float4(0.0, 1.0, 0.0, 0.0)).xyz);
-    float upDot = dot(normalize(N), worldUpVS);
-    float floorMask = smoothstep(0.55, 0.90, upDot);
-
     // 使用 cameraPosNear/cameraFarPadding 里的 near/far 做距离衰减：
     // - 近处反射更明显
     // - 远处反射逐渐减弱，降低噪声和闪烁观感
@@ -236,14 +228,20 @@ float4 fragMain(VSOut i) : SV_TARGET
     float farPlane = max(sceneUbo.cameraFarPadding.x, nearPlane + 1e-3);
     float viewDist = length(posVS);
     float dist01 = saturate((viewDist - nearPlane) / (farPlane - nearPlane));
-    // 放宽远处衰减，避免两侧倒影“太浅/消失”
+    // 放宽远处衰减，避免两侧倒影"太浅/消失"
     float distanceFade = lerp(1.0, 0.7, dist01);
 
-    float reflectMask = saturate(whiteMask * floorMask);
+    // 基于粗糙度的反射掩码（工程化方案）：
+    // - roughness 来自 lit pass 实例数据，编码在法线 RT 的 alpha 通道
+    // - roughness ∈ [0,1]：0=完美镜面（高反射），1=完全粗糙（无反射）
+    // - 使用 smoothstep 做平滑过渡：[roughnessThreshold, roughnessThreshold+smoothing] 内过渡
+    const float roughnessThreshold = 0.35f;
+    const float smoothing = 0.15f;
+    float roughnessMask = 1.0f - smoothstep(roughnessThreshold, roughnessThreshold + smoothing, roughness);
 
-    // Fresnel-like 增强：掠射角更明显，正视角也保留较高基线，提升“可见性”
+    // Fresnel-like 增强：掠射角更明显，正视角也保留较高基线，提升"可见性"
     float fresnel = pow(saturate(1.0 - dot(normalize(N), V)), 2.2);
-    float reflectStrength = ssrParams.intensity * fade * reflectMask * distanceFade * (0.75 + 1.05 * fresnel);
+    float reflectStrength = ssrParams.intensity * fade * roughnessMask * distanceFade * (0.75 + 1.05 * fresnel);
 
     // 反射可见性增强：为了暗处也能看见
     float reflLuma = dot(refl, float3(0.2126, 0.7152, 0.0722));
@@ -254,9 +252,8 @@ float4 fragMain(VSOut i) : SV_TARGET
     float3 reflBoosted = pow(max(refl, 0.0), float3(0.9, 0.9, 0.9)) * 1.25;
 
     // 保底可见反射：即便反射源较暗，也给一点可感知贡献
-    float minVisible = 0.04 * reflectMask * fade;
+    float minVisible = 0.04 * roughnessMask * fade;
 
     float3 finalColor = baseColor + reflBoosted * reflectStrength + minVisible;
     return float4(finalColor, 1.0);
 }
-

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Base/VulkanBase.h>
+#include <Base/VulkanBase_UI.h>
 
 struct SSRRenderer final : VulkanBase
 {
@@ -89,6 +90,8 @@ private:
     int ssrDebugMode = 0;
     bool ssrEnabled = true;
 
+    float defaultRoughness = 0.05f;
+
     bool createShadowDescriptorSetLayout();
     bool createShadowDescriptorPool();
     void createShadowDescriptorSets();
@@ -106,9 +109,8 @@ private:
     void recordSSR(vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex);
 
     bool initUI();
-    void updateUIFrame();
-    void recordUI(vk::raii::CommandBuffer& commandBuffer);
+    void updateUIPanel() override;
+    void resetSSRTexturesForDisabled();
 
-    void updateSSRUI();
     void recordCommandBuffer(uint32_t imageIndex);
 };

@@ -239,8 +239,7 @@ FSOutput fragMain(VSOutput input)
 
     FSOutput outp;
     outp.color = float4(color, saturate(input.color.w));
-    // 世界法线编码到 [0,1]
-    outp.normal = float4(normalize(input.worldNormal) * 0.5 + 0.5, 1.0);
+    outp.normal = float4(normalize(input.worldNormal) * 0.5 + 0.5, saturate(input.color.w));
     return outp;
 }
 
