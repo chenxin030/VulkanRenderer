@@ -29,28 +29,18 @@ private:
         float pad1;
     };
 
-    vk::raii::DescriptorSetLayout shadowDescriptorSetLayout = nullptr;
-    vk::raii::DescriptorPool shadowDescriptorPool = nullptr;
-    vk::raii::PipelineLayout shadowPipelineLayout = nullptr;
-    vk::raii::Pipeline shadowDepthPipeline = nullptr;
-    vk::raii::Pipeline shadowLitPipeline = nullptr;
-
     Mesh cubeMesh;
     uint32_t instanceCount = 0;
 
-    MeshBuffer shadowInstanceBufferResources;
+    MeshBuffer instanceBufferResources;
     MeshBuffer sceneUboResources;
-    MeshBuffer shadowUboResources;
-    MeshBuffer shadowParamsUboResources;
+    MeshBuffer prevVpUboResources;
 
-    TextureData shadowMapData;
-    vk::Extent2D shadowMapExtent{ 2048u, 2048u };
-    vk::ImageLayout shadowMapLayout = vk::ImageLayout::eUndefined;
-
-    int shadowFilterMode = 2;
-    float pcssLightSizeTexels = 25.0f;
-
-    float dirLightIntensity = 0.5f;
+    vk::raii::DescriptorSetLayout mainRenderDescriptorSetLayout = nullptr;
+    vk::raii::DescriptorPool mainRenderDescriptorPool = nullptr;
+    vk::raii::PipelineLayout mainRenderPipelineLayout = nullptr;
+    vk::raii::Pipeline mainRenderPipeline = nullptr;
+    vk::raii::DescriptorSets mainRenderDescriptorSets = nullptr;
 
     vk::raii::DescriptorSetLayout taauDescriptorSetLayout = nullptr;
     vk::raii::DescriptorPool taauDescriptorPool = nullptr;
@@ -95,13 +85,10 @@ private:
     bool taauFreezeHistory = false;
     TAAUParams taauParams{};
 
-    bool createShadowDescriptorSetLayout();
-    bool createShadowDescriptorPool();
-    void createShadowDescriptorSets();
-    void createShadowBuffers();
-    void updateShadowBuffers(uint32_t currentImage);
-    bool createShadowMapResources();
-    bool createShadowPipelines();
+    bool createMainRenderResources();
+    bool createMainRenderDescriptorSetLayout();
+    bool createMainRenderPipelines();
+    void createMainRenderDescriptorSets();
 
     bool createTAAUResources();
     bool createTAAUDescriptorSetLayout();
@@ -112,6 +99,7 @@ private:
     void updateTAAUBuffers(uint32_t currentImage);
     void recordTAAU(vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex);
     void updateTAAUHistory(const glm::mat4& currentViewProj);
+    void recreateTAAUResources();
 
     bool initUI();
     void updateUIPanel() override;
