@@ -43,6 +43,7 @@ add_definitions(
     -DGLM_ENABLE_EXPERIMENTAL
     -DVK_MODEL_DIR="${CMAKE_SOURCE_DIR}/assets/models/"
     -DVK_TEXTURE_DIR="${CMAKE_SOURCE_DIR}/assets/textures/"
+    -DVK_SHADERS_DIR="${CMAKE_SOURCE_DIR}/shaders/"
 )
 
 option(FORCE_VALIDATION "Force validation layers at compile time" OFF)
@@ -71,13 +72,15 @@ target_link_libraries(vkr_deps INTERFACE
 add_library(Base STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/Camera.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/Platform.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase.h   
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase_commands.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase_core.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase_swapchain.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase_utils.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase_Resource.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase_UI.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/VulkanBase_UI.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/Mesh.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Base/Mesh.cpp
 )

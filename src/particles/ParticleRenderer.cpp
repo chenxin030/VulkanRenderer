@@ -1,6 +1,7 @@
 #include "ParticleRenderer.h"
 
 #include <Base/Mesh.h>
+#include <Base/VulkanBase_UI.h>
 
 #include <algorithm>
 #include <array>
@@ -542,7 +543,7 @@ void ParticleRenderer::recordCommandBuffer(uint32_t imageIndex)
             0.0f,
             1.0f));
     commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
-    recordUI(commandBuffer);
+    recordUICmdBuffer(commandBuffer);
     commandBuffer.endRendering();
 
     transition_image_layout(
@@ -647,463 +648,37 @@ void ParticleRenderer::render()
 
 bool ParticleRenderer::initUI()
 {
-    try
-    {
-        std::vector<vk::DescriptorSetLayoutBinding> uiBindings = {
-            { .binding = 0, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment }
-        };
-        uiDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, vk::DescriptorSetLayoutCreateInfo{
-            .bindingCount = static_cast<uint32_t>(uiBindings.size()),
-            .pBindings = uiBindings.data() });
-
-        std::vector<vk::DescriptorPoolSize> uiPoolSizes = {
-            { .type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT }
-        };
-        uiDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
-            .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-            .maxSets = MAX_FRAMES_IN_FLIGHT,
-            .poolSizeCount = static_cast<uint32_t>(uiPoolSizes.size()),
-            .pPoolSizes = uiPoolSizes.data() });
-
-        vk::SamplerCreateInfo samplerInfo{
-            .magFilter = vk::Filter::eLinear,
-            .minFilter = vk::Filter::eLinear,
-            .addressModeU = vk::SamplerAddressMode::eClampToEdge,
-            .addressModeV = vk::SamplerAddressMode::eClampToEdge,
-            .addressModeW = vk::SamplerAddressMode::eClampToEdge
-        };
-        uiFontTexture.textureSampler = vk::raii::Sampler(device, samplerInfo);
-
-        ImGui::CreateContext();
-        ImGuiIO& io = ImGui::GetIO();
-        io.Fonts->AddFontDefault();
-
-        unsigned char* fontPixels = nullptr;
-        int fontWidth = 0;
-        int fontHeight = 0;
-        io.Fonts->GetTexDataAsRGBA32(&fontPixels, &fontWidth, &fontHeight);
-
-        uiFontTexture.mipLevels = 1;
-        createImage(
-            static_cast<uint32_t>(fontWidth),
-            static_cast<uint32_t>(fontHeight),
-            1,
-            vk::Format::eR8G8B8A8Unorm,
-            vk::ImageTiling::eOptimal,
-            vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
-            vk::MemoryPropertyFlagBits::eDeviceLocal,
-            uiFontTexture);
-
-        transitionImageLayout(
-            uiFontTexture.textureImage,
-            vk::ImageLayout::eUndefined,
-            vk::ImageLayout::eTransferDstOptimal,
-            1);
-
-        vk::raii::Buffer stagingBuffer({});
-        vk::raii::DeviceMemory stagingBufferMemory({});
-        const vk::DeviceSize uploadSize = static_cast<vk::DeviceSize>(fontWidth) * static_cast<vk::DeviceSize>(fontHeight) * 4u;
-
-        createBuffer(
-            uploadSize,
-            vk::BufferUsageFlagBits::eTransferSrc,
-            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-            stagingBuffer,
-            stagingBufferMemory);
-
-        void* mappedFontData = stagingBufferMemory.mapMemory(0, uploadSize);
-        std::memcpy(mappedFontData, fontPixels, static_cast<size_t>(uploadSize));
-        stagingBufferMemory.unmapMemory();
-
-        auto cmdBuffer = beginSingleTimeCommands();
-        vk::BufferImageCopy region{
-            .bufferOffset = 0,
-            .bufferRowLength = static_cast<uint32_t>(fontWidth),
-            .bufferImageHeight = static_cast<uint32_t>(fontHeight),
-            .imageSubresource = { vk::ImageAspectFlagBits::eColor, 0, 0, 1 },
-            .imageOffset = { 0, 0, 0 },
-            .imageExtent = { static_cast<uint32_t>(fontWidth), static_cast<uint32_t>(fontHeight), 1 }
-        };
-        cmdBuffer->copyBufferToImage(*stagingBuffer, *uiFontTexture.textureImage, vk::ImageLayout::eTransferDstOptimal, region);
-        endSingleTimeCommands(*cmdBuffer);
-
-        transitionImageLayout(
-            uiFontTexture.textureImage,
-            vk::ImageLayout::eTransferDstOptimal,
-            vk::ImageLayout::eShaderReadOnlyOptimal,
-            1);
-
-        uiFontTexture.textureImageView = createImageView(
-            uiFontTexture.textureImage,
-            vk::Format::eR8G8B8A8Unorm,
-            vk::ImageAspectFlagBits::eColor,
-            1);
-
-        io.Fonts->SetTexID(reinterpret_cast<ImTextureID>(static_cast<uintptr_t>(0)));
-
-        std::vector<vk::DescriptorSetLayout> uiLayouts(MAX_FRAMES_IN_FLIGHT, *uiDescriptorSetLayout);
-        uiDescriptorSets = vk::raii::DescriptorSets(device, vk::DescriptorSetAllocateInfo{
-            .descriptorPool = *uiDescriptorPool,
-            .descriptorSetCount = MAX_FRAMES_IN_FLIGHT,
-            .pSetLayouts = uiLayouts.data() });
-
-        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
-        {
-            vk::DescriptorImageInfo imageInfo{
-                .sampler = *uiFontTexture.textureSampler,
-                .imageView = *uiFontTexture.textureImageView,
-                .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-            };
-            vk::WriteDescriptorSet write{
-                .dstSet = *uiDescriptorSets[i],
-                .dstBinding = 0,
-                .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                .pImageInfo = &imageInfo
-            };
-            device.updateDescriptorSets(write, nullptr);
-        }
-
-        vk::raii::ShaderModule uiShaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "imgui.spv"));
-        vk::PipelineShaderStageCreateInfo uiVertShaderStage{ .stage = vk::ShaderStageFlagBits::eVertex, .module = uiShaderModule, .pName = "vertMain" };
-        vk::PipelineShaderStageCreateInfo uiFragShaderStage{ .stage = vk::ShaderStageFlagBits::eFragment, .module = uiShaderModule, .pName = "fragMain" };
-        vk::PipelineShaderStageCreateInfo uiShaderStages[] = { uiVertShaderStage, uiFragShaderStage };
-
-        vk::VertexInputBindingDescription uiBindingDescription{
-            .binding = 0,
-            .stride = sizeof(ImDrawVert),
-            .inputRate = vk::VertexInputRate::eVertex
-        };
-        std::array<vk::VertexInputAttributeDescription, 3> uiAttributeDescriptions = {
-            vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32Sfloat, offsetof(ImDrawVert, pos)),
-            vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32Sfloat, offsetof(ImDrawVert, uv)),
-            vk::VertexInputAttributeDescription(2, 0, vk::Format::eR8G8B8A8Unorm, offsetof(ImDrawVert, col))
-        };
-        vk::PipelineVertexInputStateCreateInfo uiVertexInputInfo{
-            .vertexBindingDescriptionCount = 1,
-            .pVertexBindingDescriptions = &uiBindingDescription,
-            .vertexAttributeDescriptionCount = static_cast<uint32_t>(uiAttributeDescriptions.size()),
-            .pVertexAttributeDescriptions = uiAttributeDescriptions.data()
-        };
-
-        vk::PipelineInputAssemblyStateCreateInfo uiInputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = vk::False };
-
-        vk::PipelineViewportStateCreateInfo uiViewportState{ .viewportCount = 1, .scissorCount = 1 };
-        vk::PipelineRasterizationStateCreateInfo uiRasterizer{
-            .depthClampEnable = vk::False,
-            .rasterizerDiscardEnable = vk::False,
-            .polygonMode = vk::PolygonMode::eFill,
-            .cullMode = vk::CullModeFlagBits::eNone,
-            .frontFace = vk::FrontFace::eCounterClockwise,
-            .lineWidth = 1.0f
-        };
-        vk::PipelineMultisampleStateCreateInfo uiMultisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False };
-
-        vk::PipelineDepthStencilStateCreateInfo uiDepthStencil{
-            .depthTestEnable = vk::False,
-            .depthWriteEnable = vk::False,
-            .depthCompareOp = vk::CompareOp::eAlways,
-            .depthBoundsTestEnable = vk::False,
-            .stencilTestEnable = vk::False
-        };
-
-        vk::PipelineColorBlendAttachmentState uiColorBlendAttachment{
-            .blendEnable = vk::True,
-            .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
-            .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
-            .colorBlendOp = vk::BlendOp::eAdd,
-            .srcAlphaBlendFactor = vk::BlendFactor::eOne,
-            .dstAlphaBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
-            .alphaBlendOp = vk::BlendOp::eAdd,
-            .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
-        };
-        vk::PipelineColorBlendStateCreateInfo uiColorBlending{ .attachmentCount = 1, .pAttachments = &uiColorBlendAttachment };
-
-        std::vector uiDynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
-        vk::PipelineDynamicStateCreateInfo uiDynamicState{
-            .dynamicStateCount = static_cast<uint32_t>(uiDynamicStates.size()),
-            .pDynamicStates = uiDynamicStates.data()
-        };
-
-        vk::PushConstantRange uiPushConstants{
-            .stageFlags = vk::ShaderStageFlagBits::eVertex,
-            .offset = 0,
-            .size = 16u
-        };
-        uiPipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
-            .setLayoutCount = 1,
-            .pSetLayouts = &*uiDescriptorSetLayout,
-            .pushConstantRangeCount = 1,
-            .pPushConstantRanges = &uiPushConstants
-        });
-
-        vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> uiPipelineChain = {
-            {
-                .stageCount = 2,
-                .pStages = uiShaderStages,
-                .pVertexInputState = &uiVertexInputInfo,
-                .pInputAssemblyState = &uiInputAssembly,
-                .pViewportState = &uiViewportState,
-                .pRasterizationState = &uiRasterizer,
-                .pMultisampleState = &uiMultisampling,
-                .pDepthStencilState = &uiDepthStencil,
-                .pColorBlendState = &uiColorBlending,
-                .pDynamicState = &uiDynamicState,
-                .layout = uiPipelineLayout,
-                .renderPass = nullptr
-            },
-            {
-                .colorAttachmentCount = 1,
-                .pColorAttachmentFormats = &swapChainImageFormat
-            }
-        };
-
-        uiPipeline = vk::raii::Pipeline(device, nullptr, uiPipelineChain.get<vk::GraphicsPipelineCreateInfo>());
-
-        uiFrameBuffers.clear();
-        uiFrameBuffers.reserve(MAX_FRAMES_IN_FLIGHT);
-        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
-        {
-            uiFrameBuffers.emplace_back(
-                vk::raii::Buffer{ nullptr },
-                vk::raii::DeviceMemory{ nullptr },
-                nullptr,
-                0,
-                0,
-                vk::raii::Buffer{ nullptr },
-                vk::raii::DeviceMemory{ nullptr },
-                nullptr,
-                0,
-                0);
-        }
-
-        return true;
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Failed to initialize UI: " << e.what() << std::endl;
-        return false;
-    }
+    return initVulkanUI();
 }
 
-void ParticleRenderer::updateUIFrame()
+void ParticleRenderer::updateUIPanel()
 {
-    if (ImGui::GetCurrentContext() == nullptr)
-    {
-        return;
-    }
-
-    ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height));
-    io.DeltaTime = platform->frameTimer > 0.0f ? platform->frameTimer : (1.0f / 60.0f);
-
-    double mouseX = 0.0;
-    double mouseY = 0.0;
-    glfwGetCursorPos(platform->window, &mouseX, &mouseY);
-    io.MousePos = ImVec2(static_cast<float>(mouseX), static_cast<float>(mouseY));
-    io.MouseDown[0] = glfwGetMouseButton(platform->window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
-    io.MouseDown[1] = glfwGetMouseButton(platform->window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
-    io.MouseDown[2] = glfwGetMouseButton(platform->window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
-
-    ImGui::NewFrame();
-    updateParticleUI();
-    ImGui::Render();
-
-    ImDrawData* drawData = ImGui::GetDrawData();
-    if (!drawData || drawData->TotalVtxCount <= 0)
-    {
-        for (auto& frameBuffer : uiFrameBuffers)
-        {
-            frameBuffer.vertexSize = 0;
-            frameBuffer.indexSize = 0;
-        }
-        return;
-    }
-
-    // Only touch resources for the frame we just synchronized with.
-    // Updating/reallocating other in-flight frame buffers can destroy buffers still in GPU use.
-    auto& frameBuffer = uiFrameBuffers[currentFrame];
-    frameBuffer.vertexSize = drawData->TotalVtxCount * sizeof(ImDrawVert);
-    frameBuffer.indexSize = drawData->TotalIdxCount * sizeof(ImDrawIdx);
-
-    if (frameBuffer.vertexBufferSize < frameBuffer.vertexSize)
-    {
-        if (frameBuffer.vertexMapped != nullptr)
-        {
-            frameBuffer.vertexBufferMemory.unmapMemory();
-            frameBuffer.vertexMapped = nullptr;
-        }
-        frameBuffer.vertexBuffer = vk::raii::Buffer(nullptr);
-        frameBuffer.vertexBufferMemory = vk::raii::DeviceMemory(nullptr);
-        createBuffer(
-            frameBuffer.vertexSize,
-            vk::BufferUsageFlagBits::eVertexBuffer,
-            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-            frameBuffer.vertexBuffer,
-            frameBuffer.vertexBufferMemory);
-        frameBuffer.vertexMapped = frameBuffer.vertexBufferMemory.mapMemory(0, frameBuffer.vertexSize);
-        frameBuffer.vertexBufferSize = frameBuffer.vertexSize;
-    }
-
-    if (frameBuffer.indexBufferSize < frameBuffer.indexSize)
-    {
-        if (frameBuffer.indexMapped != nullptr)
-        {
-            frameBuffer.indexBufferMemory.unmapMemory();
-            frameBuffer.indexMapped = nullptr;
-        }
-        frameBuffer.indexBuffer = vk::raii::Buffer(nullptr);
-        frameBuffer.indexBufferMemory = vk::raii::DeviceMemory(nullptr);
-        createBuffer(
-            frameBuffer.indexSize,
-            vk::BufferUsageFlagBits::eIndexBuffer,
-            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-            frameBuffer.indexBuffer,
-            frameBuffer.indexBufferMemory);
-        frameBuffer.indexMapped = frameBuffer.indexBufferMemory.mapMemory(0, frameBuffer.indexSize);
-        frameBuffer.indexBufferSize = frameBuffer.indexSize;
-    }
-
-    if (!frameBuffer.vertexMapped)
-    {
-        frameBuffer.vertexMapped = frameBuffer.vertexBufferMemory.mapMemory(0, frameBuffer.vertexBufferSize);
-    }
-    if (!frameBuffer.indexMapped)
-    {
-        frameBuffer.indexMapped = frameBuffer.indexBufferMemory.mapMemory(0, frameBuffer.indexBufferSize);
-    }
-
-    uint8_t* vtxDst = static_cast<uint8_t*>(frameBuffer.vertexMapped);
-    uint8_t* idxDst = static_cast<uint8_t*>(frameBuffer.indexMapped);
-    for (int32_t cmdListIndex = 0; cmdListIndex < drawData->CmdListsCount; ++cmdListIndex)
-    {
-        const ImDrawList* cmdList = drawData->CmdLists[cmdListIndex];
-        std::memcpy(vtxDst, cmdList->VtxBuffer.Data, cmdList->VtxBuffer.Size * sizeof(ImDrawVert));
-        std::memcpy(idxDst, cmdList->IdxBuffer.Data, cmdList->IdxBuffer.Size * sizeof(ImDrawIdx));
-        vtxDst += cmdList->VtxBuffer.Size * sizeof(ImDrawVert);
-        idxDst += cmdList->IdxBuffer.Size * sizeof(ImDrawIdx);
-    }
-
-    frameBuffer.vertexBufferMemory.unmapMemory();
-    frameBuffer.indexBufferMemory.unmapMemory();
-    frameBuffer.vertexMapped = nullptr;
-    frameBuffer.indexMapped = nullptr;
-}
-
-void ParticleRenderer::updateParticleUI()
-{
-    ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f));
-    ImGui::SetNextWindowSize(ImVec2(300.0f, 280.0f));
-    ImGui::Begin("Particle System", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-
-    ImGui::Text("GPU Particle System (100k particles)");
-    ImGui::Separator();
-
-    ImGui::SliderFloat("Emission Rate", &emissionRate, 100.0f, 50000.0f, "%.0f/s");
-    ImGui::SliderFloat("Lifetime", &particleLifetime, 0.5f, 10.0f, "%.1f s");
-    ImGui::SliderFloat("Particle Size", &particleSize, 0.01f, 1.0f, "%.2f");
-    ImGui::SliderFloat("Gravity", &gravity, 0.0f, 30.0f, "%.1f");
-    ImGui::SliderFloat("Velocity", &velocity, 0.5f, 20.0f, "%.1f");
-    ImGui::SliderFloat("Spread", &spread, 0.1f, 5.0f, "%.1f");
-    ImGui::SliderFloat("Turbulence", &turbulenceStrength, 0.0f, 5.0f, "%.1f");
+    ImGui::SetNextWindowSize(ImVec2(340.0f, 280.0f), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Particles", nullptr, ImGuiWindowFlags_NoCollapse);
 
     ImGui::Separator();
-    ImGui::Text("WASD: Move Camera");
-    ImGui::Text("Q/E: Up/Down");
+    ImGui::Text("Emitter");
+    ImGui::SliderFloat("Emission Rate", &emissionRate, 0.0f, 20000.0f);
+    ImGui::SliderFloat("Particle Lifetime (s)", &particleLifetime, 0.5f, 10.0f);
+    ImGui::SliderFloat("Velocity", &velocity, 0.5f, 30.0f);
+    ImGui::SliderFloat("Spread", &spread, 0.1f, 5.0f);
+
+    ImGui::Separator();
+    ImGui::Text("Appearance");
+    ImGui::SliderFloat("Particle Size", &particleSize, 0.01f, 1.0f);
+
+    ImGui::Separator();
+    ImGui::Text("Physics");
+    ImGui::SliderFloat("Gravity", &gravity, 0.0f, 30.0f);
+    ImGui::SliderFloat("Turbulence", &turbulenceStrength, 0.0f, 5.0f);
 
     ImGui::End();
-}
-
-void ParticleRenderer::recordUI(vk::raii::CommandBuffer& commandBuffer)
-{
-    ImDrawData* drawData = ImGui::GetDrawData();
-    if (!drawData || drawData->TotalVtxCount == 0)
-    {
-        return;
-    }
-
-    auto& frameBuffer = uiFrameBuffers[currentFrame];
-    if (frameBuffer.vertexSize == 0 || frameBuffer.indexSize == 0)
-    {
-        return;
-    }
-
-    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *uiPipeline);
-    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *uiPipelineLayout, 0, *uiDescriptorSets[currentFrame], nullptr);
-
-    vk::DeviceSize offsets[] = { 0 };
-    commandBuffer.bindVertexBuffers(0, *frameBuffer.vertexBuffer, offsets);
-    commandBuffer.bindIndexBuffer(
-        *frameBuffer.indexBuffer,
-        0,
-        sizeof(ImDrawIdx) == 2 ? vk::IndexType::eUint16 : vk::IndexType::eUint32);
-
-    struct UiPushConsts
-    {
-        glm::vec2 scale;
-        glm::vec2 translate;
-    };
-
-    UiPushConsts pushConsts{};
-    pushConsts.scale = glm::vec2(2.0f / float(drawData->DisplaySize.x), 2.0f / float(drawData->DisplaySize.y));
-    pushConsts.translate = glm::vec2(-1.0f, -1.0f);
-    commandBuffer.pushConstants(
-        *uiPipelineLayout,
-        vk::ShaderStageFlagBits::eVertex,
-        0,
-        vk::ArrayProxy<const UiPushConsts>(1, &pushConsts));
-
-    int32_t globalVertexOffset = 0;
-    uint32_t globalIndexOffset = 0;
-    const ImVec2 clipOff = drawData->DisplayPos;
-    const ImVec2 clipScale = ImVec2(1.0f, 1.0f);
-
-    for (int32_t listIndex = 0; listIndex < drawData->CmdListsCount; ++listIndex)
-    {
-        const ImDrawList* cmdList = drawData->CmdLists[listIndex];
-        uint32_t cmdListIndexOffset = 0;
-
-        for (int32_t cmdIndex = 0; cmdIndex < cmdList->CmdBuffer.Size; ++cmdIndex)
-        {
-            const ImDrawCmd* cmd = &cmdList->CmdBuffer[cmdIndex];
-
-            ImVec4 clipRect;
-            clipRect.x = (cmd->ClipRect.x - clipOff.x) * clipScale.x;
-            clipRect.y = (cmd->ClipRect.y - clipOff.y) * clipScale.y;
-            clipRect.z = (cmd->ClipRect.z - clipOff.x) * clipScale.x;
-            clipRect.w = (cmd->ClipRect.w - clipOff.y) * clipScale.y;
-
-            if (clipRect.x < float(swapChainExtent.width) &&
-                clipRect.y < float(swapChainExtent.height) &&
-                clipRect.z >= 0.0f &&
-                clipRect.w >= 0.0f)
-            {
-                vk::Rect2D scissor;
-                scissor.offset.x = static_cast<int32_t>(clipRect.x > 0.0f ? clipRect.x : 0.0f);
-                scissor.offset.y = static_cast<int32_t>(clipRect.y > 0.0f ? clipRect.y : 0.0f);
-                float scissorWidth = clipRect.z - clipRect.x;
-                float scissorHeight = clipRect.w - clipRect.y;
-                if (scissorWidth < 0.0f) scissorWidth = 0.0f;
-                if (scissorHeight < 0.0f) scissorHeight = 0.0f;
-                scissor.extent.width = static_cast<uint32_t>(scissorWidth);
-                scissor.extent.height = static_cast<uint32_t>(scissorHeight);
-
-                commandBuffer.setScissor(0, scissor);
-                commandBuffer.drawIndexed(cmd->ElemCount, 1, globalIndexOffset + cmdListIndexOffset, globalVertexOffset, 0);
-            }
-
-            cmdListIndexOffset += cmd->ElemCount;
-        }
-
-        globalIndexOffset += static_cast<uint32_t>(cmdList->IdxBuffer.Size);
-        globalVertexOffset += cmdList->VtxBuffer.Size;
-    }
 }
 
 void ParticleRenderer::cleanup()
 {
     device.waitIdle();
-    shutdownUI();
+    shutdownVulkanUI();
 
     computeCompleteSemaphores.clear();
     computeCommandBuffers.clear();

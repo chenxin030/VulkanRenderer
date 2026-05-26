@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-set(EXAMPLE_NAME 6_ssr)
+set(EXAMPLE_NAME 06_ssr)
 set(EXAMPLE_SHADER_DIR "${CMAKE_SOURCE_DIR}/shaders/ssr")
 
 add_executable(${EXAMPLE_NAME}

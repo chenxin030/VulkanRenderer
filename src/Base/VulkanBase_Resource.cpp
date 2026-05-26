@@ -1,5 +1,6 @@
 #include "VulkanBase.h"
 #include <stb_image.h>
+#include <iostream>
 
 void VulkanBase::createVertexBuffer(Mesh& mesh) {
     auto& vertices = mesh.vertices;

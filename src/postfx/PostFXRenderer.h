@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Base/VulkanBase.h>
+#include <Base/VulkanBase_UI.h>
 
 struct PostFXRenderer final : VulkanBase
 {
@@ -131,9 +132,8 @@ private:
     bool createBloomCompositePipeline();
 
     bool initUI();
-    void updateUIFrame(uint32_t imageIndex);
-    void updatePostFXUI();
-    void recordUI(vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex);
+    void updateUIPanel() override;
+    void recreateSwapChain() override;
 
     void recordGBufferPass(vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex);
     void recordDeferredPass(vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex);

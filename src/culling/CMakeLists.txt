@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-set(EXAMPLE_NAME 7_culling)
+set(EXAMPLE_NAME 07_culling)
 set(EXAMPLE_SHADER_DIR "${CMAKE_SOURCE_DIR}/shaders/culling")
 
 add_executable(${EXAMPLE_NAME}

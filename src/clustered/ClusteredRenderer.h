@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Base/VulkanBase.h>
+#include <Base/VulkanBase_UI.h>
 #include <glm/glm.hpp>
 #include <vector>
 
@@ -140,9 +141,7 @@ public:
     void recordCommandBuffer(uint32_t frameIndex);
 
     bool initUI();
-    void updateUIFrame();
-    void updateClusteredUI();
-    void recordUI(vk::raii::CommandBuffer& commandBuffer, uint32_t frameIndex);
+    void updateUIPanel() override;
 
     uint32_t getTotalClusters() const { return clusterX * clusterY * clusterZ; }
     uint32_t getLightIndexBufferSize() const { return getTotalClusters() * MAX_LIGHTS_PER_CLUSTER; }

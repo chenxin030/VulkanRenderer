@@ -10,9 +10,12 @@ public:
     void initialize(Platform* _platform);
 
     bool initVulkan();
+    bool initUI();
     bool prepareResource();
     void render();
     void waitIdle() { device.waitIdle(); }
+
+	void updateUIPanel() override;
 
 private:
 	vk::raii::DescriptorSetLayout iblPbrDescriptorSetLayout = nullptr;

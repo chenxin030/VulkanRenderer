@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-set(EXAMPLE_NAME 4_shadow)
+set(EXAMPLE_NAME 04_shadow)
 set(EXAMPLE_SHADER_DIR "${CMAKE_SOURCE_DIR}/shaders/shadow")
 
 add_executable(${EXAMPLE_NAME}

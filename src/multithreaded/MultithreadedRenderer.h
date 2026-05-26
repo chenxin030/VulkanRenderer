@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Base/VulkanBase.h>
+#include <Base/VulkanBase_UI.h>
 
 #include "FrameGraph.h"
 #include "GpuProfiler.h"
@@ -147,17 +148,15 @@ private:
     bool initFrameGraph();
     bool initThreading();
     bool initUI();
+    void updateUIPanel() override;
 
     void updateFrameData(uint32_t frameIndex);
-    void updateUIFrame();
-    void updateProfilerUI();
     void updateInstanceBuffer(uint32_t frameIndex);
 
     void dispatchWorkerRecording(uint32_t frameIndex);
     WorkerRecordStats recordWorkerRange(uint32_t frameIndex, RenderBatch batch, bool dynamicBatch);
 
     void recordPrimaryCommandBuffer(uint32_t imageIndex);
-    void recordUI(vk::raii::CommandBuffer& commandBuffer, uint32_t frameIndex);
 
     static PercentileStats calcPercentiles(const std::vector<float>& samples);
     static BenchmarkStats buildBenchmarkStats(const std::vector<float>& frameSamples, const std::vector<float>& recordSamples);

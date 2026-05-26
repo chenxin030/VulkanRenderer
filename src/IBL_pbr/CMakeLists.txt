@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-set(EXAMPLE_NAME 3_pbr_ibl)
+set(EXAMPLE_NAME 03_pbr_ibl)
 set(EXAMPLE_SHADER_DIR "${CMAKE_SOURCE_DIR}/shaders/IBL_pbr")
 
 add_executable(${EXAMPLE_NAME}

@@ -1,5 +1,6 @@
 #include "InstancedRenderer.h"
 
+#include <Base/VulkanBase_UI.h>
 #include <glm/gtc/matrix_transform.hpp>
 
 struct InstanceData {
@@ -19,6 +20,28 @@ bool InstancedRenderer::initVulkan()
 {
     if (!VulkanBase::initVulkan("VulkanRenderer - 1_InstenceRender")) return false;
     return true;
+}
+
+bool InstancedRenderer::initUI()
+{
+    return initVulkanUI();
+}
+
+void InstancedRenderer::updateUIPanel()
+{
+    ImGui::SetNextWindowSize(ImVec2(300.0f, 180.0f), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Instanced Render", nullptr, ImGuiWindowFlags_NoCollapse);
+
+    ImGui::Separator();
+    ImGui::Text("Instance Count");
+    ImGui::SliderInt("Count", reinterpret_cast<int*>(&instanceCount), 1, 100);
+
+    ImGui::Separator();
+    ImGui::Text("Rotation Speed");
+    static float rotationSpeed = 0.5f;
+    ImGui::SliderFloat("Speed (rad/s)", &rotationSpeed, 0.0f, 5.0f);
+
+    ImGui::End();
 }
 
 bool InstancedRenderer::prepareResource()
@@ -44,6 +67,11 @@ bool InstancedRenderer::prepareResource()
         return false;
     }
     createInstancedDescriptorSets();
+
+    if (!initUI()) {
+        std::cerr << "Failed to initialize UI" << std::endl;
+        return false;
+    }
 
     return true;
 }
@@ -355,6 +383,12 @@ void InstancedRenderer::recordCommandBuffer(uint32_t imageIndex)
     commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *instancedPipelineLayout, 0, *instancedBufferResources.descriptorSets[currentFrame], nullptr);
     commandBuffer.drawIndexed(mesh.indices.size(), instanceCount, 0, 0, 0);
     commandBuffer.endRendering();
+
+    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+    recordUICmdBuffer(commandBuffer, currentFrame);
+    commandBuffer.end();
+
     transition_image_layout(
         swapChainImages[imageIndex],
         vk::ImageLayout::eColorAttachmentOptimal,
@@ -387,6 +421,7 @@ void InstancedRenderer::render()
     device.resetFences(*inFlightFences[currentFrame]);
 
     commandBuffers[currentFrame].reset();
+    updateUIFrame(currentFrame);
     updateInstancedBuffers(currentFrame);
     recordCommandBuffer(imageIndex);
 
@@ -429,4 +464,10 @@ void InstancedRenderer::render()
     }
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+
+void InstancedRenderer::cleanup()
+{
+    device.waitIdle();
+    shutdownVulkanUI();
 }

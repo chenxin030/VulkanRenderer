@@ -34,7 +34,7 @@ int main()
             platform.endFrame();
         }
 
-        renderer.device.waitIdle();
+        renderer.cleanup();
         platform.cleanup();
     }
     catch (const std::exception& e)

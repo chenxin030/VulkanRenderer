@@ -1,21 +1,22 @@
-# 实例化渲染（Level 2）
+# 实例化渲染
 
 [返回目录](../../README.md)
 
-实例化能够使用一次 drawCall 渲染多个实例，并通过 UBO/SSBO 提供每个实例的变换矩阵。
+实例化渲染：通过 UBO/SSBO 提供多个实例的变换矩阵，用一次 drawCall 渲染多个实例，。
 
 使用的着色器：`instanced.slang`
 
 ## 传入MVP矩阵
 
-和上一节不同，上一节把MVP放到了一起（3 * MVP），而实际上只有Model矩阵不同，VP矩阵相同，所以变成了 3 * MVP + VP，也就是从MVP数组变为了M数组+VP，Model矩阵使用 SSBO，VP矩阵使用UBO。一共是 1SSBO + 1UBO + 1Sampler。
+和[基础教程](../BasicRender/README.md)不同，上一节把MVP放到了一起（3 * MVP），而实际上渲染同一个场景的同种物体，只有Model矩阵的区别，VP矩阵相同，所以变成了 3 * MVP + VP，也就是从 MVP 数组变为了 M 数组+VP，Model矩阵使用 SSBO，VP矩阵使用UBO。一共是 1SSBO + 1UBO + 1Sampler。
 
 UBO和SSBO的区别在于：
 - UBO 比较像小（通常 64KB 左右），SSBO 更大（可到数 MB 甚至更多，取决于硬件）
-- UBO 主要用于只读的、频繁使用的小数据（如全局常量、视图矩阵、投影矩阵）。SSBO 支持更灵活的读写（虽然在渲染阶段多数也只读），适合大数组或结构体列表。
+- UBO 主要用于只读的、频繁使用的小数据（如全局常量、VP 矩阵）。SSBO 支持更灵活的读写（虽然在渲染阶段多数也只读），适合大数组或结构体列表。
 - UBO 通常使用 std140 布局，SSBO 通常使用 std430，SSBO 更紧凑。
-  - std140：每个元素都必须按 vec4 对齐，结构体成员会被填充到 16 字节边界，浪费空间多，但兼容性强
-  - std430：保持基本对齐，但数组和结构体不会强制对齐到 16 字节，vec3 仍对齐为 16，但数组元素不再强制 padding 到 16，更紧凑，更省内存
+  - std140：每个元素都必须按 vec4 对齐，结构体成员会被填充到 16 字节边界，例如一个 float 在 std140 中也被视为"占一个 vec4 槽位"（base alignment = 16），所以必须从下一个 16 字节边界开始。总共占用 32 字节，浪费了 12 字节 padding。浪费空间多，但兼容性强
+  - std430：保持基本对齐，数组和结构体不会强制对齐到 16 字节，vec3 仍对齐为 16，，但之后 float 只需要按 4 字节对齐（它的自然对齐值），不需要强制对齐到 vec4。总共占用 20 字节，几乎没有浪费。数组元素不再强制 padding 到 16，更紧凑，更省内存
+  
 ```c++
 layout(std140) uniform UBO {
     vec3 a;   // 16 bytes
@@ -28,30 +29,27 @@ layout(std430) buffer SSBO {
 };
 ```
 
-创建 SSBO 和 UBO 类似（见 `createUniformBuffers` ，`createStorageBuffers` 函数）参数2 `vk::BufferUsageFlags` 有区别
+创建 SSBO 和 UBO 类似（见 `createUniformBuffers` ，`createStorageBuffers` 函数）区别在参数2 `vk::BufferUsageFlags` 
 ```c++
 void Renderer::createInstancedBuffers() {
     createUniformBuffers(globalUboResources, sizeof(GlobalUBO));
-    if (scene != nullptr) {
-        maxInstances = scene->getMaxInstances();
-    }
-    createStorageBuffers(instancedBufferResources, sizeof(InstanceData) * maxInstances);
+    createStorageBuffers(instancedBufferResources, sizeof(InstanceData) * instanceCount);
 }
 ```
 
 ## 创建资源
 
-1. 创建缓冲
+1. 创建buffer
    - `GlobalUBO`：view / proj
    - `InstanceData[]`：每个实例的 model 矩阵
 2. 创建描述符
    - binding 0：全局 UBO
    - binding 1：实例 SSBO
-   - binding 2：纹理采样器
+   - binding 2：Sampler
 3. 每帧更新
-   - 更新相机 UBO
+   - 更新相机 UBO（VP）
    - 更新实例 SSBO（所有实例的 model）
-4. 记录命令
+4. recordCommand
    - 绑定 pipeline / descriptor set
    - `drawIndexed(indexCount, instanceCount, ...)`
 
@@ -93,18 +91,17 @@ vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK
 
 // 渲染循环render() -> recordCommandBuffer()
 commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *instancedPipeline);
-auto& mesh = resourceManager->meshes[scene->cubeMeshIndex];
 commandBuffer.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
 commandBuffer.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
-// 只需绑定一次描述符集，只有一次drawcall
+// 一次drawcall对应一次描述符集绑定
 commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *instancedPipelineLayout, 0, *instancedBufferResources.descriptorSets[currentFrame], nullptr);
-const uint32_t instanceCount = scene ? scene->getMeshInstanceCount(MeshTag::Cube) : 0;
+const uint32_t instanceCount = 3;
 // 区别是参数2：实例数量
 commandBuffer.drawIndexed(mesh.indices.size(), instanceCount, 0, 0, 0);
 
 ```
 ## 着色器数据绑定
-- `shaders/instanced.slang`
+- 着色器：`shaders/instanced.slang`
 - 顶点着色器使用 `SV_InstanceID` 索引 SSBO
 - `globalUbo` 提供 view / proj
 - `instanceBuffer[instanceID].model` 提供 model

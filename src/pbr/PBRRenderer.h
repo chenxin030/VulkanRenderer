@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Base/VulkanBase.h>
+#include <Base/VulkanBase_UI.h>
 #include <glm/glm.hpp>
 #include <vector>
 
@@ -10,9 +11,16 @@ public:
     void initialize(Platform* _platform);
 
     bool initVulkan();
+    bool initUI();
     bool prepareResource();
     void render();
-    void waitIdle() { device.waitIdle(); }
+    void waitIdle() {
+        device.waitIdle();
+        shutdownVulkanUI();
+    }
+
+private:
+    void updateUIPanel() override;
 
 private:
     // PBR pipeline resources

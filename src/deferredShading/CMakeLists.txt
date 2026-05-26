@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.28)
 
-set(EXAMPLE_NAME 8_deferredShading)
-set(EXAMPLE_SHADER_DIR "${CMAKE_SOURCE_DIR}/shaders/deferredShading")
+set(EXAMPLE_NAME 08_deferredShading)
+set(EXAMPLE_SHADER_DIR "${CMAKE_SOURCE_DIR}/shaders/8_deferredShading")
 
 add_executable(${EXAMPLE_NAME}
     ${CMAKE_CURRENT_SOURCE_DIR}/StandaloneMain.cpp

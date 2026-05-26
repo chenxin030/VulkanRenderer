@@ -27,6 +27,9 @@ struct ShadowUBO
     float4 areaLightColor;
     float4 areaLightU;
     float4 areaLightV;
+    uint dirLightEnabled;
+    uint pointLightEnabled;
+    uint areaLightEnabled;
 };
 [[vk::binding(2, 0)]]
 ConstantBuffer<ShadowUBO> shadowUbo;
@@ -229,7 +232,21 @@ float4 fragMain(VSOutput input) : SV_TARGET
     }
     float3 areaLight = areaSum * (areaIntensity * 0.25) * areaColor;
 
-    float3 color = ambient + dirShadow * (dirDiffuse + dirSpecular) + pointDiffuse + pointSpecular + areaLight;
+    float3 color = ambient;
+
+    if (shadowUbo.dirLightEnabled != 0u)
+    {
+        color += dirShadow * (dirDiffuse + dirSpecular);
+    }
+    if (shadowUbo.pointLightEnabled != 0u)
+    {
+        color += pointDiffuse + pointSpecular;
+    }
+    if (shadowUbo.areaLightEnabled != 0u)
+    {
+        color += areaLight;
+    }
+
     return float4(color, 1.0);
 }
 

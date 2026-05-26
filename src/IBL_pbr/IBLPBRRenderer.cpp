@@ -1,5 +1,6 @@
 #include "IBLPBRRenderer.h"
 
+#include <Base/VulkanBase_UI.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <chrono>
 #include <cmath>
@@ -126,7 +127,28 @@ bool IBLPBRRenderer::prepareResource()
 	createPBRDescriptorSets();
 	createSkyboxDescriptorSets();
 
+	if (!initUI()) {
+		std::cerr << "Failed to initialize UI" << std::endl;
+		return false;
+	}
+
     return true;
+}
+
+void IBLPBRRenderer::updateUIPanel()
+{
+    ImGui::SetNextWindowSize(ImVec2(300.0f, 180.0f), ImGuiCond_FirstUseEver);
+    ImGui::Begin("IBL PBR", nullptr, ImGuiWindowFlags_NoCollapse);
+
+    ImGui::Separator();
+	ImGui::Text("Instance Count: %d", instanceCount); // 49 ¹Ì¶¨
+	ImGui::Text("Exposure: %.1f", 4.5f);
+    ImGui::End();
+}
+
+bool IBLPBRRenderer::initUI()
+{
+    return initVulkanUI();
 }
 
 bool IBLPBRRenderer::createPBRDescriptorSetLayout()
@@ -1027,6 +1049,24 @@ void IBLPBRRenderer::recordCommandBuffer(uint32_t imageIndex)
     commandBuffer.drawIndexed(static_cast<uint32_t>(sphereMesh.indices.size()), instanceCount, 0, 0, 0);
     commandBuffer.endRendering();
 
+    {
+        vk::RenderingAttachmentInfo uiColorAttachment{
+            .imageView = swapChainImageViews[imageIndex],
+            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+            .loadOp = vk::AttachmentLoadOp::eLoad,
+            .storeOp = vk::AttachmentStoreOp::eStore,
+        };
+        vk::RenderingInfo uiRenderingInfo{
+            .renderArea = { .offset = {0, 0}, .extent = swapChainExtent },
+            .layerCount = 1,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &uiColorAttachment
+        };
+        commandBuffer.beginRendering(uiRenderingInfo);
+        recordUICmdBuffer(commandBuffer, currentFrame);
+        commandBuffer.endRendering();
+    }
+
     transition_image_layout(
         swapChainImages[imageIndex],
         vk::ImageLayout::eColorAttachmentOptimal,
@@ -1057,6 +1097,7 @@ void IBLPBRRenderer::render()
     device.resetFences(*inFlightFences[currentFrame]);
     commandBuffers[currentFrame].reset();
 
+    updateUIFrame();
     updatePBRInstanceBuffers(currentFrame);
     recordCommandBuffer(imageIndex);
 

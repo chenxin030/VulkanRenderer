@@ -1,5 +1,6 @@
 #include "PBRRenderer.h"
 
+#include <Base/VulkanBase_UI.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <chrono>
 #include <cmath>
@@ -39,9 +40,35 @@ bool PBRRenderer::initVulkan()
     return true;
 }
 
+bool PBRRenderer::initUI()
+{
+    return initVulkanUI();
+}
+
+void PBRRenderer::updateUIPanel()
+{
+    ImGui::SetNextWindowSize(ImVec2(300.0f, 200.0f), ImGuiCond_FirstUseEver);
+    ImGui::Begin("PBR Material Grid", nullptr, ImGuiWindowFlags_NoCollapse);
+
+    ImGui::Text("7x7 sphere grid: metallic (X) vs roughness (Y)");
+    ImGui::Spacing();
+
+    ImGui::Separator();
+    ImGui::Text("Instance Count");
+    static int count = 49;
+    if (ImGui::SliderInt("Count", &count, 1, 100)) {
+        instanceCount = static_cast<uint32_t>(count);
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Point Lights");
+    ImGui::Text("4 lights with animated motion");
+
+    ImGui::End();
+}
+
 bool PBRRenderer::prepareResource()
 {
-    // Geometry
     generateSphere(sphereMesh, 1.0f, 100);
     createVertexBuffer(sphereMesh);
     createIndexBuffer(sphereMesh);
@@ -60,6 +87,11 @@ bool PBRRenderer::prepareResource()
         return false;
     }
     createPBRDescriptorSets();
+
+    if (!initUI()) {
+        std::cerr << "Failed to initialize UI" << std::endl;
+        return false;
+    }
 
     return true;
 }
@@ -327,6 +359,10 @@ void PBRRenderer::recordCommandBuffer(uint32_t imageIndex)
     commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pbrPipelineLayout, 0, *pbrInstanceBufferResources.descriptorSets[currentFrame], nullptr);
     commandBuffer.drawIndexed(static_cast<uint32_t>(sphereMesh.indices.size()), instanceCount, 0, 0, 0);
     commandBuffer.endRendering();
+
+    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+    recordUICmdBuffer(commandBuffer, currentFrame);
 
     transition_image_layout(
         swapChainImages[imageIndex],

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Base/VulkanBase.h>
+#include <Base/VulkanBase_UI.h>
 
 struct GIRenderer final : VulkanBase
 {
@@ -112,8 +113,7 @@ private:
     bool recreateSizedResources();
 
     bool initUI();
-    void updateUIFrame();
-    void updateGIVUI();
+    void updateUIPanel() override;
     void recordUI(vk::raii::CommandBuffer& commandBuffer);
 
     void recordCommandBuffer(uint32_t imageIndex);

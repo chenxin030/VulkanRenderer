@@ -1,18 +1,23 @@
 #pragma once
 
-#include <VulkanBase.h>
+#include <Base/VulkanBase.h>
+#include <Base/VulkanBase_UI.h>
 #include <glm/glm.hpp>
 #include <array>
+#include <Mesh.h>
 
-// Independent "triangle" example (no RENDERING_LEVEL).
 struct InstancedRenderer final : VulkanBase
 {
     void initialize(Platform* _platform);
 
     bool initVulkan();
+    bool initUI();
     bool prepareResource();
     void render();
     void cleanup();
+
+private:
+    void updateUIPanel() override;
 
 private:
     struct PushConstants

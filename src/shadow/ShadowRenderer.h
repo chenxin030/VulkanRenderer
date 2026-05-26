@@ -40,6 +40,10 @@ private:
     float pointLightIntensity = 3.5f;
     float areaLightIntensity = 2.5f;
 
+    bool dirLightEnabled = true;
+    bool pointLightEnabled = true;
+    bool areaLightEnabled = true;
+
     bool createShadowDescriptorSetLayout();
     bool createShadowDescriptorPool();
     void createShadowDescriptorSets();
@@ -51,9 +55,7 @@ private:
     bool createShadowPipelines();
 
     bool initUI();
-    void updateUIFrame();
-    void recordUI(vk::raii::CommandBuffer& commandBuffer);
-    void updateShadowUI();
+    void updateUIPanel() override;
 
     void recordCommandBuffer(uint32_t imageIndex);
 };

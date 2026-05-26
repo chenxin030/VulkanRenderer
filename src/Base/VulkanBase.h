@@ -1,17 +1,18 @@
 #pragma once
 
+#include "VulkanBase_UI.h"
+
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
 #include "Camera.h"
 #include "Platform.h"
-#include "ResourceManager.h"
+#include "VulkanTypes.h"
 
 #include <optional>
 #include <string>
 #include <vector>
-
-struct Scene;
+#include "Mesh.h"
 
 inline const std::vector<char const*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
@@ -99,7 +100,6 @@ struct VulkanBase {
         if (glfwGetKey(platform->window, GLFW_KEY_E) == GLFW_PRESS) camera.ProcessKeyboard(DOWN, deltaTime);
     }
 
-    // Core lifecycle (implemented today in Renderer_*; will be moved later)
     bool initVulkan(const std::string& appName);
     bool createInstance(const std::string& appName);
     bool setupDebugMessenger();
@@ -176,21 +176,15 @@ struct VulkanBase {
     vk::raii::DescriptorSets uiDescriptorSets = nullptr;
     TextureData uiFontTexture;
 
-    struct UiFrameBuffers
-    {
-        vk::raii::Buffer vertexBuffer = nullptr;
-        vk::raii::DeviceMemory vertexBufferMemory = nullptr;
-        void* vertexMapped = nullptr;
-        size_t vertexSize = 0;
-        size_t vertexBufferSize = 0; // tracked for dynamic reallocation
-        vk::raii::Buffer indexBuffer = nullptr;
-        vk::raii::DeviceMemory indexBufferMemory = nullptr;
-        void* indexMapped = nullptr;
-        size_t indexSize = 0;
-        size_t indexBufferSize = 0; // tracked for dynamic reallocation
-    };
     std::vector<UiFrameBuffers> uiFrameBuffers;
 
-    virtual void shutdownUI();
+    virtual void updateUIPanel() = 0;
+
+    bool initVulkanUI() { return ::initVulkanUI(this); }
+    void shutdownVulkanUI() { ::vkrShutdownUI(this); }
+    void updateUIFrame() { ::vkrUpdateUIFrame(this); }
+    void recordUICmdBuffer(vk::raii::CommandBuffer& cmdBuffer) { ::vkrRecordUICmdBuffer(this, cmdBuffer); }
+    void recordUICmdBuffer(vk::raii::CommandBuffer& cmdBuffer, uint32_t frameIndex) { ::vkrRecordUICmdBuffer(this, cmdBuffer, frameIndex); }
+    void reallocateUIMemory(UiFrameBuffers& fb, size_t vtxBytes, size_t idxBytes) { ::vkrReallocateUIMemory(this, fb, vtxBytes, idxBytes); }
 };
 

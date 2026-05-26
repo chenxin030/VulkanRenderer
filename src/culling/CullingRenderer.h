@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Base/VulkanBase.h>
+#include <Base/VulkanBase_UI.h>
 
 struct CullingRenderer final : VulkanBase
 {
@@ -148,9 +149,7 @@ public:
     void updateCullingStats();
 
     bool initUI();
-    void updateUIFrame();
-    void recordUI(vk::raii::CommandBuffer& commandBuffer);
-    void updateCullingUI();
+    void updateUIPanel() override;
 
     static void extractFrustumPlanes(const glm::mat4& matrix, glm::vec4* planesOut);
 };

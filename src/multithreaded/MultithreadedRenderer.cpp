@@ -1,5 +1,7 @@
 #include "MultithreadedRenderer.h"
 
+#include <Base/VulkanBase_UI.h>
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -365,179 +367,7 @@ bool MultithreadedRenderer::initThreading()
 
 bool MultithreadedRenderer::initUI()
 {
-    if (!uiEnabled)
-    {
-        return true;
-    }
-
-    if (ImGui::GetCurrentContext() != nullptr)
-    {
-        return true;
-    }
-
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGui::StyleColorsDark();
-
-    ImGuiIO& io = ImGui::GetIO();
-    io.IniFilename = nullptr;
-    io.LogFilename = nullptr;
-
-    unsigned char* pixels = nullptr;
-    int fontWidth = 0;
-    int fontHeight = 0;
-    io.Fonts->GetTexDataAsRGBA32(&pixels, &fontWidth, &fontHeight);
-
-    vk::DeviceSize uploadSize = static_cast<vk::DeviceSize>(fontWidth) * static_cast<vk::DeviceSize>(fontHeight) * 4u;
-    vk::raii::Buffer stagingBuffer({});
-    vk::raii::DeviceMemory stagingBufferMemory({});
-    createBuffer(uploadSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
-
-    void* mapped = stagingBufferMemory.mapMemory(0, uploadSize);
-    std::memcpy(mapped, pixels, static_cast<size_t>(uploadSize));
-    stagingBufferMemory.unmapMemory();
-
-    uiFontTexture.mipLevels = 1;
-    createImage(static_cast<uint32_t>(fontWidth), static_cast<uint32_t>(fontHeight), 1, vk::Format::eR8G8B8A8Unorm, vk::ImageTiling::eOptimal,
-        vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, uiFontTexture);
-
-    transitionImageLayout(uiFontTexture.textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, 1);
-    copyBufferToImage(stagingBuffer, uiFontTexture.textureImage, static_cast<uint32_t>(fontWidth), static_cast<uint32_t>(fontHeight));
-    transitionImageLayout(uiFontTexture.textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, 1);
-
-    uiFontTexture.textureImageView = createImageView(uiFontTexture.textureImage, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor, 1);
-
-    vk::SamplerCreateInfo samplerInfo{
-        .magFilter = vk::Filter::eLinear,
-        .minFilter = vk::Filter::eLinear,
-        .mipmapMode = vk::SamplerMipmapMode::eLinear,
-        .addressModeU = vk::SamplerAddressMode::eClampToEdge,
-        .addressModeV = vk::SamplerAddressMode::eClampToEdge,
-        .addressModeW = vk::SamplerAddressMode::eClampToEdge,
-        .mipLodBias = 0.0f,
-        .anisotropyEnable = vk::False,
-        .maxAnisotropy = 1.0f,
-        .compareEnable = vk::False,
-        .compareOp = vk::CompareOp::eAlways,
-        .minLod = 0.0f,
-        .maxLod = 0.0f
-    };
-    uiFontTexture.textureSampler = vk::raii::Sampler(device, samplerInfo);
-
-    std::vector<vk::DescriptorSetLayoutBinding> uiBindings = {
-        {.binding = 0, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment}
-    };
-    vk::DescriptorSetLayoutCreateInfo layoutInfo{ .bindingCount = static_cast<uint32_t>(uiBindings.size()), .pBindings = uiBindings.data() };
-    uiDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
-
-    std::vector<vk::DescriptorPoolSize> poolSizes = {
-        {.type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1}
-    };
-    vk::DescriptorPoolCreateInfo poolInfo{
-        .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-        .maxSets = 1,
-        .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
-        .pPoolSizes = poolSizes.data()
-    };
-    uiDescriptorPool = vk::raii::DescriptorPool(device, poolInfo);
-
-    vk::DescriptorSetAllocateInfo allocInfo{
-        .descriptorPool = *uiDescriptorPool,
-        .descriptorSetCount = 1,
-        .pSetLayouts = &*uiDescriptorSetLayout
-    };
-    uiDescriptorSets = vk::raii::DescriptorSets(device, allocInfo);
-
-    vk::DescriptorImageInfo fontInfo{ .sampler = uiFontTexture.textureSampler, .imageView = uiFontTexture.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
-    vk::WriteDescriptorSet write{ .dstSet = *uiDescriptorSets[0], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &fontInfo };
-    device.updateDescriptorSets({ write }, nullptr);
-
-    vk::PushConstantRange pushConstRange{ .stageFlags = vk::ShaderStageFlagBits::eVertex, .offset = 0, .size = 16u };
-    vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 1, .pSetLayouts = &*uiDescriptorSetLayout, .pushConstantRangeCount = 1, .pPushConstantRanges = &pushConstRange };
-    uiPipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
-
-    vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "imgui.spv"));
-    vk::PipelineShaderStageCreateInfo vertShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain" };
-    vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain" };
-    vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
-
-    vk::VertexInputBindingDescription bindingDescription{ .binding = 0, .stride = sizeof(ImDrawVert), .inputRate = vk::VertexInputRate::eVertex };
-    std::array<vk::VertexInputAttributeDescription, 3> attributeDescriptions = {
-        vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32Sfloat, offsetof(ImDrawVert, pos)),
-        vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32Sfloat, offsetof(ImDrawVert, uv)),
-        vk::VertexInputAttributeDescription(2, 0, vk::Format::eR8G8B8A8Unorm, offsetof(ImDrawVert, col))
-    };
-    vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
-        .vertexBindingDescriptionCount = 1,
-        .pVertexBindingDescriptions = &bindingDescription,
-        .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
-        .pVertexAttributeDescriptions = attributeDescriptions.data()
-    };
-
-    vk::PipelineInputAssemblyStateCreateInfo inputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = vk::False };
-    vk::PipelineViewportStateCreateInfo viewportState{ .viewportCount = 1, .scissorCount = 1 };
-
-    vk::PipelineRasterizationStateCreateInfo rasterizer{
-        .depthClampEnable = vk::False,
-        .rasterizerDiscardEnable = vk::False,
-        .polygonMode = vk::PolygonMode::eFill,
-        .cullMode = vk::CullModeFlagBits::eNone,
-        .frontFace = vk::FrontFace::eCounterClockwise,
-        .depthBiasEnable = vk::False,
-        .lineWidth = 1.0f
-    };
-
-    vk::PipelineMultisampleStateCreateInfo multisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False };
-
-    vk::PipelineDepthStencilStateCreateInfo depthStencil{
-        .depthTestEnable = vk::False,
-        .depthWriteEnable = vk::False,
-        .depthCompareOp = vk::CompareOp::eAlways,
-        .depthBoundsTestEnable = vk::False,
-        .stencilTestEnable = vk::False
-    };
-
-    vk::PipelineColorBlendAttachmentState colorBlendAttachment{
-        .blendEnable = vk::True,
-        .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
-        .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
-        .colorBlendOp = vk::BlendOp::eAdd,
-        .srcAlphaBlendFactor = vk::BlendFactor::eOne,
-        .dstAlphaBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
-        .alphaBlendOp = vk::BlendOp::eAdd,
-        .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
-    };
-    vk::PipelineColorBlendStateCreateInfo colorBlending{ .logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 1, .pAttachments = &colorBlendAttachment };
-
-    std::vector dynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
-    vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
-
-    vk::Format depthFormat = findDepthFormat();
-    vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipelineCreateInfoChain = {
-        {
-            .stageCount = 2,
-            .pStages = shaderStages,
-            .pVertexInputState = &vertexInputInfo,
-            .pInputAssemblyState = &inputAssembly,
-            .pViewportState = &viewportState,
-            .pRasterizationState = &rasterizer,
-            .pMultisampleState = &multisampling,
-            .pDepthStencilState = &depthStencil,
-            .pColorBlendState = &colorBlending,
-            .pDynamicState = &dynamicState,
-            .layout = uiPipelineLayout,
-            .renderPass = nullptr
-        },
-        {
-            .colorAttachmentCount = 1,
-            .pColorAttachmentFormats = &swapChainImageFormat,
-            .depthAttachmentFormat = depthFormat
-        }
-    };
-    uiPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
-
-    uiFrameBuffers.resize(swapChainImages.size());
-    return true;
+    return initVulkanUI();
 }
 
 void MultithreadedRenderer::updateFrameData(uint32_t frameIndex)
@@ -590,44 +420,7 @@ void MultithreadedRenderer::updateInstanceBuffer(uint32_t frameIndex)
     std::memcpy(instanceBufferResources.BuffersMapped[frameIndex], instances.data(), sizeof(InstanceData) * instances.size());
 }
 
-void MultithreadedRenderer::updateUIFrame()
-{
-    const float dt = platform ? platform->frameTimer : 0.0f;
-    frameMs = dt * 1000.0f;
-    fps = dt > 0.0f ? 1.0f / dt : 0.0f;
-
-    if (!uiEnabled || ImGui::GetCurrentContext() == nullptr)
-    {
-        return;
-    }
-
-    ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height));
-    io.DeltaTime = dt > 0.0f ? dt : (1.0f / 60.0f);
-
-    double mouseX = 0.0;
-    double mouseY = 0.0;
-    glfwGetCursorPos(platform->window, &mouseX, &mouseY);
-    io.MousePos = ImVec2(static_cast<float>(mouseX), static_cast<float>(mouseY));
-    io.MouseDown[0] = glfwGetMouseButton(platform->window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
-    io.MouseDown[1] = glfwGetMouseButton(platform->window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
-    io.MouseDown[2] = glfwGetMouseButton(platform->window, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
-
-    ImGui::NewFrame();
-    updateProfilerUI();
-    ImGui::Render();
-}
-
-const char* MultithreadedRenderer::presetLabel(ScenePreset preset)
-{
-    switch (preset)
-    {
-    case ScenePreset::Small: return "Small";
-    case ScenePreset::Medium: return "Medium";
-    case ScenePreset::Large: return "Large";
-    default: return "Unknown";
-    }
-}
+const char* MultithreadedRenderer::presetLabel(ScenePreset preset) {}
 
 MultithreadedRenderer::ScenePresetConfig MultithreadedRenderer::presetConfig(ScenePreset preset)
 {
@@ -656,7 +449,7 @@ void MultithreadedRenderer::applyPreset(ScenePreset preset)
     presetResourcesDirty = true;
 }
 
-void MultithreadedRenderer::updateProfilerUI()
+void MultithreadedRenderer::updateUIPanel()
 {
     ImGui::Begin("Multithreaded Vulkan Profiler");
 
@@ -975,7 +768,7 @@ void MultithreadedRenderer::recordPrimaryCommandBuffer(uint32_t imageIndex)
     primary.beginRendering(uiRenderingInfo);
     primary.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
     primary.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
-    recordUI(primary, imageIndex);
+    recordUICmdBuffer(primary, imageIndex);
     primary.endRendering();
 
     transition_image_layout(
@@ -990,115 +783,6 @@ void MultithreadedRenderer::recordPrimaryCommandBuffer(uint32_t imageIndex)
     swapChainImageLayouts[imageIndex] = vk::ImageLayout::ePresentSrcKHR;
 
     primary.end();
-}
-
-void MultithreadedRenderer::recordUI(vk::raii::CommandBuffer& commandBuffer, uint32_t frameIndex)
-{
-    if (!uiEnabled || ImGui::GetCurrentContext() == nullptr || uiPipeline == vk::raii::Pipeline(nullptr))
-    {
-        return;
-    }
-
-    ImDrawData* drawData = ImGui::GetDrawData();
-    if (drawData == nullptr || drawData->TotalVtxCount <= 0)
-    {
-        return;
-    }
-
-    auto& fb = uiFrameBuffers[frameIndex];
-    size_t vertexBytes = static_cast<size_t>(drawData->TotalVtxCount) * sizeof(ImDrawVert);
-    size_t indexBytes = static_cast<size_t>(drawData->TotalIdxCount) * sizeof(ImDrawIdx);
-
-    if (fb.vertexBuffer == vk::raii::Buffer(nullptr) || fb.vertexSize < vertexBytes)
-    {
-        if (fb.vertexMapped != nullptr)
-        {
-            fb.vertexBufferMemory.unmapMemory();
-            fb.vertexMapped = nullptr;
-        }
-        fb.vertexBuffer = vk::raii::Buffer(nullptr);
-        fb.vertexBufferMemory = vk::raii::DeviceMemory(nullptr);
-        createBuffer(vertexBytes, vk::BufferUsageFlagBits::eVertexBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, fb.vertexBuffer, fb.vertexBufferMemory);
-        fb.vertexMapped = fb.vertexBufferMemory.mapMemory(0, vertexBytes);
-        fb.vertexSize = vertexBytes;
-    }
-
-    if (fb.indexBuffer == vk::raii::Buffer(nullptr) || fb.indexSize < indexBytes)
-    {
-        if (fb.indexMapped != nullptr)
-        {
-            fb.indexBufferMemory.unmapMemory();
-            fb.indexMapped = nullptr;
-        }
-        fb.indexBuffer = vk::raii::Buffer(nullptr);
-        fb.indexBufferMemory = vk::raii::DeviceMemory(nullptr);
-        createBuffer(indexBytes, vk::BufferUsageFlagBits::eIndexBuffer, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, fb.indexBuffer, fb.indexBufferMemory);
-        fb.indexMapped = fb.indexBufferMemory.mapMemory(0, indexBytes);
-        fb.indexSize = indexBytes;
-    }
-
-    ImDrawVert* vtxDst = reinterpret_cast<ImDrawVert*>(fb.vertexMapped);
-    ImDrawIdx* idxDst = reinterpret_cast<ImDrawIdx*>(fb.indexMapped);
-    for (int n = 0; n < drawData->CmdListsCount; ++n)
-    {
-        const ImDrawList* cmdList = drawData->CmdLists[n];
-        std::memcpy(vtxDst, cmdList->VtxBuffer.Data, static_cast<size_t>(cmdList->VtxBuffer.Size) * sizeof(ImDrawVert));
-        std::memcpy(idxDst, cmdList->IdxBuffer.Data, static_cast<size_t>(cmdList->IdxBuffer.Size) * sizeof(ImDrawIdx));
-        vtxDst += cmdList->VtxBuffer.Size;
-        idxDst += cmdList->IdxBuffer.Size;
-    }
-
-    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *uiPipeline);
-    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *uiPipelineLayout, 0, *uiDescriptorSets[0], nullptr);
-    commandBuffer.bindVertexBuffers(0, *fb.vertexBuffer, { 0 });
-    commandBuffer.bindIndexBuffer(*fb.indexBuffer, 0, sizeof(ImDrawIdx) == 2 ? vk::IndexType::eUint16 : vk::IndexType::eUint32);
-
-    struct UIPushConst
-    {
-        glm::vec2 scale;
-        glm::vec2 translate;
-    };
-
-    UIPushConst pc{};
-    pc.scale = glm::vec2(2.0f / drawData->DisplaySize.x, 2.0f / drawData->DisplaySize.y);
-    pc.translate = glm::vec2(-1.0f, -1.0f);
-    commandBuffer.pushConstants(*uiPipelineLayout, vk::ShaderStageFlagBits::eVertex, 0, vk::ArrayProxy<const UIPushConst>(1, &pc));
-
-    int32_t globalVtxOffset = 0;
-    uint32_t globalIdxOffset = 0;
-
-    for (int n = 0; n < drawData->CmdListsCount; ++n)
-    {
-        const ImDrawList* cmdList = drawData->CmdLists[n];
-        uint32_t idxOffset = 0;
-
-        for (int cmdI = 0; cmdI < cmdList->CmdBuffer.Size; ++cmdI)
-        {
-            const ImDrawCmd* drawCmd = &cmdList->CmdBuffer[cmdI];
-
-            ImVec4 clipRect = drawCmd->ClipRect;
-            clipRect.x -= drawData->DisplayPos.x;
-            clipRect.y -= drawData->DisplayPos.y;
-            clipRect.z -= drawData->DisplayPos.x;
-            clipRect.w -= drawData->DisplayPos.y;
-
-            if (clipRect.x < static_cast<float>(swapChainExtent.width) && clipRect.y < static_cast<float>(swapChainExtent.height) && clipRect.z >= 0.0f && clipRect.w >= 0.0f)
-            {
-                vk::Rect2D scissor;
-                scissor.offset.x = static_cast<int32_t>(clipRect.x > 0.0f ? clipRect.x : 0.0f);
-                scissor.offset.y = static_cast<int32_t>(clipRect.y > 0.0f ? clipRect.y : 0.0f);
-                scissor.extent.width = static_cast<uint32_t>(clipRect.z - clipRect.x);
-                scissor.extent.height = static_cast<uint32_t>(clipRect.w - clipRect.y);
-                commandBuffer.setScissor(0, scissor);
-                commandBuffer.drawIndexed(drawCmd->ElemCount, 1, globalIdxOffset + idxOffset, globalVtxOffset, 0);
-            }
-
-            idxOffset += drawCmd->ElemCount;
-        }
-
-        globalIdxOffset += static_cast<uint32_t>(cmdList->IdxBuffer.Size);
-        globalVtxOffset += cmdList->VtxBuffer.Size;
-    }
 }
 
 MultithreadedRenderer::PercentileStats MultithreadedRenderer::calcPercentiles(const std::vector<float>& samples)
@@ -1311,11 +995,12 @@ void MultithreadedRenderer::render()
 
 void MultithreadedRenderer::cleanup()
 {
+    device.waitIdle();
     threadPool.stop();
     instanceBufferResources.clear();
     particleBufferResources.clear();
     lightBufferResources.clear();
     globalUboResources.clear();
-    shutdownUI();
+    shutdownVulkanUI();
     VulkanBase::cleanupSwapChain();
 }

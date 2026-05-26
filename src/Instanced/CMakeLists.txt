@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-set(EXAMPLE_NAME 1_InstenceRender)
+set(EXAMPLE_NAME 01_InstenceRender)
 set(EXAMPLE_SHADER_DIR "${CMAKE_SOURCE_DIR}/shaders/Instanced")
 
 add_executable(${EXAMPLE_NAME}

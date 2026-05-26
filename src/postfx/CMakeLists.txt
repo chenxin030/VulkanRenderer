@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-set(EXAMPLE_NAME 9_postfx)
+set(EXAMPLE_NAME 09_postfx)
 
 add_executable(${EXAMPLE_NAME}
     ${CMAKE_CURRENT_SOURCE_DIR}/StandaloneMain.cpp

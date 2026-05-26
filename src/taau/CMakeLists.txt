@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-set(EXAMPLE_NAME 5_taau)
+set(EXAMPLE_NAME 05_taau)
 set(EXAMPLE_SHADER_DIR "${CMAKE_SOURCE_DIR}/shaders/5_taau")
 
 add_executable(${EXAMPLE_NAME}

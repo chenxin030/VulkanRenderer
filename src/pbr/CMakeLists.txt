@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-set(EXAMPLE_NAME 2_pbr)
+set(EXAMPLE_NAME 02_pbr)
 
 set(EXAMPLE_SHADER_DIR "${CMAKE_SOURCE_DIR}/shaders/pbr")
 

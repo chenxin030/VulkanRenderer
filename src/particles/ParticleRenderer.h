@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Base/VulkanBase.h>
-#include <Base/ResourceManager.h>
+#include <Base/VulkanTypes.h>
 
 #include <vector>
 #include <random>
@@ -93,9 +93,7 @@ public:
     bool createComputeCommandBuffers();
     bool createComputeSyncObjects();
     bool initUI();
-    void updateUIFrame();
-    void updateParticleUI();
-    void recordUI(vk::raii::CommandBuffer& commandBuffer);
+    void updateUIPanel() override;
     void updateParticleBuffers(uint32_t frameIndex);
     void recordComputeCommandBuffer(uint32_t frameIndex);
     void recordCommandBuffer(uint32_t imageIndex);

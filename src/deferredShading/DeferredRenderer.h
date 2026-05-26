@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Base/VulkanBase.h>
+#include <Base/VulkanBase_UI.h>
 
 struct DeferredRenderer final : VulkanBase
 {
@@ -47,13 +48,12 @@ private:
 
     vk::raii::Sampler gbufferSampler = nullptr;
 
-    // PBR/lighting controls
     float ambientStrength = 0.03f;
     float exposure = 1.0f;
     float gamma = 2.2f;
     float lightIntensityScale = 1.0f;
     bool animateLights = true;
-    int debugView = 0; // 0: lit, 1: albedo, 2: normal, 3: material, 4: depth
+    int debugView = 0;
 
     bool createGBufferDescriptorSetLayout();
     bool createDeferredDescriptorSetLayout();
@@ -76,9 +76,7 @@ private:
     bool recreateDeferredSizedResources();
 
     bool initUI();
-    void updateUIFrame();
-    void updateDeferredUI();
-    void recordUI(vk::raii::CommandBuffer& commandBuffer);
+    void updateUIPanel() override;
 
     void recordCommandBuffer(uint32_t imageIndex);
 };
