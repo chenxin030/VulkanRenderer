@@ -3,7 +3,7 @@
 #include <Base/VulkanBase.h>
 #include <Base/VulkanBase_UI.h>
 
-struct GIRenderer final : VulkanBase
+struct SSAORenderer final : VulkanBase
 {
 public:
     void initialize(Platform* _platform);

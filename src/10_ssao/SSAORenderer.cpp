@@ -1,4 +1,4 @@
-#include "GIRenderer.h"
+#include "SSAORenderer.h"
 
 #include <Base/Mesh.h>
 #include <Base/VulkanBase_UI.h>
@@ -52,18 +52,18 @@ struct BlurUBO
     glm::vec2 texelSize;
 };
 
-void GIRenderer::initialize(Platform* _platform)
+void SSAORenderer::initialize(Platform* _platform)
 {
     VulkanBase::initialize(_platform);
 }
 
-bool GIRenderer::initVulkan()
+bool SSAORenderer::initVulkan()
 {
     camera = Camera(glm::vec3(0.0f, 0.0f, 15.0f));
-    return VulkanBase::initVulkan("VulkanRenderer - 11_gi_ssao");
+    return VulkanBase::initVulkan("VulkanRenderer - 10_ssao");
 }
 
-bool GIRenderer::prepareResource()
+bool SSAORenderer::prepareResource()
 {
     generateSphere(sphereMesh, 1.0f, 100);
     createVertexBuffer(sphereMesh);
@@ -101,7 +101,7 @@ bool GIRenderer::prepareResource()
     return true;
 }
 
-void GIRenderer::cleanup()
+void SSAORenderer::cleanup()
 {
     device.waitIdle();
     shutdownVulkanUI();
@@ -109,7 +109,7 @@ void GIRenderer::cleanup()
     destroyGBufferResources();
 }
 
-void GIRenderer::createBuffers()
+void SSAORenderer::createBuffers()
 {
     createUniformBuffers(sceneUboResources, sizeof(SceneUBO));
     createUniformBuffers(lightUboResources, sizeof(LightUBO));
@@ -118,7 +118,7 @@ void GIRenderer::createBuffers()
     createUniformBuffers(ssaoBlurUboResources, sizeof(BlurUBO));
 }
 
-void GIRenderer::generateSsaoKernel()
+void SSAORenderer::generateSsaoKernel()
 {
     ssaoKernel.resize(SSAO_SAMPLE_COUNT);
     std::uniform_real_distribution<float> randomFloats(0.0, 1.0);
@@ -137,7 +137,7 @@ void GIRenderer::generateSsaoKernel()
     }
 }
 
-void GIRenderer::createNoiseTexture()
+void SSAORenderer::createNoiseTexture()
 {
     std::uniform_real_distribution<float> randomFloats(0.0, 1.0);
     std::default_random_engine generator;
@@ -196,7 +196,7 @@ void GIRenderer::createNoiseTexture()
     noiseSampler = vk::raii::Sampler(device, samplerInfo);
 }
 
-bool GIRenderer::createGBufferDescriptorSetLayout()
+bool SSAORenderer::createGBufferDescriptorSetLayout()
 {
     try
     {
@@ -218,7 +218,7 @@ bool GIRenderer::createGBufferDescriptorSetLayout()
     }
 }
 
-bool GIRenderer::createSsaoDescriptorSetLayout()
+bool SSAORenderer::createSsaoDescriptorSetLayout()
 {
     try
     {
@@ -242,7 +242,7 @@ bool GIRenderer::createSsaoDescriptorSetLayout()
     }
 }
 
-bool GIRenderer::createSsaoBlurDescriptorSetLayout()
+bool SSAORenderer::createSsaoBlurDescriptorSetLayout()
 {
     try
     {
@@ -264,7 +264,7 @@ bool GIRenderer::createSsaoBlurDescriptorSetLayout()
     }
 }
 
-bool GIRenderer::createLightingDescriptorSetLayout()
+bool SSAORenderer::createLightingDescriptorSetLayout()
 {
     try
     {
@@ -292,7 +292,7 @@ bool GIRenderer::createLightingDescriptorSetLayout()
     }
 }
 
-bool GIRenderer::createGBufferDescriptorPool()
+bool SSAORenderer::createGBufferDescriptorPool()
 {
     try
     {
@@ -316,7 +316,7 @@ bool GIRenderer::createGBufferDescriptorPool()
     }
 }
 
-bool GIRenderer::createSsaoDescriptorPool()
+bool SSAORenderer::createSsaoDescriptorPool()
 {
     try
     {
@@ -340,7 +340,7 @@ bool GIRenderer::createSsaoDescriptorPool()
     }
 }
 
-bool GIRenderer::createSsaoBlurDescriptorPool()
+bool SSAORenderer::createSsaoBlurDescriptorPool()
 {
     try
     {
@@ -364,7 +364,7 @@ bool GIRenderer::createSsaoBlurDescriptorPool()
     }
 }
 
-bool GIRenderer::createLightingDescriptorPool()
+bool SSAORenderer::createLightingDescriptorPool()
 {
     try
     {
@@ -388,7 +388,7 @@ bool GIRenderer::createLightingDescriptorPool()
     }
 }
 
-void GIRenderer::createGBufferDescriptorSets()
+void SSAORenderer::createGBufferDescriptorSets()
 {
     std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *gbufferDescriptorSetLayout);
     vk::DescriptorSetAllocateInfo allocInfo{
@@ -412,7 +412,7 @@ void GIRenderer::createGBufferDescriptorSets()
     }
 }
 
-void GIRenderer::createSsaoDescriptorSets()
+void SSAORenderer::createSsaoDescriptorSets()
 {
     std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *ssaoDescriptorSetLayout);
     vk::DescriptorSetAllocateInfo allocInfo{
@@ -441,7 +441,7 @@ void GIRenderer::createSsaoDescriptorSets()
     }
 }
 
-void GIRenderer::createSsaoBlurDescriptorSets()
+void SSAORenderer::createSsaoBlurDescriptorSets()
 {
     std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *ssaoBlurDescriptorSetLayout);
     vk::DescriptorSetAllocateInfo allocInfo{
@@ -466,7 +466,7 @@ void GIRenderer::createSsaoBlurDescriptorSets()
     }
 }
 
-void GIRenderer::createLightingDescriptorSets()
+void SSAORenderer::createLightingDescriptorSets()
 {
     std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *lightingDescriptorSetLayout);
     vk::DescriptorSetAllocateInfo allocInfo{
@@ -504,7 +504,7 @@ void GIRenderer::createLightingDescriptorSets()
     }
 }
 
-bool GIRenderer::createGBufferResources()
+bool SSAORenderer::createGBufferResources()
 {
     try
     {
@@ -570,7 +570,7 @@ bool GIRenderer::createGBufferResources()
     }
 }
 
-bool GIRenderer::createSsaoResources()
+bool SSAORenderer::createSsaoResources()
 {
     try
     {
@@ -602,7 +602,7 @@ bool GIRenderer::createSsaoResources()
     }
 }
 
-void GIRenderer::destroyGBufferResources()
+void SSAORenderer::destroyGBufferResources()
 {
     gbufferAlbedo.texture.textureImageView = nullptr;
     gbufferAlbedo.texture.textureImage = nullptr;
@@ -626,7 +626,7 @@ void GIRenderer::destroyGBufferResources()
     gbufferDepth.layout = vk::ImageLayout::eUndefined;
 }
 
-void GIRenderer::destroySsaoResources()
+void SSAORenderer::destroySsaoResources()
 {
     ssaoColor.texture.textureImageView = nullptr;
     ssaoColor.texture.textureImage = nullptr;
@@ -639,7 +639,7 @@ void GIRenderer::destroySsaoResources()
     ssaoBlurColor.layout = vk::ImageLayout::eUndefined;
 }
 
-bool GIRenderer::createGBufferPipeline()
+bool SSAORenderer::createGBufferPipeline()
 {
     try
     {
@@ -740,7 +740,7 @@ bool GIRenderer::createGBufferPipeline()
     }
 }
 
-bool GIRenderer::createSsaoPipeline()
+bool SSAORenderer::createSsaoPipeline()
 {
     try
     {
@@ -824,7 +824,7 @@ bool GIRenderer::createSsaoPipeline()
     }
 }
 
-bool GIRenderer::createSsaoBlurPipeline()
+bool SSAORenderer::createSsaoBlurPipeline()
 {
     try
     {
@@ -908,7 +908,7 @@ bool GIRenderer::createSsaoBlurPipeline()
     }
 }
 
-bool GIRenderer::createLightingPipeline()
+bool SSAORenderer::createLightingPipeline()
 {
     try
     {
@@ -992,17 +992,17 @@ bool GIRenderer::createLightingPipeline()
     }
 }
 
-bool GIRenderer::initUI()
+bool SSAORenderer::initUI()
 {
     return initVulkanUI();
 }
 
-void GIRenderer::updateUIPanel()
+void SSAORenderer::updateUIPanel()
 {
     ImGui::SetNextWindowSize(ImVec2(480.0f, 400.0f), ImGuiCond_FirstUseEver);
-    ImGui::Begin("SSAO GI", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin("SSAO", nullptr, ImGuiWindowFlags_NoCollapse);
 
-    ImGui::Columns(2, "GIColumns", false);
+    ImGui::Columns(2, "SSAOColumns", false);
 
     ImGui::TextUnformatted("SSAO");
     ImGui::Separator();
@@ -1039,7 +1039,7 @@ void GIRenderer::updateUIPanel()
     ImGui::End();
 }
 
-void GIRenderer::updateBuffers(uint32_t frameIndex)
+void SSAORenderer::updateBuffers(uint32_t frameIndex)
 {
     SceneUBO sceneUbo{
         .projection = glm::perspective(glm::radians(camera.Zoom),
@@ -1106,13 +1106,11 @@ void GIRenderer::updateBuffers(uint32_t frameIndex)
     std::memcpy(ssaoBlurUboResources.BuffersMapped[frameIndex], &blurUbo, sizeof(blurUbo));
 }
 
-bool GIRenderer::recreateSizedResources()
+bool SSAORenderer::recreateSizedResources()
 {
     if (!createGBufferResources()) return false;
     if (!createSsaoResources()) return false;
 
-    // Descriptor sets are re-allocated on every resize.
-    // Explicitly release previous sets and reset pools first to avoid pool exhaustion.
     ssaoSettingsUboResources.descriptorSets = vk::raii::DescriptorSets(nullptr);
     ssaoBlurColor.descriptorSet = vk::raii::DescriptorSets(nullptr);
     lightUboResources.descriptorSets = vk::raii::DescriptorSets(nullptr);
@@ -1127,7 +1125,7 @@ bool GIRenderer::recreateSizedResources()
     return true;
 }
 
-void GIRenderer::recordCommandBuffer(uint32_t imageIndex)
+void SSAORenderer::recordCommandBuffer(uint32_t imageIndex)
 {
     auto& commandBuffer = commandBuffers[currentFrame];
     commandBuffer.begin({});
@@ -1427,7 +1425,7 @@ void GIRenderer::recordCommandBuffer(uint32_t imageIndex)
     commandBuffer.end();
 }
 
-void GIRenderer::render()
+void SSAORenderer::render()
 {
     const auto fenceResult = device.waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
     if (fenceResult != vk::Result::eSuccess)
@@ -1441,7 +1439,7 @@ void GIRenderer::render()
         recreateSwapChain();
         if (!recreateSizedResources())
         {
-            throw std::runtime_error("failed to recreate GI resources after swapchain resize");
+            throw std::runtime_error("failed to recreate SSAO resources after swapchain resize");
         }
         return;
     }
@@ -1483,7 +1481,7 @@ void GIRenderer::render()
         recreateSwapChain();
         if (!recreateSizedResources())
         {
-            throw std::runtime_error("failed to recreate GI resources after present");
+            throw std::runtime_error("failed to recreate SSAO resources after present");
         }
         return;
     }
@@ -1494,7 +1492,7 @@ void GIRenderer::render()
         recreateSwapChain();
         if (!recreateSizedResources())
         {
-            throw std::runtime_error("failed to recreate GI resources after present");
+            throw std::runtime_error("failed to recreate SSAO resources after present");
         }
         return;
     }

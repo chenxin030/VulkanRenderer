@@ -1,8 +1,22 @@
-# PostFX（Level 9：后处理）
+# PostFX（后处理）
 
 [返回目录](../../README.md)
 
-PostFX 基于延迟渲染架构，增加 Bloom（泛光）和通用后处理效果（色调映射、色差、暗角）。
+PostFX 在延迟渲染基础上增加 Bloom（泛光）和通用后处理效果（色调映射、色差、暗角）。
+
+### 视觉效果简述
+
+| 效果                                                                     | Shader 参数                   | 视觉效果                                                                                  |
+| ------------------------------------------------------------------------ | ----------------------------- | ----------------------------------------------------------------------------------------- |
+| **Bloom（泛光）**                                                        | `bloomThreshold`              | 亮度阈值，超过此值的像素才产生泛光；值越低发光范围越大                                    |
+|                                                                          | `bloomIntensity`              | 泛光强度，控制光晕的亮度叠加量                                                            |
+|                                                                          | `bloomRadius`                 | 模糊半径（迭代次数），值越大光晕越扩散                                                    |
+| **色调映射**                                                             | `exposure`                    | 全局曝光，乘算 HDR 颜色后再做 tone mapping；>1 提亮，<1 压暗                              |
+|                                                                          | `toneMappingMode`             | 色调映射算法：`0` = Reinhard（暗部细节多，高光易过曝），`1` = ACES Filmic（电影级对比度） |
+| **暗角（Vignette）**                                                     | `vignetteEnabled`             | 开关暗角效果                                                                              |
+| 画面边缘以平滑径向衰减变暗，模拟镜头边缘进光量减少的真实效果             | `vignetteIntensity`           | 暗角强度，值越大画面边缘越暗                                                              |
+| **色差（Chromatic Aberration）**                                         | `chromaticAberrationEnabled`  | 开关色差效果                                                                              |
+| R/G/B 三通道在画面边缘的径向分离偏移量，模拟廉价镜头因色散产生的红蓝边缘 | `chromaticAberrationStrength` | 色差强度，控制 R/G/B 三通道在边缘的偏移量                                                 |
 
 ## 1. 整体架构
 
@@ -16,13 +30,15 @@ GBuffer Pass ──→ Deferred Lighting Pass ──→ Bloom Extract Pass
 
 6 个 Pass，3 个 Shader：
 
-| Shader 文件 | 用途 |
-|---|---|
-| `deferred_gbuffer.slang` | GBuffer Pass：几何体 → MRT albedo/normal/material |
-| `deferred_lighting.slang` | Deferred Lighting Pass：GBuffer → HDR scene + PBR 光照 |
-| `bloom_extract.slang` | Bloom Extract Pass：HDR scene → quarter-res 亮度图 |
-| `blur.slang` | Gaussian Blur Pass（H+V 共用同一 shader） |
-| `bloom_composite.slang` | Bloom Composite Pass：scene + bloom → LDR + tone mapping + lens FX |
+
+| Shader 文件               | 用途                                                               |
+| ------------------------- | ------------------------------------------------------------------ |
+| `deferred_gbuffer.slang`  | GBuffer Pass：几何体 → MRT albedo/normal/material                  |
+| `deferred_lighting.slang` | Deferred Lighting Pass：GBuffer → HDR scene + PBR 光照             |
+| `bloom_extract.slang`     | Bloom Extract Pass：HDR scene → quarter-res 亮度图                 |
+| `blur.slang`              | Gaussian Blur Pass（H+V 共用同一 shader）                          |
+| `bloom_composite.slang`   | Bloom Composite Pass：scene + bloom → LDR + tone mapping + lens FX |
+
 
 ---
 
@@ -30,31 +46,37 @@ GBuffer Pass ──→ Deferred Lighting Pass ──→ Bloom Extract Pass
 
 ### 2.1 GBuffer（屏幕分辨率，固定）
 
-| Texture | Format | 用途 |
-|---|---|---|
-| `gbuffer.albedo` | `R16G16B16A16Sfloat` | BaseColor (RGB) |
-| `gbuffer.normal` | `R16G16B16A16Sfloat` | View-space 法线 |
+
+| Texture            | Format               | 用途                  |
+| ------------------ | -------------------- | --------------------- |
+| `gbuffer.albedo`   | `R16G16B16A16Sfloat` | BaseColor (RGB)       |
+| `gbuffer.normal`   | `R16G16B16A16Sfloat` | View-space 法线       |
 | `gbuffer.material` | `R16G16B16A16Sfloat` | metallic/roughness/ao |
-| `gbuffer.depth` | `D32Sfloat` | 深度缓冲 |
+| `gbuffer.depth`    | `D32Sfloat`          | 深度缓冲              |
+
 
 ### 2.2 Post Buffers（ping-pong per frame）
 
-| Texture | Resolution | Format | 用途 |
-|---|---|---|---|
-| `postBuffers[i].color` | 屏幕分辨率 | `R16G16B16A16Sfloat` | HDR 场景（Deferred 输出，Composite 输入） |
-| `postBuffers[i].bloom` | quarter (÷4) | `R16G16B16A16Sfloat` | 亮度提取 → 模糊源 → 模糊结果 |
-| `blurBuffers[i].horizontal` | quarter (÷4) | `R16G16B16A16Sfloat` | 水平模糊中间结果 |
-| `blurBuffers[i].vertical` | quarter (÷4) | `R16G16B16A16Sfloat` | 垂直模糊最终结果 |
+
+| Texture                     | Resolution   | Format               | 用途                                      |
+| --------------------------- | ------------ | -------------------- | ----------------------------------------- |
+| `postBuffers[i].color`      | 屏幕分辨率   | `R16G16B16A16Sfloat` | HDR 场景（Deferred 输出，Composite 输入） |
+| `postBuffers[i].bloom`      | quarter (÷4) | `R16G16B16A16Sfloat` | 亮度提取 → 模糊源 → 模糊结果              |
+| `blurBuffers[i].horizontal` | quarter (÷4) | `R16G16B16A16Sfloat` | 水平模糊中间结果                          |
+| `blurBuffers[i].vertical`   | quarter (÷4) | `R16G16B16A16Sfloat` | 垂直模糊最终结果                          |
+
 
 ### 2.3 UBO / SSBO
 
-| Buffer | Type | 说明 |
-|---|---|---|
-| `sceneUboResources` | Uniform | camera VP + invProjection + invView + camPos |
-| `lightUboResources` | Uniform | 4 个点光源（位置 + 颜色强度） |
-| `deferredSettingsUboResources` | Uniform | Deferred Lighting 专用参数（ambient/exposure/gamma/lightScale + debugView） |
-| `postFxSettingsUboResources` | Uniform | PostFX 专用参数（exposure/gamma/bloom/threshold/intensity + tone mapping + lens effects） |
-| `instanceBufferResources` | Storage | 49 个球体的 model 矩阵 + PBR 材质（7×7 metallic/roughness 渐变网格） |
+
+| Buffer                         | Type    | 说明                                                                                      |
+| ------------------------------ | ------- | ----------------------------------------------------------------------------------------- |
+| `sceneUboResources`            | Uniform | camera VP + invProjection + invView + camPos                                              |
+| `lightUboResources`            | Uniform | 4 个点光源（位置 + 颜色强度）                                                             |
+| `deferredSettingsUboResources` | Uniform | Deferred Lighting 专用参数（ambient/exposure/gamma/lightScale + debugView）               |
+| `postFxSettingsUboResources`   | Uniform | PostFX 专用参数（exposure/gamma/bloom/threshold/intensity + tone mapping + lens effects） |
+| `instanceBufferResources`      | Storage | 49 个球体的 model 矩阵 + PBR 材质（7×7 metallic/roughness 渐变网格）                      |
+
 
 ---
 
@@ -85,11 +107,20 @@ prepareResource()
 ### Quarter-res 尺寸计算
 
 ```cpp
-uint32_t bw = (swapChainExtent.width + 3) / 4;  // 向下取整 + 1
+uint32_t bw = (swapChainExtent.width + 3) / 4;  // 向上取整（Ceiling(w/4)）
 uint32_t bh = (swapChainExtent.height + 3) / 4;
 ```
 
 所有 Post Buffer（含 blurBuffers）均为 `bw × bh`，这样 Bloom Extract Pass 通过 viewport 缩放直接实现下采样。
+
+**Quarter-res 的用途**：Bloom 效果的中间缓冲区，分 4 步使用：
+
+1. **Bloom Extract** — 将 `postBuffers[i].color`（HDR 场景缓冲，全分辨率）下采样到 `postBuffers[i].bloom`（`bw×bh`），只提取高亮像素
+2. **Blur H** — 水平 Gaussian 模糊，结果写回 `postBuffers[i].bloom`
+3. **Blur V** — 垂直 Gaussian 模糊，结果写回 `postBuffers[i].bloom`
+4. **Bloom Composite** — 将模糊后的 bloom 与全分辨率场景叠加输出
+
+Bloom 不需要全分辨率计算，先缩小到 1/4 再模糊，最后加回全分辨率画面，blur pass 的像素量仅为全分辨率的 1/16，大幅降低开销。
 
 ---
 
@@ -99,9 +130,10 @@ uint32_t bh = (swapChainExtent.height + 3) / 4;
 
 ### 4.1 CPU 数据准备
 
-**`updateDeferredBuffers(frameIndex)`** — 4 类 CPU→GPU 写入：
+`**updateDeferredBuffers(frameIndex)`** — 4 类 CPU→GPU 写入：
 
 **SceneUBO**：
+
 ```cpp
 sceneUbo.projection = perspective(Y flip=-1)
 sceneUbo.view = camera.GetViewMatrix()
@@ -111,6 +143,7 @@ sceneUbo.camPos = camera.Position
 ```
 
 **Instance Data**（7×7 metallic/roughness 渐变）：
+
 ```cpp
 // x ∈ [-3,3], y ∈ [-3,3]
 metallic = (x + 3) / 6.0f       // 0.0 → 1.0
@@ -119,6 +152,7 @@ baseColor = gold (1.0, 0.86, 0.57)
 ```
 
 **LightUBO**（4 个点光源，UI 控制动画）：
+
 ```cpp
 lights[0]: 静止白色高强度 (400×scale)
 lights[1]: 静止暖白低强度 (80×scale)
@@ -126,9 +160,7 @@ lights[2]: sin运动 (180×scale)
 lights[3]: cos运动 (180×scale)
 ```
 
-### 4.2 Descriptor 更新（`render()` 中，commandBuffer.begin() 之前）
-
-所有 Descriptor 更新必须在 `begin()` 之前完成：
+### 4.2 Descriptor 更新
 
 ```
 ① Deferred Lighting DescriptorSet
@@ -163,6 +195,7 @@ lights[3]: cos运动 (180×scale)
 **对应 Shader**：`deferred_gbuffer.slang` — `vertMain` + `fragMain`
 
 **Layout 转换**：
+
 ```
 gbuffer.albedo/normal/material  Undefined → ColorAttachmentOptimal
 gbuffer.depth                  Undefined → DepthAttachmentOptimal
@@ -170,6 +203,7 @@ postBuffers.color             Undefined → ColorAttachmentOptimal
 ```
 
 **绘制**：
+
 ```
 Pipeline: gbufferPipeline
 DescriptorSet: instanceBufferResources.descriptorSets[frame]
@@ -180,12 +214,14 @@ drawIndexed(sphereMesh.indexCount, 49)  // instanced
 
 **MRT 输出**：
 
-| Attachment | 内容 |
-|---|---|
-| albedo (RGB16F) | 各球体 baseColor（金色） |
-| normal (RGB16F) | view-space 法线 × 0.5 + 0.5 |
-| material (RGB16F) | metallic/roughness/ao |
-| depth (D32F) | 深度值 |
+
+| Attachment        | 内容                        |
+| ----------------- | --------------------------- |
+| albedo (RGB16F)   | 各球体 baseColor（金色）    |
+| normal (RGB16F)   | view-space 法线 × 0.5 + 0.5 |
+| material (RGB16F) | metallic/roughness/ao       |
+| depth (D32F)      | 深度值                      |
+
 
 ---
 
@@ -194,11 +230,13 @@ drawIndexed(sphereMesh.indexCount, 49)  // instanced
 **对应 Shader**：`deferred_lighting.slang` — `vertMain`（全屏三角）+ `fragMain`（PBR 光照）
 
 **Layout 转换**：
+
 ```
 gbuffer.*/depth   ColorAttachmentOptimal → ShaderReadOnlyOptimal
 ```
 
 **绘制**：
+
 ```
 Pipeline: deferredPipeline
 DescriptorSet: lightUboResources.descriptorSets[frame]
@@ -224,12 +262,14 @@ draw(3, 1)  // 全屏三角形
 **对应 Shader**：`bloom_extract.slang` — `vertMain` + `fragMain`
 
 **Layout 转换**：
+
 ```
 postBuffers.color  ColorAttachmentOptimal → ShaderReadOnlyOptimal
 postBuffers.bloom Undefined → ColorAttachmentOptimal
 ```
 
 **绘制**：
+
 ```
 Pipeline: bloomExtractPipeline
 Viewport: (0,0) → (bw, bh)   bw=width/4, bh=height/4
@@ -278,10 +318,12 @@ for iter in [0, blurIterations):
 ```
 
 同一 shader 两个 pipeline（H/V），通过 PushConstant `texelSize` 控制方向：
+
 - H：`texelSize = (4.0/bw, 0.0)` — 水平步进
 - V：`texelSize = (0.0, 4.0/bh)` — 垂直步进
 
 9-tap Gaussian weights（sigma=2.0）：
+
 ```
 [0.0162, 0.054, 0.122, 0.195, 0.227, 0.195, 0.122, 0.054, 0.016]
 ```
@@ -295,6 +337,7 @@ for iter in [0, blurIterations):
 **对应 Shader**：`bloom_composite.slang` — `vertMain` + `fragMain`
 
 **Layout 转换**：
+
 ```
 postBuffers.color  ColorAttachmentOptimal → ShaderReadOnlyOptimal
 postBuffers.bloom TransferSrcOptimal → ShaderReadOnlyOptimal
@@ -302,6 +345,7 @@ swapChainImages   PresentSrcKHR → ColorAttachmentOptimal
 ```
 
 **绘制**：
+
 ```
 Pipeline: bloomCompositePipeline
 Viewport: (0,0) → (width, height)
@@ -316,9 +360,9 @@ draw(3, 1)
 2. 如果 `bloomEnabled`：scene + bloom × bloomIntensity
 3. **Chromatic aberration**（可选）：对 bloom 纹理 R/G/B 通道做不同 UV 偏移
 4. **Tone mapping**：
-   - Exposure × color
-   - Reinhard 或 ACES Filmic
-   - Gamma 矫正
+  - Exposure × color
+  - Reinhard 或 ACES Filmic
+  - Gamma 矫正
 5. **Vignette**（可选）：`vig = 1 - smoothstep(0.3, 0.9, dist)`, `color × lerp(1-intensity, 1, vig)`
 
 所有 UI 控制的后处理效果（tone mapping / chromatic aberration / vignette / bloom 叠加）都在此 Pass 完成。
@@ -332,12 +376,14 @@ draw(3, 1)
 **对应 Shader**：`imgui.slang` — `vertMain` + `fragMain`
 
 **Layout 转换**：
+
 ```
 swapChainImages   ColorAttachmentOptimal → ColorAttachmentOptimal (loadOp=Load)
 swapChainImages   ColorAttachmentOptimal → PresentSrcKHR
 ```
 
 **绘制**：
+
 ```
 Pipeline: uiPipeline
 VertexBuffer: uiFrameBuffers[currentFrame].vertexBuffer (ImDrawVert)
@@ -365,24 +411,7 @@ drawIndexed(ElemCount)
 
 ---
 
-## 7. 提交与呈现
-
-```cpp
-submitInfo {
-    waitSemaphore: presentCompleteSemaphores[frame]   // ImageAvailable
-    waitStage: ColorAttachmentOutput
-    signalSemaphore: renderFinishedSemaphores[imageIndex]
-}
-presentInfo {
-    waitSemaphore: renderFinishedSemaphores[imageIndex]
-    swapchain: swapChain
-    imageIndex
-}
-```
-
----
-
-## 8. 数据流速查
+## 7. 数据流速查
 
 ```
 GBuffer Pass
@@ -409,23 +438,3 @@ UI Pass
   Input:  uiFontTexture + ImDrawVert/Idx
   Output: swapChainImages[frame] (LDR + UI)
 ```
-
----
-
-## 9. 已知问题
-
-### 9.1 `postfx.slang` 已移除（已修复）
-
-`postfx.slang`（tone mapping + chromatic aberration + vignette）对应的 `postPipeline` 和 `postDescriptorSets` 已在代码中移除。所有后处理效果统一由 `bloom_composite.slang` 实现。
-
-### 9.2 Settings UBO 类型已分离（已修复）
-
-`settingsUboResources` 已拆分为：
-- `deferredSettingsUboResources`：仅供 Deferred Lighting Pass 使用
-- `postFxSettingsUboResources`：仅供 Bloom Extract / Composite Pass 使用
-
-两者各自独立，无覆盖语义混淆。
-
-### 9.3 Blur Layout Tracking Bug 已修复
-
-Blur 循环末尾 `copyImage` 后，`postBuffers[frameIndex].bloomLayout` 现在正确设为 `TransferDstOptimal`（bloom 是 copy 目标），与 `recordBloomCompositePass` 中的 transition 从 `TransferDstOptimal` → `ShaderReadOnlyOptimal` 语义一致。

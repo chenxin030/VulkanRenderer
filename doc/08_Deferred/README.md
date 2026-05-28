@@ -1,8 +1,8 @@
 # 8_deferredShading — 延迟渲染
 
-## 1. 目标渲染效果
+## 1. 延迟渲染
 
-延迟渲染（Deferred Shading）将几何阶段和光照阶段解耦，在不增加 draw call 复杂度的情况下高效支持大量光源的 PBR 渲染。
+延迟渲染将几何阶段和光照阶段分开，在不增加 draw call 复杂度的情况下高效支持大量光源的渲染。
 
 **渲染画面**：
 - 场景包含 49 个球体（7×7 排列），每个球体具有不同的金属度（0→1）和粗糙度（0.04→1），形成材质渐变网格。
@@ -33,40 +33,40 @@
 
 ---
 
-## 3. 流程需要用到什么东西，用在哪里
+## 3. 需要用到什么东西
 
 ### 3.1 GBuffer Pass
 
 **输入资源**：
 
-| 资源 | 类型 | 绑定位置 | 说明 |
-|---|---|---|---|
-| `sphereMesh` | VertexBuffer + IndexBuffer | `bindVertexBuffers` | 球体几何体（100 段），`drawIndexed` 49 个实例 |
-| `sceneUboResources` | UniformBuffer | binding=0 | VP 矩阵 + 相机位置 |
-| `gbufferInstanceBufferResources` | StorageBuffer (StructuredBuffer) | binding=1 | 49 个 `DeferredInstanceData`（model 矩阵 + baseColor + material） |
+| 资源                             | 类型                             | 绑定位置            | 说明                                                              |
+| -------------------------------- | -------------------------------- | ------------------- | ----------------------------------------------------------------- |
+| `sphereMesh`                     | VertexBuffer + IndexBuffer       | `bindVertexBuffers` | 球体几何体（100 段），`drawIndexed` 49 个实例                     |
+| `sceneUboResources`              | UniformBuffer                    | binding=0           | VP 矩阵 + 相机位置                                                |
+| `gbufferInstanceBufferResources` | StorageBuffer (StructuredBuffer) | binding=1           | 49 个 `DeferredInstanceData`（model 矩阵 + baseColor + material） |
 
 **GBuffer 附件（MRT 输出）**：
 
-| Attachment | Format | 用途 |
-|---|---|---|
-| `gbufferAlbedo` | `R16G16B16A16Sfloat` | RGB=漫反射基础颜色，A=1.0 |
-| `gbufferNormal` | `R16G16B16A16Sfloat` | RGB=(N×0.5+0.5) 编码世界法线，A=1.0 |
-| `gbufferMaterial` | `R16G16B16A16Sfloat` | R=金属度，G=粗糙度，B=AO，A=0.0 |
-| `gbufferDepth` | `D32Sfloat` | 场景深度 |
+| Attachment        | Format               | 用途                                |
+| ----------------- | -------------------- | ----------------------------------- |
+| `gbufferAlbedo`   | `R16G16B16A16Sfloat` | RGB=漫反射基础颜色，A=1.0           |
+| `gbufferNormal`   | `R16G16B16A16Sfloat` | RGB=(N×0.5+0.5) 编码世界法线，A=1.0 |
+| `gbufferMaterial` | `R16G16B16A16Sfloat` | R=金属度，G=粗糙度，B=AO，A=0.0     |
+| `gbufferDepth`    | `D32Sfloat`          | 场景深度                            |
 
 ### 3.2 Lighting Pass
 
 **输入资源**（全部通过 `deferredDescriptorSet` 绑定）：
 
-| Binding | 类型 | 内容 |
-|---|---|---|
-| 0 | `CombinedImageSampler` | `gbufferAlbedo` → `gAlbedo` |
-| 1 | `CombinedImageSampler` | `gbufferNormal` → `gNormal` |
-| 2 | `CombinedImageSampler` | `gbufferMaterial` → `gMaterial` |
-| 3 | `CombinedImageSampler` | `gbufferDepth` → `gDepth` |
-| 4 | `UniformBuffer` | `sceneUboResources[currentFrame]`（VP+逆矩阵+camPos） |
-| 5 | `UniformBuffer` | `lightUboResources[currentFrame]`（4 个 `PointLight`） |
-| 6 | `UniformBuffer` | `deferredSettingsUboResources[currentFrame]`（ambient/exposure/gamma/debugView） |
+| Binding | 类型                   | 内容                                                                             |
+| ------- | ---------------------- | -------------------------------------------------------------------------------- |
+| 0       | `CombinedImageSampler` | `gbufferAlbedo` → `gAlbedo`                                                      |
+| 1       | `CombinedImageSampler` | `gbufferNormal` → `gNormal`                                                      |
+| 2       | `CombinedImageSampler` | `gbufferMaterial` → `gMaterial`                                                  |
+| 3       | `CombinedImageSampler` | `gbufferDepth` → `gDepth`                                                        |
+| 4       | `UniformBuffer`        | `sceneUboResources[currentFrame]`（VP+逆矩阵+camPos）                            |
+| 5       | `UniformBuffer`        | `lightUboResources[currentFrame]`（4 个 `PointLight`）                           |
+| 6       | `UniformBuffer`        | `deferredSettingsUboResources[currentFrame]`（ambient/exposure/gamma/debugView） |
 
 **几何输入**：`draw(3, 1, 0, 0)` — 全屏三角形（`vertMain` 按 `SV_VertexID` 硬编码三个顶点位置），无需任何 VertexBuffer。
 
@@ -101,19 +101,9 @@ struct DeferredSettingsUBO {
 
 ---
 
-## 4. 东西的初始化过程
-
-### 4.1 调用链
+## 4. 准备 vulkan 资源
 
 ```
-StandaloneMain
- └─ DeferredRenderer::initialize(platform)
-     └─ VulkanBase::initialize(_platform)
-
- DeferredRenderer::initVulkan()
-  └─ VulkanBase::initVulkan("VulkanRenderer - 5_deferredPBR")
-     → 创建 device / commandPool / swapChain / sync objects
-
  DeferredRenderer::prepareResource()
   ├─ generateSphere(sphereMesh, 1.0f, 100)
   ├─ createVertexBuffer / createIndexBuffer(sphereMesh)
@@ -161,13 +151,6 @@ StandaloneMain
   └─ initUI()
       → ImGui context / 字体纹理 / uiPipeline ← imgui.spv
 ```
-
-### 4.2 GBuffer 资源回收与重建
-
-`recreateDeferredSizedResources()` 在 SwapChain 尺寸变化时被调用：
-
-1. `destroyGBufferResources()` — 释放 4 个 GBuffer Image/Memory/View
-2. 重建 Descriptor Pool 和 Descriptor Sets（旧的 set 随旧 pool 一起销毁）
 
 ---
 
@@ -220,9 +203,9 @@ cmdBuffer.begin()
 
 // GBuffer Image → ColorAttachmentOptimal（4 路）
 transition_image_layout(gbufferAlbedo.image,  Undefined → ColorAttachmentOptimal)
-transition_image_layout(gbufferNormal.image, Undefined → ColorAttachmentOptimal)
+transition_image_layout(gbufferNormal.image,  Undefined → ColorAttachmentOptimal)
 transition_image_layout(gbufferMaterial.image,Undefined → ColorAttachmentOptimal)
-transition_image_layout(gbufferDepth.image,  Undefined → DepthAttachmentOptimal)
+transition_image_layout(gbufferDepth.image,   Undefined → DepthAttachmentOptimal)
 
 beginRendering(colorAttachments={Albedo,Normal,Material}, depthAttachment={Depth})
   cmdBuffer.setViewport / setScissor
@@ -235,9 +218,9 @@ beginRendering(colorAttachments={Albedo,Normal,Material}, depthAttachment={Depth
 endRendering()
 
 // GBuffer Image → ShaderReadOnlyOptimal（供 Lighting Pass 采样）
-transition_image_layout(gbufferAlbedo.image,   ColorAttachmentOptimal → ShaderReadOnlyOptimal)
-transition_image_layout(gbufferNormal.image,   ColorAttachmentOptimal → ShaderReadOnlyOptimal)
-transition_image_layout(gbufferMaterial.image, ColorAttachmentOptimal → ShaderReadOnlyOptimal)
+transition_image_layout(gbufferAlbedo.image,    ColorAttachmentOptimal → ShaderReadOnlyOptimal)
+transition_image_layout(gbufferNormal.image,    ColorAttachmentOptimal → ShaderReadOnlyOptimal)
+transition_image_layout(gbufferMaterial.image,  ColorAttachmentOptimal → ShaderReadOnlyOptimal)
 transition_image_layout(gbufferDepth.image,     DepthAttachmentOptimal → ShaderReadOnlyOptimal)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -254,19 +237,6 @@ beginRendering(colorAttachment={SwapChainImage}, loadOp=Clear(0.03,0.03,0.03,1))
   cmdBuffer.draw(3, 1, 0, 0)  // 全屏三角形
 endRendering()
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Pass 3: UI Pass
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-beginRendering(colorAttachment={SwapChainImage}, loadOp=Load)
-  cmdBuffer.setViewport / setScissor
-  recordUI(cmdBuffer)  // ImDrawData → cmdBuffer.drawIndexed
-endRendering()
-
-// SwapChain Image → PresentSrcKHR
-transition_image_layout(swapChainImages[imageIndex], ColorAttachmentOptimal → PresentSrcKHR)
-
-cmdBuffer.end()
 ```
 
 ### 5.4 Lighting Fragment Shader 逻辑（`deferred_lighting.fragMain`）
@@ -316,24 +286,15 @@ cmdBuffer.end()
 
 ## 6. 数据读写关系速查
 
-| 方向 | 资源 | 操作 |
-|---|---|---|
-| **CPU→GPU** | `sceneUboResources` | 每帧 `memcpy` → UBO |
-| **CPU→GPU** | `gbufferInstanceBufferResources` | 每帧 `memcpy` → SSBO（49 instances） |
-| **CPU→GPU** | `lightUboResources` | 每帧 `memcpy` → UBO（4 lights） |
-| **CPU→GPU** | `deferredSettingsUboResources` | 每帧 `memcpy` → UBO |
-| **GPU写** | `gbufferAlbedo/Normal/Material` | GBuffer frag shader MRT 输出 |
-| **GPU写** | `gbufferDepth` | GBuffer frag shader 深度写入 |
-| **GPU读** | `gbufferAlbedo/Normal/Material/Depth` | Lighting frag shader `Sample()` |
-| **GPU读** | `sceneUboResources` | GBuffer vert shader + Lighting frag shader |
-| **GPU读** | `gbufferInstanceBufferResources` | GBuffer vert/frag shader |
-| **GPU读** | `lightUboResources` | Lighting frag shader |
-
----
-
-## 7. 关键设计决策
-
-- **全屏三角形**（而非四边形）：Lighting Pass 使用 `draw(3, ...)`，`vertMain` 按 `SV_VertexID` 硬编码三个顶点位置（-1,-1）、（3,-1）、（-1,3），避免额外的 VertexBuffer 开销。
-- **MRT（Multi-Render Target）**：GBuffer Pass 一次 `beginRendering` 输出 3 路 color attachment + 1 路 depth attachment，避免多次 pass 的状态切换开销。
-- **逆矩阵存储**：SceneUBO 中同时存储 `invProjection` 和 `invView`，Lighting Pass 在 fragment shader 中通过 `invProjection × clip` + `invView × viewPos` 精确重建世界坐标，避免前向渲染中 forward 矩阵的重复计算。
-- **法线编码**：世界法线 `N` 在 GBuffer 中存储为 `(N×0.5+0.5)`（从 [-1,1] 映射到 [0,1]），Lighting 时解码为 `N×2.0-1.0`。
+| 方向        | 资源                                  | 操作                                       |
+| ----------- | ------------------------------------- | ------------------------------------------ |
+| **CPU→GPU** | `sceneUboResources`                   | 每帧 `memcpy` → UBO                        |
+| **CPU→GPU** | `gbufferInstanceBufferResources`      | 每帧 `memcpy` → SSBO（49 instances）       |
+| **CPU→GPU** | `lightUboResources`                   | 每帧 `memcpy` → UBO（4 lights）            |
+| **CPU→GPU** | `deferredSettingsUboResources`        | 每帧 `memcpy` → UBO                        |
+| **GPU写**   | `gbufferAlbedo/Normal/Material`       | GBuffer frag shader MRT 输出               |
+| **GPU写**   | `gbufferDepth`                        | GBuffer frag shader 深度写入               |
+| **GPU读**   | `gbufferAlbedo/Normal/Material/Depth` | Lighting frag shader `Sample()`            |
+| **GPU读**   | `sceneUboResources`                   | GBuffer vert shader + Lighting frag shader |
+| **GPU读**   | `gbufferInstanceBufferResources`      | GBuffer vert/frag shader                   |
+| **GPU读**   | `lightUboResources`                   | Lighting frag shader                       |

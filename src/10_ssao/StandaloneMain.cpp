@@ -1,4 +1,4 @@
-#include "GIRenderer.h"
+#include "SSAORenderer.h"
 
 #include <Base/Platform.h>
 
@@ -10,10 +10,10 @@ int main()
     try
     {
         Platform platform;
-        platform.SetBaseTitle("VulkanRenderer - 11_gi_ssao");
+        platform.SetBaseTitle("VulkanRenderer - 10_ssao");
         platform.initWindow();
 
-        GIRenderer renderer;
+        SSAORenderer renderer;
         renderer.initialize(&platform);
         if (!renderer.initVulkan())
         {

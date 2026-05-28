@@ -19,7 +19,7 @@
 | 7 | **Culling** | `src/culling/` | `shaders/7_culling/` | GPU-Driven 可见性剔除：Frustum Culling + Hi-Z Occlusion Culling + 间接绘制 |
 | 8 | **Deferred Shading** | `src/deferredShading/` | `shaders/8_deferredShading/` | 延迟渲染：GBuffer 填充 + 光照 Pass |
 | 9 | **PostFX** | `src/postfx/` | `shaders/9_postfx/` | 后处理：Bloom (Extract + Blur + Composite) + 色调映射 |
-| 10 | **GI** | `src/gi/` | `shaders/10_gi/` | 环境光照：SSAO（Screen Space Ambient Occlusion） |
+| 10 | **SSAO** | `src/10_ssao/` | `shaders/10_ssao/` | 屏幕空间环境光遮蔽（Screen Space Ambient Occlusion） |
 | 11 | **Clustered** | `src/clustered/` | `shaders/11_clustered/` | Clustered Shading：2048 动态点光源，Compute Shader 预构建 Cluster Grid |
 | 12 | **Particles** | `src/particles/` | `shaders/12_particles/` | GPU 粒子系统：Compute Shader 更新粒子状态，Vertex Shader 渲染 |
 | 13 | **Multithreaded** | `src/multithreaded/` | — | 多线程渲染框架：Frame Graph + Render Batcher + 线程池 |
@@ -66,7 +66,7 @@ build/Debug/
 ├── 7_culling.exe
 ├── 8_deferredShading.exe
 ├── 9_postfx.exe
-├── 10_gi.exe
+├── 10_ssao.exe
 ├── 11_clustered.exe
 ├── 12_particles.exe
 ├── 13_multithreaded.exe
@@ -112,7 +112,7 @@ build/Debug/
 | Level 7：Culling | [doc/07_Culling/README.md](doc/07_Culling/README.md) |
 | Level 8：Deferred Shading | [doc/08_Deferred/README.md](doc/08_Deferred/README.md) |
 | Level 9：PostFX | [doc/09_PostFX/README.md](doc/09_PostFX/README.md) |
-| Level 10：GI | [doc/10_gi/README.md](doc/10_gi/README.md) |
+| Level 10：SSAO | [doc/10_ssao/README.md](doc/10_ssao/README.md) |
 | Level 11：Clustered | [doc/11_clustered/README.md](doc/11_clustered/README.md) |
 | Level 12：Particles | [doc/12_particles/README.md](doc/12_particles/README.md) |
 | Level 13：Multithreaded | [doc/13_multithreaded/README.md](doc/13_multithreaded/README.md) |

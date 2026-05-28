@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-set(EXAMPLE_NAME 10_gi)
+set(EXAMPLE_NAME 10_ssao)
 
 add_executable(${EXAMPLE_NAME}
     ${CMAKE_CURRENT_SOURCE_DIR}/StandaloneMain.cpp
@@ -12,13 +12,13 @@ target_include_directories(${EXAMPLE_NAME} PRIVATE
 )
 
 target_sources(${EXAMPLE_NAME} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/GIRenderer.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/GIRenderer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/SSAORenderer.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/SSAORenderer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/StandaloneMain.cpp
 )
 
 file(GLOB EXAMPLE_SHADER_FILES CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/shaders/11_gi/*.slang"
+    "${CMAKE_SOURCE_DIR}/shaders/10_ssao/*.slang"
 )
 if(EXAMPLE_SHADER_FILES)
     set_source_files_properties(${EXAMPLE_SHADER_FILES} PROPERTIES HEADER_FILE_ONLY TRUE)
@@ -27,7 +27,7 @@ if(EXAMPLE_SHADER_FILES)
 endif()
 
 vkr_add_example_slang_shaders(${EXAMPLE_NAME}
-    "${CMAKE_SOURCE_DIR}/shaders/11_gi"
+    "${CMAKE_SOURCE_DIR}/shaders/10_ssao"
     "${CMAKE_SOURCE_DIR}/shaders"
 )
 

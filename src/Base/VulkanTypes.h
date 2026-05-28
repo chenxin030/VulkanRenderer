@@ -48,6 +48,9 @@ struct ShadowUBO {
 	glm::vec4 areaLightColor;
 	glm::vec4 areaLightU;
 	glm::vec4 areaLightV;
+	uint32_t dirLightEnabled;
+	uint32_t pointLightEnabled;
+	uint32_t areaLightEnabled;
 };
 
 struct ShadowParamsUBO {

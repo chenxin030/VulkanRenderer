@@ -1,4 +1,4 @@
-# 10_gi — Screen Space Ambient Occlusion（SSAO）
+# 10_ssao — Screen Space Ambient Occlusion（SSAO）
 
 ## 1. 目标渲染效果
 
