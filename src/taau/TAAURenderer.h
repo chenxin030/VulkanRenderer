@@ -17,30 +17,17 @@ public:
 private:
     void recreateSwapChain() override;
 
-    struct TAAUParamsUBO
-    {
-        float blendFactor;
-        float reactiveClamp;
-        float antiFlicker;
-        float velocityScale;
-        float historyClampGamma;
-        float historyRejectThreshold;
-        float pad0;
-        float pad1;
-    };
-
     Mesh cubeMesh;
     uint32_t instanceCount = 0;
 
-    MeshBuffer instanceBufferResources;
     MeshBuffer sceneUboResources;
-    MeshBuffer prevVpUboResources;
+    MeshBuffer instanceBufferResources;
 
-    vk::raii::DescriptorSetLayout mainRenderDescriptorSetLayout = nullptr;
-    vk::raii::DescriptorPool mainRenderDescriptorPool = nullptr;
-    vk::raii::PipelineLayout mainRenderPipelineLayout = nullptr;
-    vk::raii::Pipeline mainRenderPipeline = nullptr;
-    vk::raii::DescriptorSets mainRenderDescriptorSets = nullptr;
+    vk::raii::DescriptorSetLayout sceneDescriptorSetLayout = nullptr;
+    vk::raii::DescriptorPool sceneDescriptorPool = nullptr;
+    vk::raii::PipelineLayout scenePipelineLayout = nullptr;
+    vk::raii::Pipeline scenePipeline = nullptr;
+    vk::raii::DescriptorSets sceneDescriptorSets = nullptr;
 
     vk::raii::DescriptorSetLayout taauDescriptorSetLayout = nullptr;
     vk::raii::DescriptorPool taauDescriptorPool = nullptr;
@@ -85,10 +72,12 @@ private:
     bool taauFreezeHistory = false;
     TAAUParams taauParams{};
 
-    bool createMainRenderResources();
-    bool createMainRenderDescriptorSetLayout();
-    bool createMainRenderPipelines();
-    void createMainRenderDescriptorSets();
+    void createSceneBuffers();
+    bool createSceneDescriptorSetLayout();
+    bool createSceneDescriptorPool();
+    void createSceneDescriptorSets();
+    bool createScenePipeline();
+    void updateSceneBuffers(uint32_t currentImage);
 
     bool createTAAUResources();
     bool createTAAUDescriptorSetLayout();

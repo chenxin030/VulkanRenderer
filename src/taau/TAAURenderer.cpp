@@ -7,10 +7,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
-#include <fstream>
 #include <imgui.h>
 
-struct ShadowInstanceData
+struct InstanceData
 {
     glm::mat4 model;
     glm::vec4 color;
@@ -21,6 +20,18 @@ struct SceneUBO
     glm::mat4 projection;
     glm::mat4 view;
     glm::vec3 camPos;
+};
+
+struct TAAUParamsUBO
+{
+    float blendFactor;
+    float reactiveClamp;
+    float antiFlicker;
+    float velocityScale;
+    float historyClampGamma;
+    float historyRejectThreshold;
+    float pad0;
+    float pad1;
 };
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -42,13 +53,11 @@ bool TAAURenderer::prepareResource()
     createVertexBuffer(cubeMesh);
     createIndexBuffer(cubeMesh);
 
-    createShadowBuffers();
-
-    if (!createShadowDescriptorSetLayout()) return false;
-    if (!createShadowDescriptorPool()) return false;
-    if (!createShadowMapResources()) return false;
-    if (!createShadowPipelines()) return false;
-    createShadowDescriptorSets();
+    createSceneBuffers();
+    if (!createSceneDescriptorSetLayout()) return false;
+    if (!createSceneDescriptorPool()) return false;
+    createSceneDescriptorSets();
+    if (!createScenePipeline()) return false;
 
     if (!createTAAUResources()) return false;
     if (!createTAAUDescriptorSetLayout()) return false;
@@ -66,19 +75,25 @@ bool TAAURenderer::initUI()
     return initVulkanUI();
 }
 
-bool TAAURenderer::createShadowDescriptorSetLayout()
+void TAAURenderer::createSceneBuffers()
+{
+    createUniformBuffers(sceneUboResources, sizeof(SceneUBO));
+
+    // Scene instances: 1 floor + 8 cubes.
+    instanceCount = 9;
+    createStorageBuffers(instanceBufferResources, sizeof(InstanceData) * instanceCount);
+}
+
+bool TAAURenderer::createSceneDescriptorSetLayout()
 {
     try
     {
         std::vector<vk::DescriptorSetLayoutBinding> bindings = {
             { .binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment },
             { .binding = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment },
-            { .binding = 2, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment },
-            { .binding = 3, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
-            { .binding = 4, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
         };
 
-        shadowDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, vk::DescriptorSetLayoutCreateInfo{
+        sceneDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, vk::DescriptorSetLayoutCreateInfo{
             .bindingCount = static_cast<uint32_t>(bindings.size()),
             .pBindings = bindings.data()
         });
@@ -86,22 +101,21 @@ bool TAAURenderer::createShadowDescriptorSetLayout()
     }
     catch (const std::exception& e)
     {
-        std::cerr << "Failed to create shadow descriptor set layout: " << e.what() << std::endl;
+        std::cerr << "Failed to create scene descriptor set layout: " << e.what() << std::endl;
         return false;
     }
 }
 
-bool TAAURenderer::createShadowDescriptorPool()
+bool TAAURenderer::createSceneDescriptorPool()
 {
     try
     {
         std::vector<vk::DescriptorPoolSize> poolSizes = {
-            { .type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 3u },
+            { .type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
             { .type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
-            { .type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
         };
 
-        shadowDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
+        sceneDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
             .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
             .maxSets = MAX_FRAMES_IN_FLIGHT,
             .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
@@ -111,147 +125,58 @@ bool TAAURenderer::createShadowDescriptorPool()
     }
     catch (const std::exception& e)
     {
-        std::cerr << "Failed to create shadow descriptor pool: " << e.what() << std::endl;
+        std::cerr << "Failed to create scene descriptor pool: " << e.what() << std::endl;
         return false;
     }
 }
 
-void TAAURenderer::createShadowDescriptorSets()
+void TAAURenderer::createSceneDescriptorSets()
 {
-    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *shadowDescriptorSetLayout);
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *sceneDescriptorSetLayout);
     vk::DescriptorSetAllocateInfo allocInfo{
-        .descriptorPool = *shadowDescriptorPool,
+        .descriptorPool = *sceneDescriptorPool,
         .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
         .pSetLayouts = layouts.data()
     };
 
-    shadowInstanceBufferResources.descriptorSets = vk::raii::DescriptorSets(device, allocInfo);
+    sceneDescriptorSets = vk::raii::DescriptorSets(device, allocInfo);
 
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
     {
         vk::DescriptorBufferInfo sceneBufferInfo{ .buffer = *sceneUboResources.Buffers[i], .offset = 0, .range = sizeof(SceneUBO) };
-        vk::DescriptorBufferInfo instanceBufferInfo{ .buffer = *shadowInstanceBufferResources.Buffers[i], .offset = 0, .range = sizeof(ShadowInstanceData) * instanceCount };
-        vk::DescriptorBufferInfo shadowBufferInfo{ .buffer = *shadowUboResources.Buffers[i], .offset = 0, .range = sizeof(ShadowUBO) };
-        vk::DescriptorBufferInfo shadowParamsBufferInfo{ .buffer = *shadowParamsUboResources.Buffers[i], .offset = 0, .range = sizeof(ShadowParamsUBO) };
-        vk::DescriptorImageInfo shadowMapInfo{ .sampler = shadowMapData.textureSampler, .imageView = shadowMapData.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
+        vk::DescriptorBufferInfo instanceBufferInfo{ .buffer = *instanceBufferResources.Buffers[i], .offset = 0, .range = sizeof(InstanceData) * instanceCount };
 
         std::vector<vk::WriteDescriptorSet> writes = {
-            { .dstSet = *shadowInstanceBufferResources.descriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &sceneBufferInfo },
-            { .dstSet = *shadowInstanceBufferResources.descriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &instanceBufferInfo },
-            { .dstSet = *shadowInstanceBufferResources.descriptorSets[i], .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &shadowBufferInfo },
-            { .dstSet = *shadowInstanceBufferResources.descriptorSets[i], .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &shadowMapInfo },
-            { .dstSet = *shadowInstanceBufferResources.descriptorSets[i], .dstBinding = 4, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &shadowParamsBufferInfo },
+            { .dstSet = *sceneDescriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &sceneBufferInfo },
+            { .dstSet = *sceneDescriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &instanceBufferInfo },
         };
         device.updateDescriptorSets(writes, nullptr);
     }
 }
 
-void TAAURenderer::createShadowBuffers()
-{
-    createUniformBuffers(sceneUboResources, sizeof(SceneUBO));
-    createUniformBuffers(shadowUboResources, sizeof(ShadowUBO));
-    createUniformBuffers(shadowParamsUboResources, sizeof(ShadowParamsUBO));
-
-    // Scene instances: 1 floor + 8 cubes.
-    instanceCount = 9;
-    createStorageBuffers(shadowInstanceBufferResources, sizeof(ShadowInstanceData) * instanceCount);
-}
-
-bool TAAURenderer::createShadowMapResources()
+bool TAAURenderer::createScenePipeline()
 {
     try
     {
-        vk::Format shadowDepthFormat = findSupportedFormat(
-            { vk::Format::eD32Sfloat, vk::Format::eD16Unorm },
-            vk::ImageTiling::eOptimal,
-            vk::FormatFeatureFlagBits::eDepthStencilAttachment | vk::FormatFeatureFlagBits::eSampledImage
-        );
-
-        createImage(
-            shadowMapExtent.width,
-            shadowMapExtent.height,
-            1,
-            shadowDepthFormat,
-            vk::ImageTiling::eOptimal,
-            vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
-            vk::MemoryPropertyFlagBits::eDeviceLocal,
-            shadowMapData
-        );
-        shadowMapData.textureImageView = createImageView(shadowMapData.textureImage, shadowDepthFormat, vk::ImageAspectFlagBits::eDepth, 1);
-
-        vk::SamplerCreateInfo samplerInfo{
-            .magFilter = vk::Filter::eLinear,
-            .minFilter = vk::Filter::eLinear,
-            .mipmapMode = vk::SamplerMipmapMode::eNearest,
-            .addressModeU = vk::SamplerAddressMode::eClampToBorder,
-            .addressModeV = vk::SamplerAddressMode::eClampToBorder,
-            .addressModeW = vk::SamplerAddressMode::eClampToBorder,
-            .mipLodBias = 0.0f,
-            .anisotropyEnable = vk::False,
-            .maxAnisotropy = 1.0f,
-            .compareEnable = vk::False,
-            .compareOp = vk::CompareOp::eAlways,
-            .minLod = 0.0f,
-            .maxLod = 0.0f,
-            .borderColor = vk::BorderColor::eFloatOpaqueWhite,
-            .unnormalizedCoordinates = vk::False
-        };
-        shadowMapData.textureSampler = vk::raii::Sampler(device, samplerInfo);
-
-        shadowMapLayout = vk::ImageLayout::eUndefined;
-        return true;
-    }
-    catch (const std::exception& e)
-    {
-        std::cerr << "Failed to create shadow map resources: " << e.what() << std::endl;
-        return false;
-    }
-}
-
-bool TAAURenderer::createShadowPipelines()
-{
-    try
-    {
-        shadowPipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
+        scenePipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
             .setLayoutCount = 1,
-            .pSetLayouts = &*shadowDescriptorSetLayout,
+            .pSetLayouts = &*sceneDescriptorSetLayout,
             .pushConstantRangeCount = 0
         });
 
         const auto bindingDescription = Vertex::getBindingDescription();
-        const auto shadowDepthAttributes = Vertex::getPositionOnlyAttributeDescriptions();
-        vk::PipelineVertexInputStateCreateInfo shadowDepthVertexInputInfo{
+        const auto vertexAttributes = Vertex::getPositionNormalAttributeDescriptions();
+        vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
             .vertexBindingDescriptionCount = 1,
             .pVertexBindingDescriptions = &bindingDescription,
-            .vertexAttributeDescriptionCount = static_cast<uint32_t>(shadowDepthAttributes.size()),
-            .pVertexAttributeDescriptions = shadowDepthAttributes.data()
-        };
-
-        const auto shadowLitAttributes = Vertex::getPositionNormalAttributeDescriptions();
-        vk::PipelineVertexInputStateCreateInfo shadowLitVertexInputInfo{
-            .vertexBindingDescriptionCount = 1,
-            .pVertexBindingDescriptions = &bindingDescription,
-            .vertexAttributeDescriptionCount = static_cast<uint32_t>(shadowLitAttributes.size()),
-            .pVertexAttributeDescriptions = shadowLitAttributes.data()
+            .vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexAttributes.size()),
+            .pVertexAttributeDescriptions = vertexAttributes.data()
         };
 
         vk::PipelineInputAssemblyStateCreateInfo inputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = vk::False };
         vk::PipelineViewportStateCreateInfo viewportState{ .viewportCount = 1, .scissorCount = 1 };
 
-        vk::PipelineRasterizationStateCreateInfo shadowRasterizer{
-            .depthClampEnable = vk::False,
-            .rasterizerDiscardEnable = vk::False,
-            .polygonMode = vk::PolygonMode::eFill,
-            .cullMode = vk::CullModeFlagBits::eNone,
-            .frontFace = vk::FrontFace::eCounterClockwise,
-            .depthBiasEnable = vk::True,
-            .depthBiasConstantFactor = 1.25f,
-            .depthBiasClamp = 0.0f,
-            .depthBiasSlopeFactor = 1.75f,
-            .lineWidth = 1.0f
-        };
-
-        vk::PipelineRasterizationStateCreateInfo litRasterizer{
+        vk::PipelineRasterizationStateCreateInfo rasterizer{
             .depthClampEnable = vk::False,
             .rasterizerDiscardEnable = vk::False,
             .polygonMode = vk::PolygonMode::eFill,
@@ -273,100 +198,58 @@ bool TAAURenderer::createShadowPipelines()
         std::vector dynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
         vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
 
-        const vk::Format shadowDepthFormat = findSupportedFormat(
-            { vk::Format::eD32Sfloat, vk::Format::eD16Unorm },
-            vk::ImageTiling::eOptimal,
-            vk::FormatFeatureFlagBits::eDepthStencilAttachment | vk::FormatFeatureFlagBits::eSampledImage
-        );
+        vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "taau_scene.spv"));
+        vk::PipelineShaderStageCreateInfo vertShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain" };
+        vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain" };
+        vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
-        {
-            vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "shadow_depth.spv"));
-            vk::PipelineShaderStageCreateInfo vertShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain" };
-            vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain" };
-            vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+        std::array<vk::PipelineColorBlendAttachmentState, 2> colorBlendAttachments = {
+            vk::PipelineColorBlendAttachmentState{
+                .blendEnable = vk::False,
+                .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
+            },
+            vk::PipelineColorBlendAttachmentState{
+                .blendEnable = vk::False,
+                .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
+            }
+        };
+        vk::PipelineColorBlendStateCreateInfo colorBlending{ .logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = static_cast<uint32_t>(colorBlendAttachments.size()), .pAttachments = colorBlendAttachments.data() };
 
-            vk::PipelineColorBlendStateCreateInfo colorBlending{ .logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 0, .pAttachments = nullptr };
+        const vk::Format depthFormat = findDepthFormat();
+        const std::array<vk::Format, 2> colorFormats{ swapChainImageFormat, vk::Format::eR16G16Sfloat };
+        vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipelineCreateInfoChain = {
+            {
+                .stageCount = 2,
+                .pStages = shaderStages,
+                .pVertexInputState = &vertexInputInfo,
+                .pInputAssemblyState = &inputAssembly,
+                .pViewportState = &viewportState,
+                .pRasterizationState = &rasterizer,
+                .pMultisampleState = &multisampling,
+                .pDepthStencilState = &depthStencil,
+                .pColorBlendState = &colorBlending,
+                .pDynamicState = &dynamicState,
+                .layout = scenePipelineLayout,
+                .renderPass = nullptr
+            },
+            {
+                .colorAttachmentCount = static_cast<uint32_t>(colorFormats.size()),
+                .pColorAttachmentFormats = colorFormats.data(),
+                .depthAttachmentFormat = depthFormat
+            }
+        };
 
-            vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipelineCreateInfoChain = {
-                {
-                    .stageCount = 2,
-                    .pStages = shaderStages,
-                    .pVertexInputState = &shadowDepthVertexInputInfo,
-                    .pInputAssemblyState = &inputAssembly,
-                    .pViewportState = &viewportState,
-                    .pRasterizationState = &shadowRasterizer,
-                    .pMultisampleState = &multisampling,
-                    .pDepthStencilState = &depthStencil,
-                    .pColorBlendState = &colorBlending,
-                    .pDynamicState = &dynamicState,
-                    .layout = shadowPipelineLayout,
-                    .renderPass = nullptr
-                },
-                {
-                    .colorAttachmentCount = 0,
-                    .pColorAttachmentFormats = nullptr,
-                    .depthAttachmentFormat = shadowDepthFormat
-                }
-            };
-
-            shadowDepthPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
-        }
-
-        {
-            vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "shadow_lit.spv"));
-            vk::PipelineShaderStageCreateInfo vertShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain" };
-            vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain" };
-            vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
-
-            std::array<vk::PipelineColorBlendAttachmentState, 2> colorBlendAttachments = {
-                vk::PipelineColorBlendAttachmentState{
-                    .blendEnable = vk::False,
-                    .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
-                },
-                vk::PipelineColorBlendAttachmentState{
-                    .blendEnable = vk::False,
-                    .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
-                }
-            };
-            vk::PipelineColorBlendStateCreateInfo colorBlending{ .logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = static_cast<uint32_t>(colorBlendAttachments.size()), .pAttachments = colorBlendAttachments.data() };
-
-            const vk::Format depthFormat = findDepthFormat();
-            const std::array<vk::Format, 2> colorFormats{ swapChainImageFormat, vk::Format::eR16G16Sfloat };
-            vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipelineCreateInfoChain = {
-                {
-                    .stageCount = 2,
-                    .pStages = shaderStages,
-                    .pVertexInputState = &shadowLitVertexInputInfo,
-                    .pInputAssemblyState = &inputAssembly,
-                    .pViewportState = &viewportState,
-                    .pRasterizationState = &litRasterizer,
-                    .pMultisampleState = &multisampling,
-                    .pDepthStencilState = &depthStencil,
-                    .pColorBlendState = &colorBlending,
-                    .pDynamicState = &dynamicState,
-                    .layout = shadowPipelineLayout,
-                    .renderPass = nullptr
-                },
-                {
-                    .colorAttachmentCount = static_cast<uint32_t>(colorFormats.size()),
-                    .pColorAttachmentFormats = colorFormats.data(),
-                    .depthAttachmentFormat = depthFormat
-                }
-            };
-
-            shadowLitPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
-        }
-
+        scenePipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
         return true;
     }
     catch (const std::exception& e)
     {
-        std::cerr << "Failed to create shadow pipelines: " << e.what() << std::endl;
+        std::cerr << "Failed to create scene pipeline: " << e.what() << std::endl;
         return false;
     }
 }
 
-void TAAURenderer::updateShadowBuffers(uint32_t frameIndex)
+void TAAURenderer::updateSceneBuffers(uint32_t frameIndex)
 {
     SceneUBO sceneUbo{
         .projection = glm::perspective(glm::radians(camera.Zoom),
@@ -382,49 +265,20 @@ void TAAURenderer::updateShadowBuffers(uint32_t frameIndex)
 
     std::memcpy(sceneUboResources.BuffersMapped[frameIndex], &sceneUbo, sizeof(sceneUbo));
 
-    float deltaTime = platform ? platform->frameTimer : 0.0f;
-    static float lightAngle = 0.0f;
-    lightAngle += deltaTime * 0.35f;
-
-    const glm::vec3 lightDir = glm::normalize(glm::vec3(std::cos(lightAngle) * 0.6f, -1.0f, std::sin(lightAngle) * 0.6f));
-    const glm::vec3 lightPos = -lightDir * 12.0f;
-    const glm::vec3 target(0.0f, -0.5f, 0.0f);
-
-    const glm::mat4 lightView = glm::lookAt(lightPos, target, glm::vec3(0.0f, 1.0f, 0.0f));
-    glm::mat4 lightProj = glm::ortho(-7.0f, 7.0f, -7.0f, 7.0f, 0.1f, 30.0f);
-    lightProj[1][1] *= -1;
-
     const glm::mat4 currentViewProj = sceneUbo.projection * sceneUbo.view;
-
-    ShadowUBO shadowUbo{
-        .lightViewProj = lightProj * lightView,
-        .prevViewProj = taauPrevViewProj,
-        .dirLightDirIntensity = glm::vec4(lightDir, dirLightIntensity),
-        .dirLightColor = glm::vec4(1.0f),
-    };
-    std::memcpy(shadowUboResources.BuffersMapped[frameIndex], &shadowUbo, sizeof(shadowUbo));
-
     updateTAAUHistory(currentViewProj);
 
-    ShadowParamsUBO shadowParams{
-        .shadowFilterMode = shadowFilterMode,
-        .pcssLightSizeTexels = pcssLightSizeTexels,
-        .shadowBiasMin = 0.0006f,
-        .invShadowMapSize = glm::vec2(1.0f / float(shadowMapExtent.width), 1.0f / float(shadowMapExtent.height)),
-        .padding0 = glm::vec2(0.0f)
-    };
-    std::memcpy(shadowParamsUboResources.BuffersMapped[frameIndex], &shadowParams, sizeof(shadowParams));
+    taauSceneTime += platform ? platform->frameTimer : 0.0f;
 
-    std::vector<ShadowInstanceData> instances;
+    std::vector<InstanceData> instances;
     instances.reserve(instanceCount);
 
-    ShadowInstanceData floor{};
+    InstanceData floor{};
     floor.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -2.0f, 0.0f));
     floor.model = glm::scale(floor.model, glm::vec3(8.0f, 0.25f, 8.0f));
     floor.color = glm::vec4(0.55f, 0.55f, 0.60f, 1.0f);
     instances.push_back(floor);
 
-    taauSceneTime += deltaTime;
     for (uint32_t i = 0; i < 8; ++i)
     {
         const float a = static_cast<float>(i) / 8.0f * 6.2831853f;
@@ -454,7 +308,8 @@ void TAAURenderer::updateShadowBuffers(uint32_t frameIndex)
         instances.push_back({ model, glm::vec4(c, 1.0f) });
     }
 
-    std::memcpy(shadowInstanceBufferResources.BuffersMapped[frameIndex], instances.data(), sizeof(ShadowInstanceData) * instances.size());
+    // Write instance data to instance buffer
+    std::memcpy(instanceBufferResources.BuffersMapped[frameIndex], instances.data(), sizeof(InstanceData) * instances.size());
 }
 
 float TAAURenderer::halton(uint32_t index, uint32_t base)
@@ -758,6 +613,40 @@ void TAAURenderer::updateTAAUHistory(const glm::mat4& currentViewProj)
     taauPrevViewProj = currentViewProj;
 }
 
+void TAAURenderer::recreateTAAUResources()
+{
+    waitIdle();
+
+    taauHistoryValid = false;
+    taauInputLayout = vk::ImageLayout::eUndefined;
+    taauVelocityLayout = vk::ImageLayout::eUndefined;
+    taauDepthLayout = vk::ImageLayout::eUndefined;
+    for (int i = 0; i < 2; ++i)
+    {
+        taauHistoryLayouts[i] = vk::ImageLayout::eUndefined;
+    }
+
+    taauDescriptorSets = vk::raii::DescriptorSets(nullptr);
+    taauDescriptorPool.reset();
+
+    taauInputColorData = TextureData{};
+    taauVelocityData = TextureData{};
+    taauDepthData = TextureData{};
+    taauHistoryColorData[0] = TextureData{};
+    taauHistoryColorData[1] = TextureData{};
+
+    if (!createTAAUResources())
+    {
+        throw std::runtime_error("Failed to recreate TAAU resources");
+    }
+
+    if (!createTAAUDescriptorPool())
+    {
+        throw std::runtime_error("Failed to recreate TAAU descriptor pool");
+    }
+
+    createTAAUDescriptorSets();
+}
 void TAAURenderer::recordTAAU(vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex)
 {
     if (!taauEnabled)
@@ -945,10 +834,7 @@ void TAAURenderer::updateUIPanel()
 
     if (ImGui::SliderFloat("RenderScale", &taauRenderScale, 0.5f, 1.0f, "%.2f"))
     {
-        taauHistoryValid = false;
-        waitIdle();
-        createTAAUResources();
-        createTAAUDescriptorSets();
+        recreateTAAUResources();
     }
 
     ImGui::Checkbox("FreezeHistory", &taauFreezeHistory);
@@ -973,49 +859,6 @@ void TAAURenderer::recordCommandBuffer(uint32_t imageIndex)
         {}, vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
         vk::PipelineStageFlagBits2::eAllCommands, vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests, vk::ImageAspectFlagBits::eDepth);
     depthImageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
-
-    transition_image_layout(shadowMapData.textureImage, shadowMapLayout, vk::ImageLayout::eDepthAttachmentOptimal,
-        {}, vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-        vk::PipelineStageFlagBits2::eAllCommands, vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests, vk::ImageAspectFlagBits::eDepth);
-    shadowMapLayout = vk::ImageLayout::eDepthAttachmentOptimal;
-
-    vk::ClearValue shadowClearDepth = vk::ClearDepthStencilValue(1.0f, 0);
-    vk::RenderingAttachmentInfo shadowDepthAttachmentInfo = {
-        .imageView = shadowMapData.textureImageView,
-        .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
-        .loadOp = vk::AttachmentLoadOp::eClear,
-        .storeOp = vk::AttachmentStoreOp::eStore,
-        .clearValue = shadowClearDepth
-    };
-    vk::RenderingInfo shadowRenderingInfo = {
-        .renderArea = {.offset = {0, 0}, .extent = shadowMapExtent},
-        .layerCount = 1,
-        .colorAttachmentCount = 0,
-        .pColorAttachments = nullptr,
-        .pDepthAttachment = &shadowDepthAttachmentInfo
-    };
-
-    auto drawShadowCubes = [&]() {
-        if (instanceCount == 0) {
-            return;
-        }
-        commandBuffer.bindVertexBuffers(0, *cubeMesh.vertexBuffer, { 0 });
-        commandBuffer.bindIndexBuffer(*cubeMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(cubeMesh.indices)::value_type>::value);
-        commandBuffer.drawIndexed(static_cast<uint32_t>(cubeMesh.indices.size()), instanceCount, 0, 0, 0);
-    };
-
-    commandBuffer.beginRendering(shadowRenderingInfo);
-    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(shadowMapExtent.width), static_cast<float>(shadowMapExtent.height), 0.0f, 1.0f));
-    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), shadowMapExtent));
-    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *shadowDepthPipeline);
-    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *shadowPipelineLayout, 0, *shadowInstanceBufferResources.descriptorSets[currentFrame], nullptr);
-    drawShadowCubes();
-    commandBuffer.endRendering();
-
-    transition_image_layout(shadowMapData.textureImage, vk::ImageLayout::eDepthAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
-        vk::AccessFlagBits2::eDepthStencilAttachmentWrite, vk::AccessFlagBits2::eShaderSampledRead,
-        vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests, vk::PipelineStageFlagBits2::eFragmentShader, vk::ImageAspectFlagBits::eDepth);
-    shadowMapLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
 
     transition_image_layout(taauInputColorData.textureImage, taauInputLayout, vk::ImageLayout::eColorAttachmentOptimal,
         {}, vk::AccessFlagBits2::eColorAttachmentWrite,
@@ -1070,12 +913,21 @@ void TAAURenderer::recordCommandBuffer(uint32_t imageIndex)
         .pDepthAttachment = &taauDepthAttachmentInfo
     };
 
+    auto drawScene = [&]() {
+        if (instanceCount == 0) {
+            return;
+        }
+        commandBuffer.bindVertexBuffers(0, *cubeMesh.vertexBuffer, { 0 });
+        commandBuffer.bindIndexBuffer(*cubeMesh.indexBuffer, 0, vk::IndexTypeValue<decltype(cubeMesh.indices)::value_type>::value);
+        commandBuffer.drawIndexed(static_cast<uint32_t>(cubeMesh.indices.size()), instanceCount, 0, 0, 0);
+    };
+
     commandBuffer.beginRendering(taauRenderingInfo);
     commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(taauExtent.width), static_cast<float>(taauExtent.height), 0.0f, 1.0f));
     commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), taauExtent));
-    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *shadowLitPipeline);
-    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *shadowPipelineLayout, 0, *shadowInstanceBufferResources.descriptorSets[currentFrame], nullptr);
-    drawShadowCubes();
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *scenePipeline);
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *scenePipelineLayout, 0, *sceneDescriptorSets[currentFrame], nullptr);
+    drawScene();
     commandBuffer.endRendering();
 
     recordTAAU(commandBuffer, imageIndex);
@@ -1173,7 +1025,7 @@ void TAAURenderer::render()
 
     updateUIFrame();
     updateTAAUBuffers(currentFrame);
-    updateShadowBuffers(currentFrame);
+    updateSceneBuffers(currentFrame);
     recordCommandBuffer(imageIndex);
 
     const vk::PipelineStageFlags waitStage(vk::PipelineStageFlagBits::eColorAttachmentOutput);
