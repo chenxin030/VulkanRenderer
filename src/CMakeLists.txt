@@ -35,9 +35,16 @@ function(vkr_add_example_slang_shaders target_name shader_source_dir shader_outp
         get_filename_component(SHADER_NAME ${SHADER_SOURCE} NAME_WE)
         set(FINAL_OUTPUT "${shader_output_dir}/${SHADER_NAME}.spv")
 
-        set(SHADER_ENTRY_ARGS -entry vertMain -entry fragMain)
+        # Determine entry points based on shader naming convention
+        set(SHADER_ENTRY_ARGS "")
         if(SHADER_NAME MATCHES "_comp$" OR SHADER_NAME MATCHES "_build$")
             set(SHADER_ENTRY_ARGS -entry compMain)
+        elseif(SHADER_NAME MATCHES "_frag$")
+            set(SHADER_ENTRY_ARGS -entry fragMain)
+        elseif(SHADER_NAME MATCHES "_vert$")
+            set(SHADER_ENTRY_ARGS -entry vertMain)
+        else()
+            set(SHADER_ENTRY_ARGS -entry vertMain -entry fragMain)
         endif()
 
         add_custom_command(TARGET ${target_name} POST_BUILD
@@ -83,3 +90,4 @@ add_subdirectory(10_ssao)
 add_subdirectory(clustered)
 add_subdirectory(particles)
 add_subdirectory(multithreaded)
+add_subdirectory(14_volumetric)

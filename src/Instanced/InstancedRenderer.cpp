@@ -421,7 +421,7 @@ void InstancedRenderer::render()
     device.resetFences(*inFlightFences[currentFrame]);
 
     commandBuffers[currentFrame].reset();
-    updateUIFrame(currentFrame);
+    updateUIFrame();
     updateInstancedBuffers(currentFrame);
     recordCommandBuffer(imageIndex);
 

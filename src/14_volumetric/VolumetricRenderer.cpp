@@ -23,7 +23,7 @@ struct SceneUBO
     float pad0;
 };
 
-struct VolumetricParamsUBO
+struct VolumetricUBOParams
 {
     float density;
     float scattering;
@@ -38,6 +38,7 @@ struct VolumetricParamsUBO
     float farZ;
     glm::vec2 renderScale;
     glm::vec2 jitter;
+    float historyValid;
 };
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -49,37 +50,32 @@ void VolumetricRenderer::initialize(Platform* _platform)
 
 bool VolumetricRenderer::initVulkan()
 {
-    camera = Camera(glm::vec3(0.0f, 5.0f, 15.0f));
-    camera.pitch = -0.3f;  // Look down slightly
+    camera = Camera(glm::vec3(0.0f, 5.0f, 15.0f), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, -20.0f);
     return VulkanBase::initVulkan("VulkanRenderer - 14_volumetric");
 }
 
 bool VolumetricRenderer::prepareResource()
 {
-    // Generate scene geometry
     generateCube(cubeMesh);
     createVertexBuffer(cubeMesh);
     createIndexBuffer(cubeMesh);
 
-    generatePlane(planeMesh, 50.0f, 50.0f);
+    generateCube(planeMesh);
     createVertexBuffer(planeMesh);
     createIndexBuffer(planeMesh);
 
-    // Scene resources
     createSceneBuffers();
     if (!createSceneDescriptorSetLayout()) return false;
     if (!createSceneDescriptorPool()) return false;
     createSceneDescriptorSets();
     if (!createScenePipeline()) return false;
 
-    // Volumetric resources (Phase 1)
     if (!createVolumetricResources()) return false;
     if (!createVolumetricDescriptorSetLayout()) return false;
     if (!createVolumetricDescriptorPool()) return false;
     createVolumetricDescriptorSets();
     if (!createVolumetricPipeline()) return false;
 
-    // UI
     if (!initUI()) return false;
 
     return true;
@@ -94,9 +90,9 @@ void VolumetricRenderer::createSceneBuffers()
 {
     createUniformBuffers(sceneUboResources, sizeof(SceneUBO));
 
-    // Scene instances: cubes scattered around
     instanceCount = 20;
-    createStorageBuffers(instanceBufferResources, sizeof(InstanceData) * instanceCount);
+    createStorageBuffers(instanceBufferResources, sizeof(InstanceData) * instanceCount,
+        vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eVertexBuffer);
 }
 
 bool VolumetricRenderer::createSceneDescriptorSetLayout()
@@ -104,14 +100,14 @@ bool VolumetricRenderer::createSceneDescriptorSetLayout()
     try
     {
         std::vector<vk::DescriptorSetLayoutBinding> bindings = {
-            { .binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment },
-            { .binding = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment },
+            {.binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment },
+            {.binding = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment },
         };
 
         sceneDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, vk::DescriptorSetLayoutCreateInfo{
             .bindingCount = static_cast<uint32_t>(bindings.size()),
             .pBindings = bindings.data()
-        });
+            });
         return true;
     }
     catch (const std::exception& e)
@@ -126,8 +122,8 @@ bool VolumetricRenderer::createSceneDescriptorPool()
     try
     {
         std::vector<vk::DescriptorPoolSize> poolSizes = {
-            { .type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
-            { .type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
+            {.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
+            {.type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
         };
 
         sceneDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
@@ -135,7 +131,7 @@ bool VolumetricRenderer::createSceneDescriptorPool()
             .maxSets = MAX_FRAMES_IN_FLIGHT,
             .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
             .pPoolSizes = poolSizes.data()
-        });
+            });
         return true;
     }
     catch (const std::exception& e)
@@ -162,8 +158,8 @@ void VolumetricRenderer::createSceneDescriptorSets()
         vk::DescriptorBufferInfo instanceBufferInfo{ .buffer = *instanceBufferResources.Buffers[i], .offset = 0, .range = sizeof(InstanceData) * instanceCount };
 
         std::vector<vk::WriteDescriptorSet> writes = {
-            { .dstSet = *sceneDescriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &sceneBufferInfo },
-            { .dstSet = *sceneDescriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &instanceBufferInfo },
+            {.dstSet = *sceneDescriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &sceneBufferInfo },
+            {.dstSet = *sceneDescriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &instanceBufferInfo },
         };
 
         device.updateDescriptorSets(writes, nullptr);
@@ -174,8 +170,8 @@ bool VolumetricRenderer::createScenePipeline()
 {
     try
     {
-        auto vertShaderCode = readFile(VK_SHADERS_DIR "14_volumetric/volumetric_vert.spv");
-        auto fragShaderCode = readFile(VK_SHADERS_DIR "14_volumetric/volumetric_scene_frag.spv");
+        auto vertShaderCode = readFile(VK_SHADERS_DIR "volumetric_scene_vert.spv");
+        auto fragShaderCode = readFile(VK_SHADERS_DIR "volumetric_scene_frag.spv");
 
         vk::raii::ShaderModule vertShaderModule(device, vk::ShaderModuleCreateInfo{ .codeSize = vertShaderCode.size(), .pCode = reinterpret_cast<const uint32_t*>(vertShaderCode.data()) });
         vk::raii::ShaderModule fragShaderModule(device, vk::ShaderModuleCreateInfo{ .codeSize = fragShaderCode.size(), .pCode = reinterpret_cast<const uint32_t*>(fragShaderCode.data()) });
@@ -184,22 +180,21 @@ bool VolumetricRenderer::createScenePipeline()
         vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = *fragShaderModule, .pName = "fragMain" };
         vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
+        scenePipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
+            .setLayoutCount = 1,
+            .pSetLayouts = &*sceneDescriptorSetLayout
+            });
+
         std::vector<vk::VertexInputBindingDescription> vertexInputBindings = {
-            { .binding = 0, .stride = sizeof(Vertex), .inputRate = vk::VertexInputRate::eVertex },
-            { .binding = 1, .stride = sizeof(InstanceData), .inputRate = vk::VertexInputRate::eInstance },
+            {.binding = 0, .stride = sizeof(Vertex), .inputRate = vk::VertexInputRate::eVertex },
+            {.binding = 1, .stride = sizeof(InstanceData), .inputRate = vk::VertexInputRate::eInstance },
         };
 
-        auto vertexAttributes = Vertex::getAttributeDescriptions();
-        std::vector<vk::VertexInputAttributeDescription> instanceAttributes = {
-            { .location = 3, .binding = 1, .format = vk::Format::eR32G32B32A32Sfloat, .offset = 0 },
-            { .location = 4, .binding = 1, .format = vk::Format::eR32G32B32A32Sfloat, .offset = 16 },
-            { .location = 5, .binding = 1, .format = vk::Format::eR32G32B32A32Sfloat, .offset = 32 },
-            { .location = 6, .binding = 1, .format = vk::Format::eR32G32B32A32Sfloat, .offset = 48 },
-            { .location = 7, .binding = 1, .format = vk::Format::eR32G32B32A32Sfloat, .offset = 64 },
+        std::vector<vk::VertexInputAttributeDescription> attributes = {
+            {.location = 0, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = 0 },
+            {.location = 1, .binding = 0, .format = vk::Format::eR32G32B32Sfloat, .offset = 12 },
+            {.location = 2, .binding = 0, .format = vk::Format::eR32G32Sfloat, .offset = 24 },
         };
-
-        std::vector<vk::VertexInputAttributeDescription> attributes = vertexAttributes;
-        attributes.insert(attributes.end(), instanceAttributes.begin(), instanceAttributes.end());
 
         vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
             .vertexBindingDescriptionCount = static_cast<uint32_t>(vertexInputBindings.size()),
@@ -208,39 +203,72 @@ bool VolumetricRenderer::createScenePipeline()
             .pVertexAttributeDescriptions = attributes.data()
         };
 
-        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = false };
+        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = vk::False };
 
-        vk::PipelineViewportStateCreateInfo viewportState{ .viewportCount = 1, .scissorCount = 1 };
-
-        vk::PipelineRasterizationStateCreateInfo rasterizer{ .polygonMode = vk::PolygonMode::eFill, .cullMode = vk::CullModeFlagBits::eBack, .frontFace = vk::FrontFace::eCounterClockwise, .lineWidth = 1.0f };
-
-        vk::PipelineMultisampleStateCreateInfo multisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1 };
-
-        vk::PipelineColorBlendAttachmentState colorBlendAttachment{ .blendEnable = false, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA };
-        vk::PipelineColorBlendStateCreateInfo colorBlending{ .attachmentCount = 1, .pAttachments = &colorBlendAttachment };
-
-        vk::PipelineDepthStencilStateCreateInfo depthStencil{ .depthTestEnable = true, .depthWriteEnable = true, .depthCompareOp = vk::CompareOp::eLess };
-
-        vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 1, .pSetLayouts = &*sceneDescriptorSetLayout };
-
-        scenePipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
-
-        vk::GraphicsPipelineCreateInfo pipelineInfo{
-            .stageCount = 2,
-            .pStages = shaderStages,
-            .pVertexInputState = &vertexInputInfo,
-            .pInputAssemblyState = &inputAssembly,
-            .pViewportState = &viewportState,
-            .pRasterizationState = &rasterizer,
-            .pMultisampleState = &multisampling,
-            .pColorBlendState = &colorBlending,
-            .pDepthStencilState = &depthStencil,
-            .layout = *scenePipelineLayout,
-            .renderPass = *renderPass,
-            .subpass = 0
+        vk::PipelineViewportStateCreateInfo viewportState{
+            .viewportCount = 1,
+            .pViewports = nullptr,
+            .scissorCount = 1,
+            .pScissors = nullptr
         };
 
-        scenePipeline = vk::raii::GraphicsPipeline(device, nullptr, pipelineInfo);
+        vk::PipelineRasterizationStateCreateInfo rasterizer{
+            .depthClampEnable = vk::False,
+            .rasterizerDiscardEnable = vk::False,
+            .polygonMode = vk::PolygonMode::eFill,
+            .cullMode = vk::CullModeFlagBits::eBack,
+            .frontFace = vk::FrontFace::eCounterClockwise,
+            .depthBiasEnable = vk::False,
+            .lineWidth = 1.0f
+        };
+
+        vk::PipelineMultisampleStateCreateInfo multisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False };
+
+        vk::PipelineDepthStencilStateCreateInfo depthStencil{
+            .depthTestEnable = vk::False,
+            .depthWriteEnable = vk::False,
+            .depthBoundsTestEnable = vk::False,
+            .stencilTestEnable = vk::False
+        };
+
+        vk::PipelineColorBlendAttachmentState colorBlendAttachment{
+            .blendEnable = vk::False,
+            .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
+        };
+        vk::PipelineColorBlendStateCreateInfo colorBlending{
+            .logicOpEnable = vk::False,
+            .logicOp = vk::LogicOp::eCopy,
+            .attachmentCount = 1,
+            .pAttachments = &colorBlendAttachment
+        };
+
+        vk::Format sceneColorFormat = vk::Format::eR32G32B32A32Sfloat;
+
+        std::vector dynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+        vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
+
+        vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipelineCreateInfoChain = {
+            {
+                .stageCount = 2,
+                .pStages = shaderStages,
+                .pVertexInputState = &vertexInputInfo,
+                .pInputAssemblyState = &inputAssembly,
+                .pViewportState = &viewportState,
+                .pRasterizationState = &rasterizer,
+                .pMultisampleState = &multisampling,
+                .pDepthStencilState = &depthStencil,
+                .pColorBlendState = &colorBlending,
+                .pDynamicState = &dynamicState,
+                .layout = scenePipelineLayout,
+                .renderPass = nullptr
+            },
+            {
+                .colorAttachmentCount = 1,
+                .pColorAttachmentFormats = &sceneColorFormat
+            }
+        };
+
+        scenePipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
         return true;
     }
     catch (const std::exception& e)
@@ -252,17 +280,18 @@ bool VolumetricRenderer::createScenePipeline()
 
 void VolumetricRenderer::updateSceneBuffers(uint32_t currentFrame)
 {
-    SceneUBO sceneUbo{};
-    sceneUbo.projection = camera.GetProjectionMatrix();
-    sceneUbo.view = camera.GetViewMatrix();
-    sceneUbo.camPos = camera.Position;
+    SceneUBO sceneUbo{
+        .projection = glm::perspective(glm::radians(camera.Zoom),
+            static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height),
+            0.1f, 100.0f),
+        .view = camera.GetViewMatrix(),
+        .camPos = camera.Position
+    };
 
     std::memcpy(sceneUboResources.BuffersMapped[currentFrame], &sceneUbo, sizeof(SceneUBO));
 
-    // Update instance data
     auto* instances = static_cast<InstanceData*>(instanceBufferResources.BuffersMapped[currentFrame]);
 
-    // Generate cube positions in a grid pattern
     for (uint32_t i = 0; i < instanceCount; i++)
     {
         float x = (i % 5) * 4.0f - 8.0f;
@@ -271,68 +300,84 @@ void VolumetricRenderer::updateSceneBuffers(uint32_t currentFrame)
 
         instances[i].model = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z)) * glm::scale(glm::mat4(1.0f), glm::vec3(1.5f));
 
-        // Varied colors
         float hue = static_cast<float>(i) / static_cast<float>(instanceCount);
-        instances[i].color = glm::vec4(hue, 0.7f, 0.9f, 1.0f);  // HSV colors
+        instances[i].color = glm::vec4(hue, 0.7f, 0.9f, 1.0f);
     }
 }
 
 void VolumetricRenderer::render()
 {
-    device.waitForFences(*inFlightFences[currentFrame], true, UINT64_MAX);
-    device.resetFences(*inFlightFences[currentFrame]);
-
-    uint32_t imageIndex = 0;
-    try
+    const auto fenceResult = device.waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
+    if (fenceResult != vk::Result::eSuccess)
     {
-        auto [acqResult, acquiredImageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[currentFrame]);
-        imageIndex = acquiredImageIndex;
+        throw std::runtime_error("failed to wait for fence!");
     }
-    catch (const vk::OutOfDateKHRError&)
+
+    auto [result, imageIndex] = swapChain.acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[currentFrame], nullptr);
+    if (result == vk::Result::eErrorOutOfDateKHR)
     {
         recreateSwapChain();
         return;
     }
 
+    if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR)
+    {
+        throw std::runtime_error("failed to acquire swap chain image!");
+    }
+
+    device.resetFences(*inFlightFences[currentFrame]);
+    commandBuffers[currentFrame].reset();
+
     updateUIFrame();
 
     updateSceneBuffers(currentFrame);
-    updateVolumetricBuffers(currentFrame);
 
-    commandBuffers[currentFrame].reset();
+    // Recreate volumetric resources if render scale changed
+    if (volumetricRenderScale != lastVolumetricRenderScale)
+    {
+        device.waitIdle();
+        recreateVolumetricSizedResources();
+        lastVolumetricRenderScale = volumetricRenderScale;
+        volumetricHistoryValid = false;
+    }
+
+    updateVolumetricBuffers(currentFrame);
     recordCommandBuffer(imageIndex);
 
-    vk::PipelineStageFlags waitStages[] = { vk::PipelineStageFlagBits::eColorAttachmentOutput };
-
-    vk::SubmitInfo submitInfo{
+    const vk::PipelineStageFlags waitStage(vk::PipelineStageFlagBits::eColorAttachmentOutput);
+    const vk::SubmitInfo submitInfo{
         .waitSemaphoreCount = 1,
         .pWaitSemaphores = &*presentCompleteSemaphores[currentFrame],
-        .pWaitDstStageMask = waitStages,
+        .pWaitDstStageMask = &waitStage,
         .commandBufferCount = 1,
         .pCommandBuffers = &*commandBuffers[currentFrame],
         .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &*renderFinishedSemaphores[currentFrame]
+        .pSignalSemaphores = &*renderFinishedSemaphores[imageIndex]
     };
-
     graphicsQueue.submit(submitInfo, *inFlightFences[currentFrame]);
+
+    const vk::PresentInfoKHR presentInfo{
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &*renderFinishedSemaphores[imageIndex],
+        .swapchainCount = 1,
+        .pSwapchains = &*swapChain,
+        .pImageIndices = &imageIndex
+    };
 
     try
     {
-        auto presentResult = presentQueue.presentKHR(vk::PresentInfoKHR{
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &*renderFinishedSemaphores[currentFrame],
-            .swapchainCount = 1,
-            .pSwapchains = &*swapChain,
-            .pImageIndices = &imageIndex
-        });
-
-        if (presentResult == vk::Result::eSuboptimalKHR)
-        {
-            recreateSwapChain();
-        }
+        result = presentQueue.presentKHR(presentInfo);
     }
     catch (const vk::OutOfDateKHRError&)
     {
+        framebufferResized = false;
+        recreateSwapChain();
+        return;
+    }
+
+    if (result == vk::Result::eSuboptimalKHR || framebufferResized)
+    {
+        framebufferResized = false;
         recreateSwapChain();
     }
 
@@ -341,132 +386,279 @@ void VolumetricRenderer::render()
 
 void VolumetricRenderer::recordCommandBuffer(uint32_t imageIndex)
 {
-    vk::CommandBufferBeginInfo beginInfo{};
-    commandBuffers[currentFrame].begin(beginInfo);
+    auto& commandBuffer = commandBuffers[currentFrame];
+    commandBuffer.begin({});
 
-    // Render scene to swap chain
-    std::array<vk::ClearValue, 2> clearValues{};
-    clearValues[0].color = std::array<float, 4>{ 0.0f, 0.0f, 0.0f, 1.0f };
-    clearValues[1].depthStencil = { 1.0f, 0 };
+    uint32_t volWidth = static_cast<uint32_t>(swapChainExtent.width * volumetricRenderScale);
+    uint32_t volHeight = static_cast<uint32_t>(swapChainExtent.height * volumetricRenderScale);
 
-    vk::RenderPassBeginInfo renderPassInfo{
-        .renderPass = *renderPass,
-        .framebuffer = *swapChainFramebuffers[imageIndex],
-        .clearValueCount = static_cast<uint32_t>(clearValues.size()),
-        .pClearValues = clearValues.data()
+    // Transition volumetric color for rendering
+    transition_image_layout(commandBuffer, volumetricColorData.textureImage, volumetricColorLayout, vk::ImageLayout::eColorAttachmentOptimal,
+        {}, vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::PipelineStageFlagBits2::eAllCommands, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::ImageAspectFlagBits::eColor);
+    volumetricColorLayout = vk::ImageLayout::eColorAttachmentOptimal;
+
+    // ========== Pass 1: Scene Rendering to Volumetric Buffers ==========
+    vk::RenderingAttachmentInfo sceneColorAttachment{
+        .imageView = volumetricColorData.textureImageView,
+        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eClear,
+        .storeOp = vk::AttachmentStoreOp::eStore,
+        .clearValue = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f)
     };
 
-    renderPassInfo.renderArea = vk::Rect2D{ .offset = { 0, 0 }, .extent = swapChainExtent };
+    vk::RenderingInfo sceneRenderingInfo{
+        .renderArea = {.offset = {0, 0}, .extent = {volWidth, volHeight}},
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &sceneColorAttachment
+    };
 
-    commandBuffers[currentFrame].beginRenderPass(renderPassInfo, vk::SubpassContents::eInline);
+    commandBuffer.beginRendering(sceneRenderingInfo);
+    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(volWidth), static_cast<float>(volHeight), 0.0f, 1.0f));
+    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), vk::Extent2D(volWidth, volHeight)));
 
-    vk::Viewport viewport{ .width = static_cast<float>(swapChainExtent.width), .height = static_cast<float>(swapChainExtent.height), .minDepth = 0.0f, .maxDepth = 1.0f };
-    commandBuffers[currentFrame].setViewport(0, viewport);
-
-    vk::Rect2D scissor{ .offset = { 0, 0 }, .extent = swapChainExtent };
-    commandBuffers[currentFrame].setScissor(0, scissor);
-
-    commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *scenePipeline);
-    commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *scenePipelineLayout, 0, *sceneDescriptorSets[currentFrame], nullptr);
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *scenePipeline);
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *scenePipelineLayout, 0, *sceneDescriptorSets[currentFrame], nullptr);
 
     // Draw floor
-    commandBuffers[currentFrame].bindVertexBuffers(0, *planeMesh.vertexBuffer.buffer, { 0 });
-    commandBuffers[currentFrame].bindIndexBuffer(*planeMesh.indexBuffer.buffer, 0, vk::IndexType::eUint32);
-    commandBuffers[currentFrame].drawIndexed(planeMesh.indexCount, 1, 0, 0, 0);
+    commandBuffer.bindVertexBuffers(0, *planeMesh.vertexBuffer, { 0 });
+    commandBuffer.bindIndexBuffer(*planeMesh.indexBuffer, 0, vk::IndexType::eUint16);
+    commandBuffer.drawIndexed(static_cast<uint32_t>(planeMesh.indices.size()), 1, 0, 0, 0);
 
     // Draw cubes
-    commandBuffers[currentFrame].bindVertexBuffers(0, *cubeMesh.vertexBuffer.buffer, { 0 });
-    commandBuffers[currentFrame].bindVertexBuffers(1, *instanceBufferResources.Buffers[currentFrame], { 0 });
-    commandBuffers[currentFrame].bindIndexBuffer(*cubeMesh.indexBuffer.buffer, 0, vk::IndexType::eUint32);
-    commandBuffers[currentFrame].drawIndexed(cubeMesh.indexCount, instanceCount, 0, 0, 0);
+    commandBuffer.bindVertexBuffers(0, *cubeMesh.vertexBuffer, { 0 });
+    commandBuffer.bindVertexBuffers(1, *instanceBufferResources.Buffers[currentFrame], { 0 });
+    commandBuffer.bindIndexBuffer(*cubeMesh.indexBuffer, 0, vk::IndexType::eUint16);
+    commandBuffer.drawIndexed(static_cast<uint32_t>(cubeMesh.indices.size()), instanceCount, 0, 0, 0);
 
-    commandBuffers[currentFrame].endRenderPass();
+    commandBuffer.endRendering();
 
-    // Render volumetric lighting (Phase 1+)
-    if (volumetricEnabled)
+    // ========== Pass 2: Volumetric Ray Marching ==========
+    // Transition volumetric color to shader read for sampling
+    transition_image_layout(commandBuffer, volumetricColorData.textureImage, volumetricColorLayout, vk::ImageLayout::eShaderReadOnlyOptimal,
+        vk::AccessFlagBits2::eColorAttachmentWrite, vk::AccessFlagBits2::eShaderRead,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::PipelineStageFlagBits2::eFragmentShader, vk::ImageAspectFlagBits::eColor);
+    volumetricColorLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+
+    // Transition history texture for sampling
+    uint32_t historyReadIndex = (currentFrame + 1) % 2;
+    vk::ImageLayout oldLayout = volumetricHistoryLayouts[historyReadIndex];
+    if (oldLayout == vk::ImageLayout::eUndefined)
     {
-        recordVolumetric(commandBuffers[currentFrame], imageIndex);
-    }
-
-    // UI
-    {
-        vk::RenderPassBeginInfo uiRenderPassInfo{
-            .renderPass = *uiRenderPass,
-            .framebuffer = *uiFramebuffers[imageIndex],
+        vk::ImageMemoryBarrier2 barrier{
+            .srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe,
+            .srcAccessMask = vk::AccessFlags2{},
+            .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
+            .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+            .oldLayout = vk::ImageLayout::eUndefined,
+            .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = volumetricHistoryData[historyReadIndex].textureImage,
+            .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 }
         };
-        uiRenderPassInfo.renderArea = vk::Rect2D{ .offset = { 0, 0 }, .extent = swapChainExtent };
+        vk::DependencyInfo dependency_info{ .dependencyFlags = {}, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier };
+        commandBuffer.pipelineBarrier2(dependency_info);
+    }
+    else
+    {
+        transition_image_layout(commandBuffer, volumetricHistoryData[historyReadIndex].textureImage, oldLayout, vk::ImageLayout::eShaderReadOnlyOptimal,
+            {}, vk::AccessFlagBits2::eShaderRead,
+            vk::PipelineStageFlagBits2::eAllCommands, vk::PipelineStageFlagBits2::eFragmentShader, vk::ImageAspectFlagBits::eColor);
+    }
+    volumetricHistoryLayouts[historyReadIndex] = vk::ImageLayout::eShaderReadOnlyOptimal;
+    volumetricHistoryValid = true;
 
-        commandBuffers[currentFrame].beginRenderPass(uiRenderPassInfo, vk::SubpassContents::eInline);
-        recordUI(commandBuffers[currentFrame]);
-        commandBuffers[currentFrame].endRenderPass();
+    // Transition velocity texture for sampling
+    if (volumetricVelocityLayout == vk::ImageLayout::eUndefined)
+    {
+        vk::ImageMemoryBarrier2 velocityBarrier{
+            .srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe,
+            .srcAccessMask = vk::AccessFlags2{},
+            .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
+            .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+            .oldLayout = vk::ImageLayout::eUndefined,
+            .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = volumetricVelocityData.textureImage,
+            .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 }
+        };
+        vk::DependencyInfo velocityDepInfo{ .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &velocityBarrier };
+        commandBuffer.pipelineBarrier2(velocityDepInfo);
+        volumetricVelocityLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
     }
 
-    commandBuffers[currentFrame].end();
+    updateVolumetricDescriptorSet(currentFrame, historyReadIndex);
+
+    // Transition swap chain image to color attachment
+    transition_image_layout(commandBuffer, swapChainImages[imageIndex], swapChainImageLayouts[imageIndex], vk::ImageLayout::eColorAttachmentOptimal,
+        {}, vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::PipelineStageFlagBits2::eAllCommands, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::ImageAspectFlagBits::eColor);
+    swapChainImageLayouts[imageIndex] = vk::ImageLayout::eColorAttachmentOptimal;
+
+    // ========== Pass 2: Volumetric Ray Marching ==========
+    vk::RenderingAttachmentInfo volumetricColorAttachment{
+        .imageView = swapChainImageViews[imageIndex],
+        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eClear,
+        .storeOp = vk::AttachmentStoreOp::eStore,
+        .clearValue = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f)
+    };
+
+    vk::RenderingInfo volumetricRenderingInfo{
+        .renderArea = {.offset = {0, 0}, .extent = swapChainExtent},
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &volumetricColorAttachment
+    };
+
+    commandBuffer.beginRendering(volumetricRenderingInfo);
+    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *volumetricPipeline);
+    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *volumetricPipelineLayout, 0, *volumetricDescriptorSets[currentFrame], nullptr);
+    commandBuffer.draw(3, 1, 0, 0);
+    commandBuffer.endRendering();
+
+    // ========== Pass 3: UI Rendering ==========
+    // UI rendering - need to transition back to color attachment optimal
+    transition_image_layout(swapChainImages[imageIndex], swapChainImageLayouts[imageIndex], vk::ImageLayout::eColorAttachmentOptimal,
+        vk::AccessFlagBits2::eColorAttachmentWrite, vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::ImageAspectFlagBits::eColor);
+    swapChainImageLayouts[imageIndex] = vk::ImageLayout::eColorAttachmentOptimal;
+
+    vk::RenderingAttachmentInfo uiAttachmentInfo{
+        .imageView = swapChainImageViews[imageIndex],
+        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+        .loadOp = vk::AttachmentLoadOp::eLoad,
+        .storeOp = vk::AttachmentStoreOp::eStore
+    };
+
+    vk::RenderingInfo uiRenderingInfo{
+        .renderArea = {.offset = {0, 0}, .extent = swapChainExtent},
+        .layerCount = 1,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &uiAttachmentInfo
+    };
+
+    commandBuffer.beginRendering(uiRenderingInfo);
+    commandBuffer.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+    commandBuffer.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+    recordUICmdBuffer(commandBuffer, currentFrame);
+    commandBuffer.endRendering();
+
+    // Transition for presentation
+    transition_image_layout(swapChainImages[imageIndex], swapChainImageLayouts[imageIndex], vk::ImageLayout::ePresentSrcKHR,
+        vk::AccessFlagBits2::eColorAttachmentWrite, {},
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::PipelineStageFlagBits2::eBottomOfPipe, vk::ImageAspectFlagBits::eColor);
+    swapChainImageLayouts[imageIndex] = vk::ImageLayout::ePresentSrcKHR;
+
+    commandBuffer.end();
 }
 
 void VolumetricRenderer::cleanup()
 {
     device.waitIdle();
-
-    scenePipeline.reset();
-    scenePipelineLayout.reset();
-    sceneDescriptorPool.reset();
-    sceneDescriptorSetLayout.reset();
-    sceneUboResources.cleanup(device);
-    instanceBufferResources.cleanup(device);
-    cubeMesh.cleanup(device);
-    planeMesh.cleanup(device);
-
-    volumetricColorData.cleanup(device);
-    volumetricDepthData.cleanup(device);
-    volumetricHistoryData[0].cleanup(device);
-    volumetricHistoryData[1].cleanup(device);
-    volumetricVelocityData.cleanup(device);
-    volumetricPipeline.reset();
-    volumetricPipelineLayout.reset();
-    volumetricDescriptorPool.reset();
-    volumetricDescriptorSetLayout.reset();
-    volumetricParamsUboResources.cleanup(device);
-
-    cleanupVulkanUI();
+    shutdownVulkanUI();
 }
 
 void VolumetricRenderer::recreateSwapChain()
 {
-    int width = 0, height = 0;
-    glfwGetFramebufferSize(window, &width, &height);
-    while (width == 0 || height == 0)
-    {
-        glfwGetFramebufferSize(window, &width, &height);
-        glfwWaitEvents();
-    }
-
-    device.waitIdle();
-    recreateVolumetricResources();
     VulkanBase::recreateSwapChain();
 
-    recreateVolumetricResources();
+    recreateVolumetricSizedResources();
+    volumetricHistoryValid = false;
 }
 
-// =============================================================================
-// Volumetric Rendering (Phase 1+)
-// =============================================================================
+void VolumetricRenderer::recreateVolumetricSizedResources()
+{
+    // Destroy old offscreen resources
+    volumetricColorData.textureImageView = vk::raii::ImageView(nullptr);
+    volumetricColorData.textureImage = vk::raii::Image(nullptr);
+    volumetricColorData.textureImageMemory = vk::raii::DeviceMemory(nullptr);
+
+    volumetricVelocityData.textureImageView = vk::raii::ImageView(nullptr);
+    volumetricVelocityData.textureImage = vk::raii::Image(nullptr);
+    volumetricVelocityData.textureImageMemory = vk::raii::DeviceMemory(nullptr);
+
+    for (int i = 0; i < 2; ++i)
+    {
+        volumetricHistoryData[i].textureImageView = vk::raii::ImageView(nullptr);
+        volumetricHistoryData[i].textureImage = vk::raii::Image(nullptr);
+        volumetricHistoryData[i].textureImageMemory = vk::raii::DeviceMemory(nullptr);
+        volumetricHistoryLayouts[i] = vk::ImageLayout::eUndefined;
+    }
+
+    // Destroy old descriptor sets and pool
+    volumetricDescriptorSets = vk::raii::DescriptorSets(nullptr);
+    volumetricDescriptorPool = vk::raii::DescriptorPool(nullptr);
+
+    // Recreate at new size
+    if (!createVolumetricResources())
+    {
+        throw std::runtime_error("failed to recreate volumetric resources");
+    }
+    if (!createVolumetricDescriptorPool())
+    {
+        throw std::runtime_error("failed to recreate volumetric descriptor pool");
+    }
+    createVolumetricDescriptorSets();
+}
 
 bool VolumetricRenderer::createVolumetricResources()
 {
     uint32_t width = static_cast<uint32_t>(swapChainExtent.width * volumetricRenderScale);
     uint32_t height = static_cast<uint32_t>(swapChainExtent.height * volumetricRenderScale);
 
-    createUniformBuffers(volumetricParamsUboResources, sizeof(VolumetricParamsUBO));
+    createUniformBuffers(volumetricParamsUboResources, sizeof(VolumetricUBOParams));
 
-    volumetricColorData = createRenderTarget(width, height, vk::Format::eR16G16B16A16Sfloat, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled);
-    volumetricDepthData = createRenderTarget(width, height, vk::Format::eR32G32B32A32Sfloat, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled);
-    volumetricHistoryData[0] = createRenderTarget(width, height, vk::Format::eR16G16B16A16Sfloat, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled);
-    volumetricHistoryData[1] = createRenderTarget(width, height, vk::Format::eR16G16B16A16Sfloat, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled);
-    volumetricVelocityData = createRenderTarget(width, height, vk::Format::eR32G32Sfloat, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled);
+    // Volumetric color (half-res) - stores view position and depth
+    volumetricColorData.mipLevels = 1;
+    createImage(width, height, 1, vk::Format::eR32G32B32A32Sfloat, vk::ImageTiling::eOptimal,
+        vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+        vk::MemoryPropertyFlagBits::eDeviceLocal, volumetricColorData);
+    volumetricColorData.textureImageView = createImageView(volumetricColorData.textureImage, vk::Format::eR32G32B32A32Sfloat, vk::ImageAspectFlagBits::eColor, 1);
+
+    // History buffers (full-res)
+    for (int i = 0; i < 2; ++i)
+    {
+        volumetricHistoryData[i].mipLevels = 1;
+        createImage(width, height, 1, vk::Format::eR16G16B16A16Sfloat, vk::ImageTiling::eOptimal,
+            vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+            vk::MemoryPropertyFlagBits::eDeviceLocal, volumetricHistoryData[i]);
+        volumetricHistoryData[i].textureImageView = createImageView(volumetricHistoryData[i].textureImage, vk::Format::eR16G16B16A16Sfloat, vk::ImageAspectFlagBits::eColor, 1);
+    }
+
+    // Velocity buffer
+    volumetricVelocityData.mipLevels = 1;
+    createImage(width, height, 1, vk::Format::eR32G32Sfloat, vk::ImageTiling::eOptimal,
+        vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+        vk::MemoryPropertyFlagBits::eDeviceLocal, volumetricVelocityData);
+    volumetricVelocityData.textureImageView = createImageView(volumetricVelocityData.textureImage, vk::Format::eR32G32Sfloat, vk::ImageAspectFlagBits::eColor, 1);
+
+    // Create sampler
+    vk::SamplerCreateInfo samplerInfo{
+        .magFilter = vk::Filter::eLinear,
+        .minFilter = vk::Filter::eLinear,
+        .mipmapMode = vk::SamplerMipmapMode::eNearest,
+        .addressModeU = vk::SamplerAddressMode::eClampToEdge,
+        .addressModeV = vk::SamplerAddressMode::eClampToEdge,
+        .addressModeW = vk::SamplerAddressMode::eClampToEdge,
+        .mipLodBias = 0.0f,
+        .anisotropyEnable = vk::False,
+        .maxAnisotropy = 1.0f,
+        .compareEnable = vk::False,
+        .compareOp = vk::CompareOp::eAlways,
+        .minLod = 0.0f,
+        .maxLod = 0.0f,
+        .borderColor = vk::BorderColor::eFloatOpaqueBlack,
+        .unnormalizedCoordinates = vk::False
+    };
+    defaultSampler = vk::raii::Sampler(device, samplerInfo);
 
     volumetricColorLayout = vk::ImageLayout::eUndefined;
-    volumetricDepthLayout = vk::ImageLayout::eUndefined;
     volumetricHistoryLayouts[0] = vk::ImageLayout::eUndefined;
     volumetricHistoryLayouts[1] = vk::ImageLayout::eUndefined;
     volumetricVelocityLayout = vk::ImageLayout::eUndefined;
@@ -479,16 +671,16 @@ bool VolumetricRenderer::createVolumetricDescriptorSetLayout()
     try
     {
         std::vector<vk::DescriptorSetLayoutBinding> bindings = {
-            { .binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
-            { .binding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
-            { .binding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
-            { .binding = 3, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
+            {.binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
+            {.binding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
+            {.binding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
+            {.binding = 3, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment },
         };
 
         volumetricDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, vk::DescriptorSetLayoutCreateInfo{
             .bindingCount = static_cast<uint32_t>(bindings.size()),
             .pBindings = bindings.data()
-        });
+            });
         return true;
     }
     catch (const std::exception& e)
@@ -503,8 +695,8 @@ bool VolumetricRenderer::createVolumetricDescriptorPool()
     try
     {
         std::vector<vk::DescriptorPoolSize> poolSizes = {
-            { .type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
-            { .type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 3 },
+            {.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
+            {.type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 3 },
         };
 
         volumetricDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
@@ -512,7 +704,7 @@ bool VolumetricRenderer::createVolumetricDescriptorPool()
             .maxSets = MAX_FRAMES_IN_FLIGHT,
             .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
             .pPoolSizes = poolSizes.data()
-        });
+            });
         return true;
     }
     catch (const std::exception& e)
@@ -536,16 +728,16 @@ void VolumetricRenderer::createVolumetricDescriptorSets()
 
 void VolumetricRenderer::updateVolumetricDescriptorSet(uint32_t frameIndex, uint32_t historyReadIndex)
 {
-    vk::DescriptorBufferInfo paramsBufferInfo{ .buffer = *volumetricParamsUboResources.Buffers[frameIndex], .offset = 0, .range = sizeof(VolumetricParamsUBO) };
+    vk::DescriptorBufferInfo paramsBufferInfo{ .buffer = *volumetricParamsUboResources.Buffers[frameIndex], .offset = 0, .range = sizeof(VolumetricUBOParams) };
+    vk::DescriptorImageInfo sceneColorInfo{ .sampler = *defaultSampler, .imageView = *volumetricColorData.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
     vk::DescriptorImageInfo historyImageInfo{ .sampler = *defaultSampler, .imageView = *volumetricHistoryData[historyReadIndex].textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
-    vk::DescriptorImageInfo depthImageInfo{ .sampler = *defaultSampler, .imageView = *volumetricDepthData.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
     vk::DescriptorImageInfo velocityImageInfo{ .sampler = *defaultSampler, .imageView = *volumetricVelocityData.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
 
     std::vector<vk::WriteDescriptorSet> writes = {
-        { .dstSet = *volumetricDescriptorSets[frameIndex], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &paramsBufferInfo },
-        { .dstSet = *volumetricDescriptorSets[frameIndex], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &historyImageInfo },
-        { .dstSet = *volumetricDescriptorSets[frameIndex], .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &depthImageInfo },
-        { .dstSet = *volumetricDescriptorSets[frameIndex], .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &velocityImageInfo },
+        {.dstSet = *volumetricDescriptorSets[frameIndex], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &paramsBufferInfo },
+        {.dstSet = *volumetricDescriptorSets[frameIndex], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &historyImageInfo },
+        {.dstSet = *volumetricDescriptorSets[frameIndex], .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &sceneColorInfo },
+        {.dstSet = *volumetricDescriptorSets[frameIndex], .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &velocityImageInfo },
     };
 
     device.updateDescriptorSets(writes, nullptr);
@@ -555,8 +747,8 @@ bool VolumetricRenderer::createVolumetricPipeline()
 {
     try
     {
-        auto vertShaderCode = readFile(VK_SHADERS_DIR "14_volumetric/volumetric_vert.spv");
-        auto fragShaderCode = readFile(VK_SHADERS_DIR "14_volumetric/volumetric_frag.spv");
+        auto vertShaderCode = readFile(VK_SHADERS_DIR "volumetric_vert.spv");
+        auto fragShaderCode = readFile(VK_SHADERS_DIR "volumetric_frag.spv");
 
         vk::raii::ShaderModule vertShaderModule(device, vk::ShaderModuleCreateInfo{ .codeSize = vertShaderCode.size(), .pCode = reinterpret_cast<const uint32_t*>(vertShaderCode.data()) });
         vk::raii::ShaderModule fragShaderModule(device, vk::ShaderModuleCreateInfo{ .codeSize = fragShaderCode.size(), .pCode = reinterpret_cast<const uint32_t*>(fragShaderCode.data()) });
@@ -565,38 +757,75 @@ bool VolumetricRenderer::createVolumetricPipeline()
         vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = *fragShaderModule, .pName = "fragMain" };
         vk::PipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
+        volumetricPipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
+            .setLayoutCount = 1,
+            .pSetLayouts = &*volumetricDescriptorSetLayout
+            });
+
         vk::PipelineVertexInputStateCreateInfo vertexInputInfo{ .vertexBindingDescriptionCount = 0, .vertexAttributeDescriptionCount = 0 };
 
-        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = false };
+        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = vk::False };
 
-        vk::PipelineViewportStateCreateInfo viewportState{ .viewportCount = 1, .scissorCount = 1 };
-
-        vk::PipelineRasterizationStateCreateInfo rasterizer{ .polygonMode = vk::PolygonMode::eFill, .cullMode = vk::CullModeFlagBits::eBack, .frontFace = vk::FrontFace::eCounterClockwise, .lineWidth = 1.0f };
-
-        vk::PipelineMultisampleStateCreateInfo multisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1 };
-
-        vk::PipelineColorBlendAttachmentState colorBlendAttachment{ .blendEnable = true, .srcColorBlendFactor = vk::BlendFactor::eOne, .dstColorBlendFactor = vk::BlendFactor::eOne, .colorBlendOp = vk::BlendOp::eAdd, .srcAlphaBlendFactor = vk::BlendFactor::eOne, .dstAlphaBlendFactor = vk::BlendFactor::eOne, .alphaBlendOp = vk::BlendOp::eAdd, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA };
-        vk::PipelineColorBlendStateCreateInfo colorBlending{ .attachmentCount = 1, .pAttachments = &colorBlendAttachment };
-
-        vk::PipelineLayoutCreateInfo pipelineLayoutInfo{ .setLayoutCount = 1, .pSetLayouts = &*volumetricDescriptorSetLayout };
-
-        volumetricPipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
-
-        vk::GraphicsPipelineCreateInfo pipelineInfo{
-            .stageCount = 2,
-            .pStages = shaderStages,
-            .pVertexInputState = &vertexInputInfo,
-            .pInputAssemblyState = &inputAssembly,
-            .pViewportState = &viewportState,
-            .pRasterizationState = &rasterizer,
-            .pMultisampleState = &multisampling,
-            .pColorBlendState = &colorBlending,
-            .layout = *volumetricPipelineLayout,
-            .renderPass = *renderPass,
-            .subpass = 0
+        vk::PipelineViewportStateCreateInfo viewportState{
+            .viewportCount = 1,
+            .pViewports = nullptr,
+            .scissorCount = 1,
+            .pScissors = nullptr
         };
 
-        volumetricPipeline = vk::raii::GraphicsPipeline(device, nullptr, pipelineInfo);
+        vk::PipelineRasterizationStateCreateInfo rasterizer{
+            .depthClampEnable = vk::False,
+            .rasterizerDiscardEnable = vk::False,
+            .polygonMode = vk::PolygonMode::eFill,
+            .cullMode = vk::CullModeFlagBits::eNone,
+            .frontFace = vk::FrontFace::eCounterClockwise,
+            .depthBiasEnable = vk::False,
+            .lineWidth = 1.0f
+        };
+
+        vk::PipelineMultisampleStateCreateInfo multisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False };
+
+        vk::PipelineColorBlendAttachmentState colorBlendAttachment{
+            .blendEnable = vk::True,
+            .srcColorBlendFactor = vk::BlendFactor::eOne,
+            .dstColorBlendFactor = vk::BlendFactor::eOne,
+            .colorBlendOp = vk::BlendOp::eAdd,
+            .srcAlphaBlendFactor = vk::BlendFactor::eOne,
+            .dstAlphaBlendFactor = vk::BlendFactor::eOne,
+            .alphaBlendOp = vk::BlendOp::eAdd,
+            .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
+        };
+        vk::PipelineColorBlendStateCreateInfo colorBlending{
+            .logicOpEnable = vk::False,
+            .logicOp = vk::LogicOp::eCopy,
+            .attachmentCount = 1,
+            .pAttachments = &colorBlendAttachment
+        };
+
+        std::vector dynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+        vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
+
+        vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipelineCreateInfoChain = {
+            {
+                .stageCount = 2,
+                .pStages = shaderStages,
+                .pVertexInputState = &vertexInputInfo,
+                .pInputAssemblyState = &inputAssembly,
+                .pViewportState = &viewportState,
+                .pRasterizationState = &rasterizer,
+                .pMultisampleState = &multisampling,
+                .pColorBlendState = &colorBlending,
+                .pDynamicState = &dynamicState,
+                .layout = volumetricPipelineLayout,
+                .renderPass = nullptr
+            },
+            {
+                .colorAttachmentCount = 1,
+                .pColorAttachmentFormats = &swapChainImageFormat
+            }
+        };
+
+        volumetricPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
         return true;
     }
     catch (const std::exception& e)
@@ -610,7 +839,7 @@ void VolumetricRenderer::updateVolumetricBuffers(uint32_t currentFrame)
 {
     volumetricJitterCurrent = glm::vec2(halton(volumetricFrameCounter, 2), halton(volumetricFrameCounter, 3)) - 0.5f;
 
-    VolumetricParamsUBO params{};
+    VolumetricUBOParams params{};
     params.density = volumetricParams.density;
     params.scattering = volumetricParams.scattering;
     params.absorption = volumetricParams.absorption;
@@ -620,60 +849,23 @@ void VolumetricRenderer::updateVolumetricBuffers(uint32_t currentFrame)
     params.temporalFactor = volumetricParams.temporalFactor;
     params.shadowStrength = volumetricParams.shadowStrength;
     params.intensity = volumetricParams.intensity;
-    params.nearZ = camera.GetNearPlane();
-    params.farZ = camera.GetFarPlane();
+    params.nearZ = 0.1f;
+    params.farZ = 100.0f;
     params.renderScale = glm::vec2(volumetricRenderScale);
     params.jitter = volumetricJitterCurrent;
+    params.historyValid = volumetricHistoryValid ? 1.0f : 0.0f;
 
-    std::memcpy(volumetricParamsUboResources.BuffersMapped[currentFrame], &params, sizeof(VolumetricParamsUBO));
+    std::memcpy(volumetricParamsUboResources.BuffersMapped[currentFrame], &params, sizeof(VolumetricUBOParams));
 
-    uint32_t historyRead = volumetricHistoryReadIndex;
-    uint32_t historyWrite = 1 - volumetricHistoryReadIndex;
-    updateVolumetricDescriptorSet(currentFrame, historyRead);
-
-    updateVolumetricHistory(camera.GetProjectionMatrix() * camera.GetViewMatrix());
+    updateVolumetricHistory(glm::mat4(1.0f));
     volumetricFrameCounter++;
 }
 
 void VolumetricRenderer::recordVolumetric(vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex)
 {
-    uint32_t width = static_cast<uint32_t>(swapChainExtent.width * volumetricRenderScale);
-    uint32_t height = static_cast<uint32>(swapChainExtent.height * volumetricRenderScale);
-
-    // Full-screen quad for volumetric rendering
-    // Transition to color attachment layout
-    transitionImageLayout(commandBuffer, *volumetricColorData.textureImage, vk::Format::eR16G16B16A16Sfloat, volumetricColorLayout, vk::ImageLayout::eColorAttachmentOptimal);
-    volumetricColorLayout = vk::ImageLayout::eColorAttachmentOptimal;
-
-    // Record volumetric pass to intermediate target
-    vk::RenderPassBeginInfo volumetricRenderPassInfo{
-        .renderPass = *renderPass,
-        .framebuffer = *swapChainFramebuffers[imageIndex],
-        .renderArea = vk::Rect2D{ .extent = { width, height } }
-    };
-
-    std::array<vk::ClearValue, 1> volumetricClearValues{};
-    volumetricClearValues[0].color = std::array<float, 4>{ 0.0f, 0.0f, 0.0f, 0.0f };
-
-    commandBuffer.beginRenderPass(volumetricRenderPassInfo, vk::SubpassContents::eInline);
-
-    vk::Viewport viewport{ .width = static_cast<float>(width), .height = static_cast<float>(height), .minDepth = 0.0f, .maxDepth = 1.0f };
-    commandBuffer.setViewport(0, viewport);
-
-    vk::Rect2D scissor{ .offset = { 0, 0 }, .extent = { width, height } };
-    commandBuffer.setScissor(0, scissor);
-
-    commandBuffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *volumetricPipeline);
-    commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *volumetricPipelineLayout, 0, *volumetricDescriptorSets[currentFrame], nullptr);
-    commandBuffer.draw(3, 1, 0, 0);
-
-    commandBuffer.endRenderPass();
-
-    // Transition to shader read for next frame
-    transitionImageLayout(commandBuffer, *volumetricColorData.textureImage, vk::Format::eR16G16B16A16Sfloat, volumetricColorLayout, vk::ImageLayout::eShaderReadOnlyOptimal);
-    volumetricColorLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
-
-    volumetricHistoryReadIndex = 1 - volumetricHistoryReadIndex;
+    (void)commandBuffer;
+    (void)imageIndex;
+    // Placeholder for Phase 1 implementation
 }
 
 void VolumetricRenderer::updateVolumetricHistory(const glm::mat4& currentViewProj)
@@ -681,19 +873,6 @@ void VolumetricRenderer::updateVolumetricHistory(const glm::mat4& currentViewPro
     volumetricPrevViewProj = currentViewProj;
     volumetricJitterPrev = volumetricJitterCurrent;
 }
-
-void VolumetricRenderer::recreateVolumetricResources()
-{
-    if (!volumetricColorData.textureImage)
-    {
-        createVolumetricResources();
-    }
-    volumetricColorData = createRenderTarget(swapChainExtent.width, swapChainExtent.height, vk::Format::eR16G16B16A16Sfloat, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled);
-}
-
-// =============================================================================
-// UI
-// =============================================================================
 
 void VolumetricRenderer::updateUIPanel()
 {

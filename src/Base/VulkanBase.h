@@ -142,6 +142,17 @@ struct VulkanBase {
         vk::PipelineStageFlags2 dst_stage_mask,
         vk::ImageAspectFlags image_aspect_flags);
 
+    void transition_image_layout(
+        vk::raii::CommandBuffer& cmdBuffer,
+        vk::Image image,
+        vk::ImageLayout old_layout,
+        vk::ImageLayout new_layout,
+        vk::AccessFlags2 src_access_mask,
+        vk::AccessFlags2 dst_access_mask,
+        vk::PipelineStageFlags2 src_stage_mask,
+        vk::PipelineStageFlags2 dst_stage_mask,
+        vk::ImageAspectFlags image_aspect_flags);
+
     void createVertexBuffer(Mesh& mesh);
     void createIndexBuffer(Mesh& mesh);
     void createUniformBuffers(MeshBuffer& meshResource, vk::DeviceSize size);

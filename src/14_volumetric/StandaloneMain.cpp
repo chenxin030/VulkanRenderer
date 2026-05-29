@@ -20,7 +20,11 @@ int main()
         {
             return EXIT_FAILURE;
         }
-        renderer.prepareResource();
+        if (!renderer.prepareResource())
+        {
+            std::cerr << "FATAL: prepareResource() failed!" << std::endl;
+            return EXIT_FAILURE;
+        }
 
         bool running = true;
         while (running)

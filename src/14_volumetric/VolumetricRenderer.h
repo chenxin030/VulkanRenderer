@@ -29,12 +29,13 @@ private:
     MeshBuffer sceneUboResources;
     MeshBuffer instanceBufferResources;
 
-    // Volumetric rendering resources (Phase 1+)
+    // Volumetric rendering resources
     MeshBuffer volumetricParamsUboResources;
-    TextureData volumetricColorData;      // 半分辨率体积光颜色
-    TextureData volumetricDepthData;       // 用于重建位置
-    TextureData volumetricHistoryData[2];  // Temporal 历史缓冲
-    TextureData volumetricVelocityData;     // 速度缓冲
+    TextureData volumetricColorData;
+    TextureData volumetricDepthData;
+    TextureData volumetricHistoryData[2];
+    TextureData volumetricVelocityData;
+    vk::raii::Sampler defaultSampler = nullptr;
 
     vk::ImageLayout volumetricColorLayout = vk::ImageLayout::eUndefined;
     vk::ImageLayout volumetricDepthLayout = vk::ImageLayout::eUndefined;
@@ -47,27 +48,28 @@ private:
     glm::vec2 volumetricJitterCurrent = glm::vec2(0.0f);
     glm::vec2 volumetricJitterPrev = glm::vec2(0.0f);
     uint64_t volumetricFrameCounter = 0;
-    float volumetricRenderScale = 0.5f;  // 半分辨率
+    float volumetricRenderScale = 0.5f;
+    float lastVolumetricRenderScale = 0.5f;
 
-    struct VolumetricParams
+    struct VolumetricSettings
     {
-        float density = 0.1f;           // 参与介质密度
-        float scattering = 1.0f;         // 散射系数
-        float absorption = 0.5f;        // 吸收系数
-        float anisotropicG = 0.3f;      // Henyey-Greenstein 各向异性参数 [-1, 1]
-        float stepSize = 0.5f;          // Ray Marching 步长
-        float maxDistance = 50.0f;       // 最大采样距离
-        float temporalFactor = 0.9f;    // Temporal 混合因子
-        float shadowStrength = 0.5f;     // 阴影强度
-        float intensity = 1.0f;         // 光源强度
+        float density = 0.05f;
+        float scattering = 0.8f;
+        float absorption = 0.3f;
+        float anisotropicG = 0.3f;
+        float stepSize = 0.5f;
+        float maxDistance = 50.0f;
+        float temporalFactor = 0.9f;
+        float shadowStrength = 0.5f;
+        float intensity = 0.5f;
     };
 
     bool volumetricEnabled = true;
     float volumetricSceneTime = 0.0f;
     bool volumetricFreezeHistory = false;
-    VolumetricParams volumetricParams{};
+    VolumetricSettings volumetricParams{};
 
-    // Clustered volumetric resources (Phase 3)
+    // Clustered volumetric resources
     bool clusteredVolumetricEnabled = false;
     MeshBuffer clusterParamsResources;
     TextureData clusterScatteringData;
@@ -97,6 +99,7 @@ private:
 
     // Volumetric methods
     bool createVolumetricResources();
+    void recreateVolumetricSizedResources();
     bool createVolumetricDescriptorSetLayout();
     bool createVolumetricDescriptorPool();
     void createVolumetricDescriptorSets();
@@ -105,9 +108,8 @@ private:
     void updateVolumetricBuffers(uint32_t currentImage);
     void recordVolumetric(vk::raii::CommandBuffer& commandBuffer, uint32_t imageIndex);
     void updateVolumetricHistory(const glm::mat4& currentViewProj);
-    void recreateVolumetricResources();
 
-    // Clustered volumetric methods (Phase 3)
+    // Clustered volumetric methods
     bool createClusteredResources();
     bool createClusteredDescriptorSetLayout();
     bool createClusteredDescriptorPool();

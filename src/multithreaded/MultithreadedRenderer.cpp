@@ -420,7 +420,16 @@ void MultithreadedRenderer::updateInstanceBuffer(uint32_t frameIndex)
     std::memcpy(instanceBufferResources.BuffersMapped[frameIndex], instances.data(), sizeof(InstanceData) * instances.size());
 }
 
-const char* MultithreadedRenderer::presetLabel(ScenePreset preset) {}
+const char* MultithreadedRenderer::presetLabel(ScenePreset preset)
+{
+    switch (preset)
+    {
+    case ScenePreset::Small:  return "Small";
+    case ScenePreset::Medium: return "Medium";
+    case ScenePreset::Large:  return "Large";
+    default:                  return "Unknown";
+    }
+}
 
 MultithreadedRenderer::ScenePresetConfig MultithreadedRenderer::presetConfig(ScenePreset preset)
 {
@@ -523,15 +532,15 @@ void MultithreadedRenderer::updateUIPanel()
         ImGui::Separator();
 
         const auto drawBenchmarkRow = [](const char* label, const BenchmarkStats& s)
-        {
-            ImGui::Text("%s", label); ImGui::NextColumn();
-            ImGui::Text("%.3f", s.frameMs.avg); ImGui::NextColumn();
-            ImGui::Text("%.3f", s.frameMs.p95); ImGui::NextColumn();
-            ImGui::Text("%.3f", s.frameMs.p99); ImGui::NextColumn();
-            ImGui::Text("%.3f", s.recordMs.avg); ImGui::NextColumn();
-            ImGui::Text("%.3f", s.recordMs.p95); ImGui::NextColumn();
-            ImGui::Text("%.3f", s.recordMs.p99); ImGui::NextColumn();
-        };
+            {
+                ImGui::Text("%s", label); ImGui::NextColumn();
+                ImGui::Text("%.3f", s.frameMs.avg); ImGui::NextColumn();
+                ImGui::Text("%.3f", s.frameMs.p95); ImGui::NextColumn();
+                ImGui::Text("%.3f", s.frameMs.p99); ImGui::NextColumn();
+                ImGui::Text("%.3f", s.recordMs.avg); ImGui::NextColumn();
+                ImGui::Text("%.3f", s.recordMs.p95); ImGui::NextColumn();
+                ImGui::Text("%.3f", s.recordMs.p99); ImGui::NextColumn();
+            };
 
         drawBenchmarkRow("Single", benchmarkSingleStats);
         drawBenchmarkRow("Multi", benchmarkMultiStats);
@@ -609,17 +618,17 @@ void MultithreadedRenderer::dispatchWorkerRecording(uint32_t frameIndex)
     for (const auto& batch : staticBatches)
     {
         futures.push_back(threadPool.enqueue([this, frameIndex, batch]()
-        {
-            return recordWorkerRange(frameIndex, batch, false);
-        }));
+            {
+                return recordWorkerRange(frameIndex, batch, false);
+            }));
     }
 
     for (const auto& batch : dynamicBatches)
     {
         futures.push_back(threadPool.enqueue([this, frameIndex, batch]()
-        {
-            return recordWorkerRange(frameIndex, batch, true);
-        }));
+            {
+                return recordWorkerRange(frameIndex, batch, true);
+            }));
     }
 
     workerStats.clear();
@@ -682,7 +691,7 @@ void MultithreadedRenderer::recordPrimaryCommandBuffer(uint32_t imageIndex)
 
     const vk::RenderingInfo renderingInfo{
         .flags = vk::RenderingFlagBits::eContentsSecondaryCommandBuffers,
-        .renderArea = { .offset = {0, 0}, .extent = swapChainExtent },
+        .renderArea = {.offset = {0, 0}, .extent = swapChainExtent },
         .layerCount = 1,
         .colorAttachmentCount = 1,
         .pColorAttachments = &colorAttachment,
@@ -705,29 +714,29 @@ void MultithreadedRenderer::recordPrimaryCommandBuffer(uint32_t imageIndex)
     inheritanceInfo.setPNext(&inheritanceRenderingInfo);
 
     const auto recordSecondary = [&](vk::raii::CommandBuffer& secondary, uint32_t firstInstance, uint32_t instanceCount)
-    {
-        secondary.reset();
-        vk::CommandBufferBeginInfo beginInfo{
-            .flags = vk::CommandBufferUsageFlagBits::eRenderPassContinue,
-            .pInheritanceInfo = &inheritanceInfo
-        };
-        secondary.begin(beginInfo);
-
-        secondary.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
-        secondary.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
-
-        secondary.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
-        secondary.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelineLayout, 0, *instanceBufferResources.descriptorSets[currentFrame], nullptr);
-        secondary.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
-        secondary.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
-
-        if (instanceCount > 0)
         {
-            secondary.drawIndexed(static_cast<uint32_t>(mesh.indices.size()), instanceCount, 0, 0, firstInstance);
-        }
+            secondary.reset();
+            vk::CommandBufferBeginInfo beginInfo{
+                .flags = vk::CommandBufferUsageFlagBits::eRenderPassContinue,
+                .pInheritanceInfo = &inheritanceInfo
+            };
+            secondary.begin(beginInfo);
 
-        secondary.end();
-    };
+            secondary.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f));
+            secondary.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
+
+            secondary.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline);
+            secondary.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipelineLayout, 0, *instanceBufferResources.descriptorSets[currentFrame], nullptr);
+            secondary.bindVertexBuffers(0, *mesh.vertexBuffer, { 0 });
+            secondary.bindIndexBuffer(*mesh.indexBuffer, 0, vk::IndexTypeValue<decltype(mesh.indices)::value_type>::value);
+
+            if (instanceCount > 0)
+            {
+                secondary.drawIndexed(static_cast<uint32_t>(mesh.indices.size()), instanceCount, 0, 0, firstInstance);
+            }
+
+            secondary.end();
+        };
 
     const uint32_t staticCount = currentPresetConfig.staticInstanceCount;
     const uint32_t dynamicCount = currentPresetConfig.dynamicInstanceCount;
@@ -759,7 +768,7 @@ void MultithreadedRenderer::recordPrimaryCommandBuffer(uint32_t imageIndex)
         .storeOp = vk::AttachmentStoreOp::eStore
     };
     vk::RenderingInfo uiRenderingInfo{
-        .renderArea = { .offset = {0, 0}, .extent = swapChainExtent },
+        .renderArea = {.offset = {0, 0}, .extent = swapChainExtent },
         .layerCount = 1,
         .colorAttachmentCount = 1,
         .pColorAttachments = &uiAttachmentInfo
@@ -804,15 +813,15 @@ MultithreadedRenderer::PercentileStats MultithreadedRenderer::calcPercentiles(co
     out.avg = sum / static_cast<float>(sorted.size());
 
     const auto getPercentile = [&sorted](float p)
-    {
-        if (sorted.empty()) return 0.0f;
-        const float idx = (p / 100.0f) * static_cast<float>(sorted.size() - 1);
-        const size_t lo = static_cast<size_t>(std::floor(idx));
-        const size_t hi = static_cast<size_t>(std::ceil(idx));
-        if (lo == hi) return sorted[lo];
-        const float t = idx - static_cast<float>(lo);
-        return sorted[lo] + (sorted[hi] - sorted[lo]) * t;
-    };
+        {
+            if (sorted.empty()) return 0.0f;
+            const float idx = (p / 100.0f) * static_cast<float>(sorted.size() - 1);
+            const size_t lo = static_cast<size_t>(std::floor(idx));
+            const size_t hi = static_cast<size_t>(std::ceil(idx));
+            if (lo == hi) return sorted[lo];
+            const float t = idx - static_cast<float>(lo);
+            return sorted[lo] + (sorted[hi] - sorted[lo]) * t;
+        };
 
     out.p95 = getPercentile(95.0f);
     out.p99 = getPercentile(99.0f);
