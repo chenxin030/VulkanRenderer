@@ -1,4 +1,4 @@
-#include "VolumetricRenderer.h"
+#include "CsmRenderer.h"
 
 #include <Base/Platform.h>
 
@@ -11,10 +11,10 @@ int main()
     try
     {
         Platform platform;
-        platform.SetBaseTitle("VulkanRenderer - Volumetric Lighting");
+        platform.SetBaseTitle("VulkanRenderer - Cascaded Shadow Maps");
         platform.initWindow();
 
-        VolumetricRenderer renderer;
+        CsmRenderer renderer;
         renderer.initialize(&platform);
         if (!renderer.initVulkan())
         {
