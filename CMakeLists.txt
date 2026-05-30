@@ -44,6 +44,7 @@ add_definitions(
     -DVK_MODEL_DIR="${CMAKE_SOURCE_DIR}/assets/models/"
     -DVK_TEXTURE_DIR="${CMAKE_SOURCE_DIR}/assets/textures/"
     -DVK_SHADERS_DIR="${CMAKE_SOURCE_DIR}/shaders/"
+    -DVK_GLTF_SAMPLES_DIR="${CMAKE_SOURCE_DIR}/assets/glTF-Sample-Assets-main/"
 )
 
 option(FORCE_VALIDATION "Force validation layers at compile time" OFF)
