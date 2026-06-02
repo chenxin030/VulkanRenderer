@@ -487,7 +487,7 @@ bool CsmRenderer::createCsmPipelines()
 void CsmRenderer::calculateCascadeSplits()
 {
     const float nearPlane = 0.1f;
-    const float farPlane = 100.0f;
+    const float farPlane = 3000.0f;
 
     cascadeSplitDepths[0] = nearPlane;
     cascadeSplitDepths[CASCADE_COUNT] = farPlane;
@@ -524,15 +524,16 @@ void CsmRenderer::computeCascadeViewProj(uint32_t cascadeIndex, const glm::vec3&
     const float farW = farH * aspect;
 
     // 8 corners of the sub-frustum in view space
+    // In view space, camera looks along -Z, so near/far planes have negative Z.
     std::array<glm::vec4, 8> cornersVS = {
-        glm::vec4(-nearW,  nearH, nearZ, 1.0f),
-        glm::vec4(nearW,  nearH, nearZ, 1.0f),
-        glm::vec4(nearW, -nearH, nearZ, 1.0f),
-        glm::vec4(-nearW, -nearH, nearZ, 1.0f),
-        glm::vec4(-farW,   farH, farZ,  1.0f),
-        glm::vec4(farW,   farH, farZ,  1.0f),
-        glm::vec4(farW,  -farH, farZ,  1.0f),
-        glm::vec4(-farW,  -farH, farZ,  1.0f),
+        glm::vec4(-nearW,  nearH, -nearZ, 1.0f),
+        glm::vec4(nearW,  nearH, -nearZ, 1.0f),
+        glm::vec4(nearW, -nearH, -nearZ, 1.0f),
+        glm::vec4(-nearW, -nearH, -nearZ, 1.0f),
+        glm::vec4(-farW,   farH,  -farZ,  1.0f),
+        glm::vec4(farW,   farH,  -farZ,  1.0f),
+        glm::vec4(farW,  -farH,  -farZ,  1.0f),
+        glm::vec4(-farW,  -farH,  -farZ,  1.0f),
     };
 
     // Transform to world space
@@ -583,7 +584,7 @@ void CsmRenderer::updateCsmBuffers(uint32_t frameIndex)
     SceneUBO sceneUbo{
         .projection = glm::perspective(glm::radians(camera.Zoom),
             static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height),
-            0.1f, 100.0f),
+            0.1f, 3000.0f),
         .view = camera.GetViewMatrix(),
         .camPos = camera.Position
     };

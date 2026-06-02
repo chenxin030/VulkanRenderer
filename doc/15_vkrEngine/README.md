@@ -1,6 +1,6 @@
 # vkrEngine — 统一渲染器（Project 15）
 
-> 将 14 个独立模块整合为**单一可配置的延迟渲染引擎 Demo**，以 Sponza 大场景为载体，集成 GPU Timestamp 自动性能分析，逐步实现并量化每个阶段的性能提升。
+> 尽可能把前面实现的小功能塞进去，场景采用 [Sponza](https://github.com/jimmiebergmann/Sponza) ，使用 GPU Timestamp 分析性能。
 
 ---
 
@@ -28,31 +28,52 @@ vkrEngine.exe
 
 ## 分阶段开发计划
 
-### Phase 1: 基础设施 + 场景加载
+### Phase 1: 基础设施 + 场景加载 ✅
 - [x] 重构 Model 系统（sub-mesh + 材质 + tangent）
 - [x] Scene 场景管理器
 - [x] GpuProfiler（Timestamp Query）
 - [x] 加载 Sponza + 基础渲染
-- [ ] 记录基线性能指标
+- [x] 12 Bug 修复并记录
 
-**基线数据**:
+![Phase 1](assets/01_phase1_final.png)
 
-| 指标          | 数值 |
-| ------------- | ---- |
-| 场景三角形数  |      |
-| Draw Call 数  |      |
-| 帧时间 (ms)   |      |
-| 显存占用 (MB) |      |
+**场景数据**:
 
-### Phase 2: PBR + IBL
-- [ ] 集成 PBR 管线
-- [ ] HDR 环境贴图 IBL（Irradiance + Prefiltered EnvMap + BRDF LUT）
-- [ ] UI 切换不同 HDR
+| 指标               | 数值    |
+| ------------------ | ------- |
+| 场景三角形数       | 262,267 |
+| Sub-meshes         | 103     |
+| Draw Calls         | 103     |
+| 材质（已加载纹理） | 25 / 25 |
+| FPS (Debug)        | ~900    |
 
-### Phase 3: CSM 级联阴影
-- [ ] 4 级 CSM 阴影映射
-- [ ] Hard / PCF / PCSS 切换
-- [ ] 各模式性能对比
+详见: [Phase 1 开发日志](01_phase1_baseline.md)
+
+### Phase 2: PBR + IBL ✅
+- [x] Cook-Torrance GGX BRDF (微表面模型)
+- [x] HDR 环境贴图 IBL（Irradiance + Prefiltered EnvMap + BRDF LUT）
+- [x] HDR 环境: newport_loft.hdr
+- [x] 法线贴图 + 切线空间 TBN
+- [x] 逐材质 PBR 参数 UBO
+- [x] UI Exposure / Gamma / LightingMode / DirLight 开关
+- [x] 纹理格式: baseColor→sRGB, normal/metallicRoughness→UNORM
+- [x] Descriptor: Set0=Scene+IBL, Set1=Material (5 bindings)
+- [x] A/B 对比: Phase1 Simple ↔ Phase2 PBR+IBL 实时切换
+
+![Phase 2](assets/02_phase2_pbr_ibl.png)
+
+详见: [Phase 2 开发日志](02_phase2_pbr_ibl.md)
+
+### Phase 3: CSM 级联阴影 ✅
+- [x] 4 级 CSM 阴影映射（2048×2048 纹理数组，双缓冲）
+- [x] Hard / PCF / PCSS 滤波切换
+- [x] Practical Split Scheme（λ=0.45, far=2000m）
+- [x] 级联可视化（红/绿/蓝/黄）
+- [x] 场景 AABB 自适应光源距离（避免光源在模型内部）
+- [x] 7 种调试可视化模式（ShadowMap/ShadowFac/NDC-Z/w 热力图等）
+- [x] 6 个 Bug 修复并记录
+
+详见: [Phase 3 开发日志](03_phase3_csm.md)
 
 ### Phase 4: 延迟渲染 + SSAO + SSR
 - [ ] GBuffer 管线（Albedo + Normal + Material + Depth）
@@ -73,7 +94,7 @@ vkrEngine.exe
 
 ---
 
-## 关键决策
+## 主要因素
 
 - **场景格式**: glTF 2.0（tinygltf 加载）
 - **主测试场景**: Sponza（~66K tris）

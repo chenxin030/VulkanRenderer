@@ -148,8 +148,8 @@ float sampleShadowPCSS(float3 uv, float referenceDepth, float bias, float2 texel
 
     float avgBlockerDepth = blockerDepth / float(blockerCount);
 
-    // Step 2: Penumbra estimation
-    float penumbraSize = (referenceDepth - avgBlockerDepth) / avgBlockerDepth;
+    // Step 2: Penumbra estimation (clamped to prevent GPU hang from div-by-zero)
+    float penumbraSize = (referenceDepth - avgBlockerDepth) / max(avgBlockerDepth, 0.001);
     penumbraSize *= shadowParams.pcssLightSizeTexels;
     int pcfRadius = int(clamp(penumbraSize, 1.0, shadowParams.pcssLightSizeTexels));
 
@@ -168,7 +168,7 @@ float sampleShadowPCSS(float3 uv, float referenceDepth, float bias, float2 texel
     return shadow / sampleCount;
 }
 
-float computeShadow(float3 worldPos, float3 normal, float3 lightDir, float viewDepth)
+float computeShadow(float3 worldPos, float3 normal, float3 lightDir, float viewDepth, float4 shadowPositions[4])
 {
     // ---- Cascade Selection ----
     // Compare view-space depth against cascade split depths
@@ -180,17 +180,7 @@ float computeShadow(float3 worldPos, float3 normal, float3 lightDir, float viewD
             cascadeIdx = uint(i + 1);
     }
 
-    float4 shadowPos = float4(0, 0, 0, 0);
-
-    // Manual unroll for array indexing compatibility
-    if (cascadeIdx == 0u)
-        shadowPos = shadowPos[0];
-    else if (cascadeIdx == 1u)
-        shadowPos = shadowPos[1];
-    else if (cascadeIdx == 2u)
-        shadowPos = shadowPos[2];
-    else
-        shadowPos = shadowPos[3];
+    float4 shadowPos = shadowPositions[cascadeIdx];
 
     // Perspective divide
     float3 projCoords = shadowPos.xyz / shadowPos.w;
@@ -246,7 +236,7 @@ float4 fragMain(VSOutput input) : SV_Target
     float3 diffuse = input.color.rgb * ndotl * 0.5;
 
     // Shadow
-    float shadow = computeShadow(input.worldPos, normal, lightDir, input.viewDepth);
+    float shadow = computeShadow(input.worldPos, normal, lightDir, input.viewDepth, input.shadowPos);
 
     // Determine cascade for visualization
     uint cascadeIdx = 0u;

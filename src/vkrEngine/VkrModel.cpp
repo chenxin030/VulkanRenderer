@@ -1,8 +1,5 @@
 #include "VkrModel.h"
 
-#define TINYGLTF_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <tiny_gltf.h>
 
 #include <iostream>
@@ -315,7 +312,16 @@ bool VkrModel::loadFromFile(const std::string& filePath, const std::string& text
     totalVertices = static_cast<uint32_t>(vertices.size());
     totalIndices = static_cast<uint32_t>(indices.size());
 
-    // ---- Step 4: Compute tangents ----
+    // ---- Step 4: Compute bounding box ----
+    aabbMin = glm::vec3(std::numeric_limits<float>::max());
+    aabbMax = glm::vec3(std::numeric_limits<float>::lowest());
+    for (const auto& v : vertices)
+    {
+        aabbMin = glm::min(aabbMin, v.pos);
+        aabbMax = glm::max(aabbMax, v.pos);
+    }
+
+    // ---- Step 5: Compute tangents ----
     computeTangents(vertices, indices);
 
     std::cout << "[VkrModel] Loaded '" << name << "': "
@@ -323,7 +329,10 @@ bool VkrModel::loadFromFile(const std::string& filePath, const std::string& text
         << totalVertices << " vertices, "
         << totalIndices << " indices, "
         << totalTriangles << " triangles, "
-        << materials.size() << " materials" << std::endl;
+        << materials.size() << " materials"
+        << " AABB:(" << aabbMin.x << "," << aabbMin.y << "," << aabbMin.z << ")-("
+        << aabbMax.x << "," << aabbMax.y << "," << aabbMax.z << ")"
+        << std::endl;
 
     return true;
 }

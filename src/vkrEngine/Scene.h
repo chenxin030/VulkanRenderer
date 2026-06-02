@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-// ---- Renderable: associates a model with a world transform ----
+// Renderable: associates a model with a world transform 
 
 struct VkrRenderable
 {
@@ -31,7 +31,7 @@ struct VkrRenderable
     }
 };
 
-// ---- Point light ----
+// Point light 
 
 struct VkrPointLight
 {
@@ -41,21 +41,21 @@ struct VkrPointLight
     float     radius = 10.0f;
 };
 
-// ---- Directional light ----
+// Directional light 
 
 struct VkrDirectionalLight
 {
     glm::vec3 direction{ 0.5f, -0.8f, 0.3f };
-    glm::vec3 color{ 1.0f, 0.98f, 0.95f };
+    glm::vec3 color{ 1.0f, 1.0f, 1.0f };
     float     intensity = 1.0f;
 };
 
-// ---- Scene ----
+// Scene 
 
 class VkrScene
 {
 public:
-    // ---- Models ----
+    // Models 
 
     void addModel(VkrModel* model, const glm::mat4& transform, const std::string& debugName = "")
     {
@@ -75,7 +75,7 @@ public:
         m_renderables.push_back(r);
     }
 
-    // ---- Lights ----
+    // Lights 
 
     void addPointLight(const glm::vec3& pos, const glm::vec3& color, float intensity, float radius = 10.0f)
     {
@@ -89,13 +89,13 @@ public:
         m_dirLight.intensity = intensity;
     }
 
-    // ---- Accessors ----
+    // Accessors 
 
     [[nodiscard]] const std::vector<VkrRenderable>& renderables()   const { return m_renderables; }
     [[nodiscard]] const std::vector<VkrPointLight>& pointLights()   const { return m_pointLights; }
     [[nodiscard]] const VkrDirectionalLight& dirLight()      const { return m_dirLight; }
 
-    // ---- Statistics ----
+    // Statistics 
 
     [[nodiscard]] uint32_t totalDrawCalls() const
     {

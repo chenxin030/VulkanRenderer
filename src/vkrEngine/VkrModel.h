@@ -107,6 +107,10 @@ struct VkrModel
     uint32_t totalVertices = 0;
     uint32_t totalIndices = 0;
 
+    // ---- Bounding Box (world space, computed from vertex positions) ----
+    glm::vec3 aabbMin{ 0.0f };
+    glm::vec3 aabbMax{ 0.0f };
+
     /**
      * Load a glTF 2.0 file (either .gltf or .glb).
      * @param filePath    Absolute or relative path to the glTF file
