@@ -145,30 +145,3 @@ void fragMain() {}
 | `depthBiasConstantFactor` | 1.25    | 深度偏移常量          |
 | `depthBiasSlopeFactor`    | 1.75    | 深度偏移斜率          |
 | `zPadding`                | 50.0f   | 正交投影 Z 轴扩展     |
-
-## 6. 调试
-
-### 6.1 RenderDoc 检查清单
-
-1. **CSM Depth Pass**: 检查 4 个 cascade layer 是否包含场景几何体
-   - 若全白 (clear=1.0) → 几何体被裁剪或未覆盖
-   - 若全黑 → 几何体太近，被 near plane 裁剪
-
-2. **CsmUBO 内容**: 检查 cascadeViewProj 矩阵是否合理（非零/非单位阵）
-
-3. **顶点变换**: 验证 `worldPos → cascadeViewProj → clipPos` 中顶点是否在 NDC [-1,1] 范围内
-
-### 6.2 常见问题
-
-| 现象                    | 可能原因                                           |
-| ----------------------- | -------------------------------------------------- |
-| 阴影贴图全白 (无几何体) | zPadding 过大导致 zNear 变负；场景包围盒不覆盖模型 |
-| 阴影随摄像机移动        | 投影矩阵依赖摄像机视锥体                           |
-| 阴影闪烁/锯齿           | 投影未做 texel snapping                            |
-| 级联间阴影不连续        | split depths 与 shader 中 cascade selection 不一致 |
-
-## 7. 已知问题 & 待修复
-
-- [ ] zPadding 可能导致靠近灯光的级联 zNear 变负 (zPadding > 最近物体距离)
-- [ ] 所有级联共享同一正交投影，未按深度范围独立裁剪
-- [ ] 灯光方向接近垂直时，lookAt 需要 fallback up 向量 (已处理)

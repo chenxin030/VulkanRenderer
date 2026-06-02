@@ -93,11 +93,10 @@ bool VkrModel::loadFromFile(const std::string& filePath, const std::string& text
     name = fs::path(filePath).stem().string();
 
     // ---- Step 1: Load Textures ----
-    // glTF images may be embedded (bufferView) or external files
-    for (const auto& gltfImage : gltfModel.images)
-    {
-        // We'll resolve texture paths when processing materials
-    }
+    // 纹理加载推迟到 VkrRenderer::loadMaterialTexture() 中执行。
+    // 原因: Vulkan 资源 (image/buffer/queue) 只存在于 VkrRenderer 端，
+    // VkrModel 只负责解析 glTF 并填充 CPU 端数据 (顶点/索引/材质路径)。
+    // 这里仅遍历 gltfModel.images，实际纹理路径在 Step 2 处理材质时记录。
 
     // ---- Step 2: Load Materials ----
     materials.clear();

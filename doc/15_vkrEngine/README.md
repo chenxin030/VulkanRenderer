@@ -47,7 +47,7 @@ vkrEngine.exe
 | 材质（已加载纹理） | 25 / 25 |
 | FPS (Debug)        | ~900    |
 
-详见: [Phase 1 开发日志](01_phase1_baseline.md)
+详见: [Phase 1 开发日志](dev-log-phase1-baseline.md)
 
 ### Phase 2: PBR + IBL ✅
 - [x] Cook-Torrance GGX BRDF (微表面模型)
@@ -62,7 +62,7 @@ vkrEngine.exe
 
 ![Phase 2](assets/02_phase2_pbr_ibl.png)
 
-详见: [Phase 2 开发日志](02_phase2_pbr_ibl.md)
+详见: [Phase 2 开发日志](dev-log-phase2-pbr-ibl.md)
 
 ### Phase 3: CSM 级联阴影 ✅
 - [x] 4 级 CSM 阴影映射（2048×2048 纹理数组，双缓冲）
@@ -73,13 +73,16 @@ vkrEngine.exe
 - [x] 7 种调试可视化模式（ShadowMap/ShadowFac/NDC-Z/w 热力图等）
 - [x] 6 个 Bug 修复并记录
 
-详见: [Phase 3 开发日志](03_phase3_csm.md)
+详见: [Phase 3 开发日志](dev-log-phase3-csm.md)
 
-### Phase 4: 延迟渲染 + SSAO + SSR
-- [ ] GBuffer 管线（Albedo + Normal + Material + Depth）
-- [ ] SSAO 屏幕空间环境光遮蔽
-- [ ] SSR 屏幕空间反射
-- [ ] Forward vs Deferred 性能对比
+### Phase 4: 延迟渲染 + SSAO + SSR ✅
+- [x] GBuffer 管线（Albedo + Normal + Material + Depth）
+- [x] SSAO 屏幕空间环境光遮蔽（16-sample kernel + 9-tap bilateral blur）
+- [x] SSR 屏幕空间反射（视空间 raymarching + binary refinement）
+- [x] Forward vs Deferred 管线共存
+- [x] Debug Views（Final / Albedo / Normal / PBR / Depth）
+
+详见: [Phase 4 开发日志](dev-log-phase4-deferred-ssao-ssr.md)
 
 ### Phase 5: GPU-Driven Culling + Clustered Shading
 - [ ] Frustum + Hi-Z Culling
