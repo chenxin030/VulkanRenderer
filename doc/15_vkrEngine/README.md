@@ -19,7 +19,7 @@ vkrEngine.exe
 │   ├── scene_vert.slang
 │   └── scene_frag.slang
 └── ImGui (运行时控制面板)
-    ├── 渲染特性开关 (SSAO/SSR/CSM/Clustered)
+    ├── 渲染特性开关 (SSR/CSM/Clustered)
     ├── 各 Pass 耗时分解
     └── 场景统计 (DrawCall / 三角形数 / 显存)
 ```
@@ -75,19 +75,20 @@ vkrEngine.exe
 
 详见: [Phase 3 开发日志](dev-log-phase3-csm.md)
 
-### Phase 4: 延迟渲染 + SSAO + SSR ✅
+### Phase 4: 延迟渲染 + SSR ✅
 - [x] GBuffer 管线（Albedo + Normal + Material + Depth）
-- [x] SSAO 屏幕空间环境光遮蔽（16-sample kernel + 9-tap bilateral blur）
 - [x] SSR 屏幕空间反射（视空间 raymarching + binary refinement）
 - [x] Forward vs Deferred 管线共存
 - [x] Debug Views（Final / Albedo / Normal / PBR / Depth）
 
 详见: [Phase 4 开发日志](dev-log-phase4-deferred-ssao-ssr.md)
 
-### Phase 5: GPU-Driven Culling + Clustered Shading
-- [ ] Frustum + Hi-Z Culling
-- [ ] Clustered Shading（2048 光源）
-- [ ] DrawCall / 帧时间对比
+### Phase 5: GPU-Driven Culling + Clustered Shading ✅
+- [x] Frustum + Hi-Z Culling
+- [x] Clustered Shading（2048 光源）
+- [x] DrawCall / 帧时间对比
+
+详见: [Phase 5 开发日志](dev-log-phase5-culling-clustered.md)
 
 ### Phase 6: 后处理 + TAAU + 性能优化
 - [ ] Bloom + ToneMapping

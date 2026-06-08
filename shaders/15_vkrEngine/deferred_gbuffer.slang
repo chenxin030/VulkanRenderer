@@ -9,8 +9,6 @@ struct VSOutput
     float2 texCoord : TEXCOORD2;
     float3 tangent : TEXCOORD3;
     float3 bitangent : TEXCOORD4;
-    float4 shadowPos[4] : TEXCOORD5;
-    float viewDepth : TEXCOORD9;
 };
 
 // Set 0: Scene-level resources
@@ -97,15 +95,6 @@ VSOutput vertMain(
     output.tangent = normalize(mul(normalMatrix, tangent.xyz));
     output.bitangent = cross(output.normal, output.tangent) * tangent.w;
     output.texCoord = texCoord;
-
-    // Compute shadow positions for all 4 cascades
-    [unroll]
-    for (int i = 0; i < 4; i++)
-    {
-        output.shadowPos[i] = mul(csmUbo.cascadeViewProj[i], worldPos);
-    }
-
-    output.viewDepth = -viewPos.z;
 
     return output;
 }

@@ -67,9 +67,7 @@ bool VkrRenderer::prepareResource()
     generateIBLResources();
     if (!createCsmResources()) return false;
 
-    // ================================================================
-    // Phase 4: Deferred Rendering + SSAO + SSR
-    // ================================================================
+    // Phase 4: Deferred Rendering + SSR
     createUniformBuffers(deferredSettingsUboResources, sizeof(DeferredSettingsUBO));
 
     if (!createGBufferResources()) return false;
@@ -77,18 +75,6 @@ bool VkrRenderer::prepareResource()
     if (!createGBufferDescriptorPool()) return false;
     createGBufferDescriptorSets();
     if (!createGBufferPipeline()) return false;
-
-    if (!createSSAOResources()) return false;
-    generateSsaoKernel();
-    createSsaoNoiseTexture();
-    if (!createSsaoDescriptorSetLayout()) return false;
-    if (!createSsaoDescriptorPool()) return false;
-    createSsaoDescriptorSets();
-    if (!createSsaoPipeline()) return false;
-    if (!createSsaoBlurDescriptorSetLayout()) return false;
-    if (!createSsaoBlurDescriptorPool()) return false;
-    createSsaoBlurDescriptorSets();
-    if (!createSsaoBlurPipeline()) return false;
 
     if (!createSSRResources()) return false;
     if (!createSsrDescriptorSetLayout()) return false;
@@ -99,7 +85,41 @@ bool VkrRenderer::prepareResource()
     if (!createDeferredLightingDescriptorSetLayout()) return false;
     if (!createDeferredLightingDescriptorPool()) return false;
     createDeferredLightingDescriptorSets();
+
+    // Phase 5: Cluster buffers 
+    generateClusterSceneLights();
+    if (!createClusterBuffers()) return false;
+    if (!createDeferredClusterDescriptorSetLayout()) return false;
+    if (!createDeferredClusterDescriptorPool()) return false;
+    createDeferredClusterDescriptorSets();
     if (!createDeferredLightingPipeline()) return false;
+
+    // Phase 5: GPU Occlusion Culling + Clustered Shading (remaining)
+    // 
+    // Hi-Z + Culling
+    if (!createHiZResources()) return false;
+    if (!createHiZBuildDescriptorSetLayout()) return false;
+    if (!createHiZBuildDescriptorPool()) return false;
+    createHiZBuildDescriptorSets();
+    if (!createHiZBuildPipeline()) return false;
+    if (!createCullingBuffers()) return false;
+    buildCullingInstanceData();
+    if (!createCullingComputeDescriptorSetLayout()) return false;
+    if (!createCullingComputeDescriptorPool()) return false;
+    createCullingComputeDescriptorSets();
+    if (!createCullingComputePipeline()) return false;
+    if (!createCullingCommandPool()) return false;
+    if (!createCullingCommandBuffers()) return false;
+    if (!createCullingSyncObjects()) return false;
+
+    // Clustered Shading (compute pipeline + command buffers)
+    if (!createClusterComputeDescriptorSetLayout()) return false;
+    if (!createClusterComputeDescriptorPool()) return false;
+    createClusterComputeDescriptorSets();
+    if (!createClusterComputePipeline()) return false;
+    if (!createClusterCommandPool()) return false;
+    if (!createClusterCommandBuffers()) return false;
+    if (!createClusterSyncObjects()) return false;
 
     // Update scene descriptor sets with IBL + CSM bindings 
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
@@ -178,32 +198,55 @@ bool VkrRenderer::prepareResource()
     std::cout << "[vkrEngine] Scene: " << scene.totalTriangles() << " triangles, "
         << scene.totalDrawCalls() << " draw calls" << std::endl;
 
-    // Texture load diagnostics
-    uint32_t texLoaded = 0;
-    for (auto& mat : sponzaModel.materials)
-    {
-        if (mat->gpuBaseColorTexture.imageView != vk::raii::ImageView(nullptr)) ++texLoaded;
-    }
-    std::cout << "[vkrEngine] Materials with textures: " << texLoaded
-        << " / " << sponzaModel.materials.size() << std::endl;
-
     return true;
 }
 
 void VkrRenderer::cleanup()
 {
-    ssaoSettingsUboResources.descriptorSets.clear();
-    ssaoBlurUboResources.descriptorSets.clear();
     ssrParamsUboResources.descriptorSets.clear();
     deferredSettingsUboResources.descriptorSets.clear();
 
-    ssaoDescriptorPool = nullptr;
-    ssaoBlurDescriptorPool = nullptr;
+    if (*cullingCompDescriptorPool != vk::DescriptorPool{})
+    {
+        cullingParamsUboResources.descriptorSets.clear();
+        cullingVisibleBufferResources.descriptorSets.clear();
+        cullingInstanceUboResources.descriptorSets.clear();
+    }
+    if (*clusterComputeDescriptorPool != vk::DescriptorPool{})
+    {
+        clusterParamsUboResources2.descriptorSets.clear();
+        clusterLightBufferResources.descriptorSets.clear();
+    }
+
     ssrDescriptorPool = nullptr;
     deferredDescriptorPool = nullptr;
+    cullingCompDescriptorSets = nullptr;
+    cullingCompDescriptorPool = nullptr;
+    cullingCompPipeline = nullptr;
+    cullingCompPipelineLayout = nullptr;
+    clusterComputeDescriptorSets = nullptr;
+    clusterComputeDescriptorPool = nullptr;
+    clusterComputePipeline = nullptr;
+    clusterComputePipelineLayout = nullptr;
+    deferredClusterDescriptorSets = nullptr;
+    deferredClusterDescriptorPool = nullptr;
+
+    hizBuildDescriptorSets = nullptr;
+    hizBuildDescriptorPool = nullptr;
+    hizBuildPipeline = nullptr;
+    hizBuildPipelineLayout = nullptr;
+
+    // Unmap readback buffers
+    if (cullingVisibleReadbackMapped)
+        cullingVisibleReadbackMemory.unmapMemory();
+    if (clusterLightGridReadbackMapped)
+        clusterLightGridReadbackMemory.unmapMemory();
+    if (clusterLightGridMapped)
+        clusterLightGridMemory.unmapMemory();
+    if (clusterLightIndexMapped)
+        clusterLightIndexMemory.unmapMemory();
 
     destroyGBufferResources();
-    destroySSAOResources();
     destroySSRResources();
 
     std::cout << "[vkrEngine] Cleanup complete." << std::endl;
@@ -395,8 +438,6 @@ bool VkrRenderer::loadMaterialTexture(VkrMaterialTexture& tex, const std::string
     tex.imageMemory = std::move(tempTex.textureImageMemory);
     tex.imageView = std::move(tempTex.textureImageView);
 
-    std::cout << "[vkrEngine] Loaded texture: " << fs::path(fullPath).filename().string()
-        << " (" << texWidth << "x" << texHeight << ")" << std::endl;
     return true;
 }
 
@@ -885,10 +926,16 @@ void VkrRenderer::render()
     vkrUpdateUIFrame(this);
     updateSceneUBO(currentFrame);
     updateCsmBuffers(currentFrame);
-    updateSsaoBuffers(currentFrame);
-    updateSsaoBlurBuffers(currentFrame);
     updateSsrBuffers(currentFrame);
     updateDeferredSettingsBuffer(currentFrame);
+
+    // Phase 5: update culling & cluster buffers
+    updateCullingBuffers(currentFrame);
+    updateClusterBuffers(currentFrame);
+
+    // Phase 5: read back previous frame's results
+    readbackCullingResults(currentFrame);
+    readbackClusterStats(currentFrame);
 
     recordCommandBuffer(imageIndex);
 
@@ -1036,8 +1083,6 @@ void VkrRenderer::transitionImageLayoutCmd(
 
 void VkrRenderer::generateIBLResources()
 {
-    std::cout << "[vkrEngine] Generating IBL resources..." << std::endl;
-
     const vk::Format envFormat = vk::Format::eR16G16B16A16Sfloat;
     const uint32_t envDim = 512u;
     const uint32_t irradianceDim = 64u;
@@ -1438,15 +1483,11 @@ void VkrRenderer::generateIBLResources()
         vk::AccessFlagBits::eColorAttachmentWrite, vk::AccessFlagBits::eShaderRead);
 
     endSingleTimeCommands(*cmd);
-
-    std::cout << "[vkrEngine] IBL resources generated successfully." << std::endl;
 }
 
 // CSM (Cascaded Shadow Maps) — Phase 3
 bool VkrRenderer::createCsmResources()
 {
-    std::cout << "[vkrEngine] Creating CSM resources (double-buffered)..." << std::endl;
-
     if (!createCsmDescriptorPool()) return false;
 
     vk::Format depthFormat = findSupportedFormat(
@@ -1513,7 +1554,6 @@ bool VkrRenderer::createCsmResources()
     createCsmDescriptorSets();
     if (!createCsmDepthPipeline()) return false;
 
-    std::cout << "[vkrEngine] CSM resources created (x" << MAX_FRAMES_IN_FLIGHT << ")." << std::endl;
     return true;
 }
 
@@ -1793,29 +1833,6 @@ void VkrRenderer::computeCascadeViewProj(uint32_t cascadeIndex, const glm::vec3&
     const float snappedMaxX = snap(maxAABB.x, worldUnitsPerTexelX);
     const float snappedMinY = snap(minAABB.y, worldUnitsPerTexelY);
     const float snappedMaxY = snap(maxAABB.y, worldUnitsPerTexelY);
-
-    // Diagnostic: first cascade of first 3 frames
-    if (cascadeIndex == 0)
-    {
-        static int diagFrame = 0;
-        if (diagFrame < 3)
-        {
-            std::cout << "[CSM diag] frame " << diagFrame
-                << " lightDir=(" << lightDir.x << "," << lightDir.y << "," << lightDir.z << ")"
-                << std::endl;
-            std::cout << "[CSM diag] modelAABB:("
-                << sponzaModel.aabbMin.x << "," << sponzaModel.aabbMin.y << "," << sponzaModel.aabbMin.z << ")-("
-                << sponzaModel.aabbMax.x << "," << sponzaModel.aabbMax.y << "," << sponzaModel.aabbMax.z << ")"
-                << std::endl;
-            std::cout << "[CSM diag] lightView AABB:("
-                << minAABB.x << "," << minAABB.y << "," << minAABB.z << ")-("
-                << maxAABB.x << "," << maxAABB.y << "," << maxAABB.z << ")"
-                << " zNear=" << -maxAABB.z << " zFar=" << -minAABB.z
-                << " texelSize=(" << worldUnitsPerTexelX << "," << worldUnitsPerTexelY << ")"
-                << std::endl;
-            ++diagFrame;
-        }
-    }
 
     // Build orthographic projection from the snapped AABB.
     // All cascades share the same projection — cascade selection is done
@@ -2147,7 +2164,8 @@ void VkrRenderer::recordCommandBuffer(uint32_t imageIndex)
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *gbufferPipeline);
 
         gpuProfiler.beginPass(*cmd, "GBuffer");
-        // Render all renderables with per-material bindings
+        // Render all renderables with per-material bindings + GPU visibility culling
+        uint32_t subIdx = 0;
         for (const auto& renderable : scene.renderables())
         {
             auto& model = *renderable.model;
@@ -2158,6 +2176,14 @@ void VkrRenderer::recordCommandBuffer(uint32_t imageIndex)
 
             for (const auto& sub : model.subMeshes)
             {
+                // Phase 5: GPU occlusion culling — skip invisible submeshes
+                if (uiCullingEnabled && subIdx < submeshVisibility.size() && submeshVisibility[subIdx] == 0)
+                {
+                    ++subIdx;
+                    continue;
+                }
+                ++subIdx;
+
                 // Bind Set 0 (scene-level)
                 cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
                     *gbufferPipelineLayout, 0,
@@ -2177,45 +2203,72 @@ void VkrRenderer::recordCommandBuffer(uint32_t imageIndex)
                     vk::ShaderStageFlagBits::eVertex, 0, renderable.transform);
 
                 cmd.drawIndexed(sub.indexCount, 1, sub.firstIndex, 0, 0);
+                ++statDrawCalls;
+                statTriangles += sub.indexCount / 3;
             }
         }
-        statDrawCalls = static_cast<uint32_t>(sponzaModel.subMeshes.size());
-        statTriangles = sponzaModel.totalTriangles;
         gpuProfiler.endPass(*cmd);
 
         cmd.endRendering();
     }
 
     // ================================================================
-    // Pass 2: SSAO Pass
+    // Phase 5: Hi-Z Build (compute) — after GBuffer depth is ready
     // ================================================================
     {
-        // Transition SSAO output to color attachment
+        // Transition GBuffer depth to shader read for Hi-Z input
+        if (gbufferDepth.layout != vk::ImageLayout::eShaderReadOnlyOptimal)
         {
-            vk::ImageMemoryBarrier2 barrier{
-                .srcStageMask = (ssaoColor.layout == vk::ImageLayout::eUndefined)
-                    ? vk::PipelineStageFlagBits2::eTopOfPipe
-                    : vk::PipelineStageFlagBits2::eFragmentShader,
-                .srcAccessMask = (ssaoColor.layout == vk::ImageLayout::eUndefined)
-                    ? vk::AccessFlagBits2::eNone
-                    : vk::AccessFlagBits2::eShaderRead,
-                .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
-                .oldLayout = ssaoColor.layout,
-                .newLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .image = *ssaoColor.texture.textureImage,
-                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-            };
-            vk::DependencyInfo depInfo{ .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier };
+            vk::ImageMemoryBarrier2 depthBarrier{
+                .srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests,
+                .srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+                .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+                .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+                .oldLayout = gbufferDepth.layout, .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = *gbufferDepth.texture.textureImage,
+                .subresourceRange = {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1} };
+            vk::DependencyInfo depInfo{ .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &depthBarrier };
             cmd.pipelineBarrier2(depInfo);
-            ssaoColor.layout = vk::ImageLayout::eColorAttachmentOptimal;
+            gbufferDepth.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
         }
 
-        // Transition GBuffer inputs to shader read
+        gpuProfiler.beginPass(*cmd, "Hi-Z Build");
+        recordHiZBuildCommand(*cmd);
+        gpuProfiler.endPass(*cmd);
+    }
+
+    // ================================================================
+    // Pass 2: SSR Pass
+    // ================================================================
+    {
+        // Transition GBuffer inputs to shader read for SSR
         {
-            vk::ImageMemoryBarrier2 barriers[2] = {
+            vk::ImageMemoryBarrier2 barriers[4] = {
+                {
+                    .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                    .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+                    .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
+                    .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+                    .oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                    .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .image = *gbufferAlbedo.texture.textureImage,
+                    .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+                },
+                {
+                    .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                    .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+                    .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
+                    .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+                    .oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                    .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .image = *gbufferPbr.texture.textureImage,
+                    .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+                },
                 {
                     .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                     .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
@@ -2229,11 +2282,15 @@ void VkrRenderer::recordCommandBuffer(uint32_t imageIndex)
                     .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
                 },
                 {
-                    .srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests,
-                    .srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+                    .srcStageMask = (gbufferDepth.layout == vk::ImageLayout::eDepthAttachmentOptimal)
+                        ? vk::PipelineStageFlagBits2::eLateFragmentTests
+                        : vk::PipelineStageFlagBits2::eComputeShader,
+                    .srcAccessMask = (gbufferDepth.layout == vk::ImageLayout::eDepthAttachmentOptimal)
+                        ? vk::AccessFlagBits2::eDepthStencilAttachmentWrite
+                        : vk::AccessFlagBits2::eShaderRead,
                     .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
                     .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
-                    .oldLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+                    .oldLayout = gbufferDepth.layout,
                     .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
                     .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                     .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -2241,116 +2298,14 @@ void VkrRenderer::recordCommandBuffer(uint32_t imageIndex)
                     .subresourceRange = {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1},
                 },
             };
-            vk::DependencyInfo depInfo{ .imageMemoryBarrierCount = 2, .pImageMemoryBarriers = barriers };
+            vk::DependencyInfo depInfo{ .imageMemoryBarrierCount = 4, .pImageMemoryBarriers = barriers };
             cmd.pipelineBarrier2(depInfo);
+            gbufferAlbedo.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            gbufferPbr.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
             gbufferNormalRoughness.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
             gbufferDepth.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
         }
 
-        vk::RenderingAttachmentInfo ssaoColorAttachment{
-            .imageView = *ssaoColor.texture.textureImageView,
-            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-            .loadOp = vk::AttachmentLoadOp::eClear,
-            .storeOp = vk::AttachmentStoreOp::eStore,
-            .clearValue = vk::ClearColorValue{1.0f, 1.0f, 1.0f, 1.0f},
-        };
-        vk::RenderingInfo ssaoRenderInfo{
-            .renderArea = {.offset = {0, 0}, .extent = swapChainExtent},
-            .layerCount = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &ssaoColorAttachment,
-        };
-        cmd.beginRendering(ssaoRenderInfo);
-        cmd.setViewport(0, vk::Viewport{ 0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f });
-        cmd.setScissor(0, vk::Rect2D{ {0, 0}, swapChainExtent });
-
-        gpuProfiler.beginPass(*cmd, "SSAO");
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *ssaoPipeline);
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *ssaoPipelineLayout, 0,
-            *ssaoSettingsUboResources.descriptorSets[currentFrame], nullptr);
-        cmd.draw(3, 1, 0, 0);
-        gpuProfiler.endPass(*cmd);
-
-        cmd.endRendering();
-    }
-
-    // ================================================================
-    // Pass 3: SSAO Blur Pass
-    // ================================================================
-    {
-        // Transition SSAO blur output
-        {
-            vk::ImageMemoryBarrier2 barrier{
-                .srcStageMask = (ssaoBlurColor.layout == vk::ImageLayout::eUndefined)
-                    ? vk::PipelineStageFlagBits2::eTopOfPipe
-                    : vk::PipelineStageFlagBits2::eFragmentShader,
-                .srcAccessMask = (ssaoBlurColor.layout == vk::ImageLayout::eUndefined)
-                    ? vk::AccessFlagBits2::eNone
-                    : vk::AccessFlagBits2::eShaderRead,
-                .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
-                .oldLayout = ssaoBlurColor.layout,
-                .newLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .image = *ssaoBlurColor.texture.textureImage,
-                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-            };
-            vk::DependencyInfo depInfo{ .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier };
-            cmd.pipelineBarrier2(depInfo);
-            ssaoBlurColor.layout = vk::ImageLayout::eColorAttachmentOptimal;
-        }
-
-        // Transition SSAO input to shader read
-        {
-            vk::ImageMemoryBarrier2 barrier{
-                .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
-                .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
-                .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
-                .oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .image = *ssaoColor.texture.textureImage,
-                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-            };
-            vk::DependencyInfo depInfo{ .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier };
-            cmd.pipelineBarrier2(depInfo);
-            ssaoColor.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
-        }
-
-        vk::RenderingAttachmentInfo blurAttachment{
-            .imageView = *ssaoBlurColor.texture.textureImageView,
-            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-            .loadOp = vk::AttachmentLoadOp::eClear,
-            .storeOp = vk::AttachmentStoreOp::eStore,
-            .clearValue = vk::ClearColorValue{1.0f, 1.0f, 1.0f, 1.0f},
-        };
-        vk::RenderingInfo blurRenderInfo{
-            .renderArea = {.offset = {0, 0}, .extent = swapChainExtent},
-            .layerCount = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &blurAttachment,
-        };
-        cmd.beginRendering(blurRenderInfo);
-        cmd.setViewport(0, vk::Viewport{ 0.0f, 0.0f, static_cast<float>(swapChainExtent.width), static_cast<float>(swapChainExtent.height), 0.0f, 1.0f });
-        cmd.setScissor(0, vk::Rect2D{ {0, 0}, swapChainExtent });
-
-        gpuProfiler.beginPass(*cmd, "SSAO Blur");
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *ssaoBlurPipeline);
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *ssaoBlurPipelineLayout, 0,
-            *ssaoBlurUboResources.descriptorSets[currentFrame], nullptr);
-        cmd.draw(3, 1, 0, 0);
-        gpuProfiler.endPass(*cmd);
-
-        cmd.endRendering();
-    }
-
-    // ================================================================
-    // Pass 4: SSR Pass
-    // ================================================================
-    {
         // Transition SSR output
         {
             vk::ImageMemoryBarrier2 barrier{
@@ -2372,25 +2327,6 @@ void VkrRenderer::recordCommandBuffer(uint32_t imageIndex)
             vk::DependencyInfo depInfo{ .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier };
             cmd.pipelineBarrier2(depInfo);
             ssrColor.layout = vk::ImageLayout::eColorAttachmentOptimal;
-        }
-
-        // Transition GBuffer albedo to shader read (for SSR color sampling)
-        {
-            vk::ImageMemoryBarrier2 barrier{
-                .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
-                .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
-                .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
-                .oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .image = *gbufferAlbedo.texture.textureImage,
-                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-            };
-            vk::DependencyInfo depInfo{ .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier };
-            cmd.pipelineBarrier2(depInfo);
-            gbufferAlbedo.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
         }
 
         vk::RenderingAttachmentInfo ssrAttachment{
@@ -2476,39 +2412,26 @@ void VkrRenderer::recordCommandBuffer(uint32_t imageIndex)
             cmd.pipelineBarrier2(depInfo);
             gbufferAlbedo.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
             gbufferPbr.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            gbufferNormalRoughness.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+            gbufferDepth.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
         }
 
-        // Transition SSAO blur and SSR to shader read
+        // Transition SSR to shader read
         {
-            vk::ImageMemoryBarrier2 barriers[2] = {
-                {
-                    .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                    .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
-                    .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
-                    .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
-                    .oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                    .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-                    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                    .image = *ssaoBlurColor.texture.textureImage,
-                    .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-                },
-                {
-                    .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                    .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
-                    .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
-                    .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
-                    .oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                    .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-                    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                    .image = *ssrColor.texture.textureImage,
-                    .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-                },
+            vk::ImageMemoryBarrier2 barrier{
+                .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+                .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
+                .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+                .oldLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = *ssrColor.texture.textureImage,
+                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
             };
-            vk::DependencyInfo depInfo{ .imageMemoryBarrierCount = 2, .pImageMemoryBarriers = barriers };
+            vk::DependencyInfo depInfo{ .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier };
             cmd.pipelineBarrier2(depInfo);
-            ssaoBlurColor.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
             ssrColor.layout = vk::ImageLayout::eShaderReadOnlyOptimal;
         }
 
@@ -2547,6 +2470,9 @@ void VkrRenderer::recordCommandBuffer(uint32_t imageIndex)
             *sceneUboResources.descriptorSets[currentFrame], nullptr);
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *deferredPipelineLayout, 1,
             *deferredSettingsUboResources.descriptorSets[currentFrame], nullptr);
+        // Phase 5: Bind cluster lights (Set 2) — always required by pipeline layout
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *deferredPipelineLayout, 2,
+            *deferredClusterDescriptorSets[currentFrame], nullptr);
         cmd.draw(3, 1, 0, 0);
         gpuProfiler.endPass(*cmd);
 
@@ -2593,51 +2519,6 @@ void VkrRenderer::recordCommandBuffer(uint32_t imageIndex)
         vk::ImageAspectFlagBits::eColor);
 
     cmd.end();
-}
-
-void VkrRenderer::renderModel(vk::CommandBuffer cmd, const VkrModel& model, const glm::mat4& transform)
-{
-    if (model.subMeshes.empty()) return;
-
-    cmd.bindVertexBuffers(0, *model.vertexBuffer, vk::DeviceSize{ 0 });
-    cmd.bindIndexBuffer(*model.indexBuffer, 0, vk::IndexType::eUint32);
-
-    for (const auto& sub : model.subMeshes)
-    {
-        // Bind scene descriptor set (set 0)
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-            *pipelineLayout, 0,
-            *sceneUboResources.descriptorSets[currentFrame], nullptr);
-
-        // Bind material descriptor set (set 1)
-        int32_t matIdx = sub.materialIndex;
-        if (matIdx >= 0 && matIdx < static_cast<int32_t>(materialDescriptorSets.size()))
-        {
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-                *pipelineLayout, 1,
-                *materialDescriptorSets[matIdx], nullptr);
-        }
-        else
-        {
-            // Bind first material's set as fallback (should have white texture)
-            if (!materialDescriptorSets.empty())
-            {
-                cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-                    *pipelineLayout, 1,
-                    *materialDescriptorSets[0], nullptr);
-            }
-        }
-
-        // model matrix
-        cmd.pushConstants<glm::mat4>(*pipelineLayout,
-            vk::ShaderStageFlagBits::eVertex, 0, transform);
-
-        // Draw — indices are already global (baseVertex added during loading)
-        cmd.drawIndexed(sub.indexCount, 1, sub.firstIndex, 0, 0);
-
-        ++statDrawCalls;
-        statTriangles += sub.indexCount / 3;
-    }
 }
 
 // ====================================================================
@@ -2821,328 +2702,6 @@ bool VkrRenderer::createGBufferPipeline()
 }
 
 // ====================================================================
-// Phase 4: SSAO Methods
-// ====================================================================
-
-bool VkrRenderer::createSSAOResources()
-{
-    try
-    {
-        ssaoColor.format = vk::Format::eR8Unorm;
-        ssaoBlurColor.format = vk::Format::eR8Unorm;
-
-        auto createAtt = [this](GBufferAttachment& att) {
-            createImage(swapChainExtent.width, swapChainExtent.height, 1, att.format, vk::ImageTiling::eOptimal,
-                vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
-                vk::MemoryPropertyFlagBits::eDeviceLocal, att.texture);
-            att.texture.textureImageView = createImageView(att.texture.textureImage, att.format, vk::ImageAspectFlagBits::eColor, 1);
-            att.layout = vk::ImageLayout::eUndefined;
-            };
-
-        createAtt(ssaoColor);
-        createAtt(ssaoBlurColor);
-
-        createUniformBuffers(ssaoSettingsUboResources, sizeof(SSAOSettingsUBO));
-        createUniformBuffers(ssaoBlurUboResources, sizeof(BlurUBO));
-
-        return true;
-    }
-    catch (const std::exception& e) { std::cerr << "SSAO resources error: " << e.what() << std::endl; return false; }
-}
-
-void VkrRenderer::destroySSAOResources()
-{
-    ssaoColor.texture.textureImageView = nullptr;
-    ssaoColor.texture.textureImage = nullptr;
-    ssaoColor.texture.textureImageMemory = nullptr;
-    ssaoBlurColor.texture.textureImageView = nullptr;
-    ssaoBlurColor.texture.textureImage = nullptr;
-    ssaoBlurColor.texture.textureImageMemory = nullptr;
-    ssaoColor.layout = vk::ImageLayout::eUndefined;
-    ssaoBlurColor.layout = vk::ImageLayout::eUndefined;
-}
-
-void VkrRenderer::generateSsaoKernel()
-{
-    ssaoKernel.resize(SSAO_KERNEL_SIZE);
-    std::uniform_real_distribution<float> randomFloats(0.0, 1.0);
-    std::default_random_engine generator(42); // Fixed seed for reproducibility
-
-    for (uint32_t i = 0; i < SSAO_KERNEL_SIZE; ++i)
-    {
-        glm::vec3 sample(randomFloats(generator) * 2.0f - 1.0f,
-            randomFloats(generator) * 2.0f - 1.0f,
-            randomFloats(generator));
-        sample = glm::normalize(sample);
-        float scale = static_cast<float>(i) / static_cast<float>(SSAO_KERNEL_SIZE);
-        scale = 0.1f + 0.9f * scale * scale;
-        sample *= scale;
-        ssaoKernel[i] = glm::vec4(sample, 0.0f);
-    }
-}
-
-void VkrRenderer::createSsaoNoiseTexture()
-{
-    std::uniform_real_distribution<float> randomFloats(0.0, 1.0);
-    std::default_random_engine generator(123);
-
-    std::vector<glm::vec4> noiseData(SSAO_NOISE_SIZE * SSAO_NOISE_SIZE);
-    for (auto& n : noiseData)
-    {
-        n = glm::vec4(randomFloats(generator) * 2.0f - 1.0f,
-            randomFloats(generator) * 2.0f - 1.0f,
-            0.0f, 0.0f);
-        n = glm::vec4(glm::normalize(glm::vec3(n)), 0.0f);
-    }
-
-    vk::DeviceSize bufferSize = sizeof(glm::vec4) * noiseData.size();
-    vk::raii::Buffer stagingBuf(nullptr);
-    vk::raii::DeviceMemory stagingMem(nullptr);
-    createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc,
-        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
-        stagingBuf, stagingMem);
-    void* mapped = stagingMem.mapMemory(0, bufferSize);
-    memcpy(mapped, noiseData.data(), static_cast<size_t>(bufferSize));
-    stagingMem.unmapMemory();
-
-    ssaoNoiseTexture.mipLevels = 1;
-    createImage(SSAO_NOISE_SIZE, SSAO_NOISE_SIZE, 1, vk::Format::eR32G32B32A32Sfloat, vk::ImageTiling::eOptimal,
-        vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
-        vk::MemoryPropertyFlagBits::eDeviceLocal, ssaoNoiseTexture);
-    transitionImageLayout(ssaoNoiseTexture.textureImage, vk::ImageLayout::eUndefined,
-        vk::ImageLayout::eTransferDstOptimal, 1);
-    copyBufferToImage(stagingBuf, ssaoNoiseTexture.textureImage, SSAO_NOISE_SIZE, SSAO_NOISE_SIZE);
-    transitionImageLayout(ssaoNoiseTexture.textureImage, vk::ImageLayout::eTransferDstOptimal,
-        vk::ImageLayout::eShaderReadOnlyOptimal, 1);
-    ssaoNoiseTexture.textureImageView = createImageView(ssaoNoiseTexture.textureImage,
-        vk::Format::eR32G32B32A32Sfloat, vk::ImageAspectFlagBits::eColor, 1);
-
-    vk::SamplerCreateInfo samplerInfo{
-        .magFilter = vk::Filter::eNearest, .minFilter = vk::Filter::eNearest,
-        .mipmapMode = vk::SamplerMipmapMode::eNearest,
-        .addressModeU = vk::SamplerAddressMode::eRepeat, .addressModeV = vk::SamplerAddressMode::eRepeat, .addressModeW = vk::SamplerAddressMode::eRepeat,
-        .mipLodBias = 0.0f, .anisotropyEnable = vk::False, .maxAnisotropy = 1.0f,
-        .compareEnable = vk::False, .compareOp = vk::CompareOp::eAlways,
-        .minLod = 0.0f, .maxLod = 0.0f,
-        .borderColor = vk::BorderColor::eFloatOpaqueWhite, .unnormalizedCoordinates = vk::False,
-    };
-    ssaoNoiseSampler = vk::raii::Sampler(device, samplerInfo);
-}
-
-bool VkrRenderer::createSsaoDescriptorSetLayout()
-{
-    try
-    {
-        std::vector<vk::DescriptorSetLayoutBinding> bindings = {
-            {.binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
-            {.binding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
-            {.binding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
-            {.binding = 3, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
-        };
-        ssaoDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, vk::DescriptorSetLayoutCreateInfo{
-            .bindingCount = static_cast<uint32_t>(bindings.size()), .pBindings = bindings.data() });
-        return true;
-    }
-    catch (const std::exception& e) { std::cerr << "SSAO DSL error: " << e.what() << std::endl; return false; }
-}
-
-bool VkrRenderer::createSsaoDescriptorPool()
-{
-    try
-    {
-        std::vector<vk::DescriptorPoolSize> poolSizes = {
-            {.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT},
-            {.type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 3u},
-        };
-        ssaoDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
-            .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-            .maxSets = MAX_FRAMES_IN_FLIGHT, .poolSizeCount = static_cast<uint32_t>(poolSizes.size()), .pPoolSizes = poolSizes.data() });
-        return true;
-    }
-    catch (const std::exception& e) { std::cerr << "SSAO pool error: " << e.what() << std::endl; return false; }
-}
-
-void VkrRenderer::createSsaoDescriptorSets()
-{
-    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *ssaoDescriptorSetLayout);
-    ssaoSettingsUboResources.descriptorSets = vk::raii::DescriptorSets(device, vk::DescriptorSetAllocateInfo{
-        .descriptorPool = *ssaoDescriptorPool, .descriptorSetCount = MAX_FRAMES_IN_FLIGHT, .pSetLayouts = layouts.data() });
-
-    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
-    {
-        vk::DescriptorBufferInfo settingsInfo{ .buffer = *ssaoSettingsUboResources.Buffers[i], .offset = 0, .range = sizeof(SSAOSettingsUBO) };
-        vk::DescriptorImageInfo normalInfo{ .sampler = gbufferSampler, .imageView = gbufferNormalRoughness.texture.textureImageView,
-            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
-        vk::DescriptorImageInfo depthInfo{ .sampler = gbufferSampler, .imageView = gbufferDepth.texture.textureImageView,
-            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
-        vk::DescriptorImageInfo noiseInfo{ .sampler = ssaoNoiseSampler, .imageView = ssaoNoiseTexture.textureImageView,
-            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
-
-        std::array<vk::WriteDescriptorSet, 4> writes = { {
-            {.dstSet = *ssaoSettingsUboResources.descriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &settingsInfo},
-            {.dstSet = *ssaoSettingsUboResources.descriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &normalInfo},
-            {.dstSet = *ssaoSettingsUboResources.descriptorSets[i], .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &depthInfo},
-            {.dstSet = *ssaoSettingsUboResources.descriptorSets[i], .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &noiseInfo},
-        } };
-        device.updateDescriptorSets(writes, nullptr);
-    }
-}
-
-bool VkrRenderer::createSsaoPipeline()
-{
-    try
-    {
-        vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "ssao.spv"));
-        vk::PipelineShaderStageCreateInfo stages[] = {
-            {.stage = vk::ShaderStageFlagBits::eVertex, .module = *shaderModule, .pName = "vertMain"},
-            {.stage = vk::ShaderStageFlagBits::eFragment, .module = *shaderModule, .pName = "fragMain"},
-        };
-
-        vk::PipelineVertexInputStateCreateInfo vertexInput{};
-        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = vk::False };
-        vk::PipelineViewportStateCreateInfo viewportState{ .viewportCount = 1, .scissorCount = 1 };
-        vk::PipelineRasterizationStateCreateInfo rasterizer{
-            .depthClampEnable = vk::False, .rasterizerDiscardEnable = vk::False, .polygonMode = vk::PolygonMode::eFill,
-            .cullMode = vk::CullModeFlagBits::eNone, .frontFace = vk::FrontFace::eCounterClockwise, .depthBiasEnable = vk::False, .lineWidth = 1.0f };
-        vk::PipelineMultisampleStateCreateInfo multisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False };
-        vk::PipelineDepthStencilStateCreateInfo depthStencil{ .depthTestEnable = vk::False, .depthWriteEnable = vk::False };
-        vk::PipelineColorBlendAttachmentState blend{ .blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA };
-        vk::PipelineColorBlendStateCreateInfo colorBlending{ .logicOpEnable = vk::False, .attachmentCount = 1, .pAttachments = &blend };
-
-        std::vector dynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
-        vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
-
-        ssaoPipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
-            .setLayoutCount = 1, .pSetLayouts = &*ssaoDescriptorSetLayout, .pushConstantRangeCount = 0 });
-
-        vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> chain = { {
-            .stageCount = 2, .pStages = stages, .pVertexInputState = &vertexInput, .pInputAssemblyState = &inputAssembly,
-            .pViewportState = &viewportState, .pRasterizationState = &rasterizer, .pMultisampleState = &multisampling,
-            .pDepthStencilState = &depthStencil, .pColorBlendState = &colorBlending, .pDynamicState = &dynamicState,
-            .layout = ssaoPipelineLayout, .renderPass = nullptr,
-        }, {
-            .colorAttachmentCount = 1, .pColorAttachmentFormats = &ssaoColor.format, .depthAttachmentFormat = vk::Format::eUndefined,
-        } };
-        ssaoPipeline = vk::raii::Pipeline(device, nullptr, chain.get<vk::GraphicsPipelineCreateInfo>());
-        return true;
-    }
-    catch (const std::exception& e) { std::cerr << "SSAO pipeline error: " << e.what() << std::endl; return false; }
-}
-
-bool VkrRenderer::createSsaoBlurDescriptorSetLayout()
-{
-    try
-    {
-        std::vector<vk::DescriptorSetLayoutBinding> bindings = {
-            {.binding = 0, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
-            {.binding = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
-        };
-        ssaoBlurDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, vk::DescriptorSetLayoutCreateInfo{
-            .bindingCount = static_cast<uint32_t>(bindings.size()), .pBindings = bindings.data() });
-        return true;
-    }
-    catch (const std::exception& e) { std::cerr << "SSAO Blur DSL error: " << e.what() << std::endl; return false; }
-}
-
-bool VkrRenderer::createSsaoBlurDescriptorPool()
-{
-    try
-    {
-        std::vector<vk::DescriptorPoolSize> poolSizes = {
-            {.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT},
-            {.type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT},
-        };
-        ssaoBlurDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
-            .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-            .maxSets = MAX_FRAMES_IN_FLIGHT, .poolSizeCount = static_cast<uint32_t>(poolSizes.size()), .pPoolSizes = poolSizes.data() });
-        return true;
-    }
-    catch (const std::exception& e) { std::cerr << "SSAO Blur pool error: " << e.what() << std::endl; return false; }
-}
-
-void VkrRenderer::createSsaoBlurDescriptorSets()
-{
-    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *ssaoBlurDescriptorSetLayout);
-    ssaoBlurUboResources.descriptorSets = vk::raii::DescriptorSets(device, vk::DescriptorSetAllocateInfo{
-        .descriptorPool = *ssaoBlurDescriptorPool, .descriptorSetCount = MAX_FRAMES_IN_FLIGHT, .pSetLayouts = layouts.data() });
-
-    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
-    {
-        vk::DescriptorBufferInfo blurInfo{ .buffer = *ssaoBlurUboResources.Buffers[i], .offset = 0, .range = sizeof(BlurUBO) };
-        vk::DescriptorImageInfo ssaoInfo{ .sampler = gbufferSampler, .imageView = ssaoColor.texture.textureImageView,
-            .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
-        std::array<vk::WriteDescriptorSet, 2> writes = { {
-            {.dstSet = *ssaoBlurUboResources.descriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &blurInfo},
-            {.dstSet = *ssaoBlurUboResources.descriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &ssaoInfo},
-        } };
-        device.updateDescriptorSets(writes, nullptr);
-    }
-}
-
-bool VkrRenderer::createSsaoBlurPipeline()
-{
-    try
-    {
-        vk::raii::ShaderModule shaderModule = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "ssao_blur.spv"));
-        vk::PipelineShaderStageCreateInfo stages[] = {
-            {.stage = vk::ShaderStageFlagBits::eVertex, .module = *shaderModule, .pName = "vertMain"},
-            {.stage = vk::ShaderStageFlagBits::eFragment, .module = *shaderModule, .pName = "fragMain"},
-        };
-        vk::PipelineVertexInputStateCreateInfo vertexInput{};
-        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{ .topology = vk::PrimitiveTopology::eTriangleList, .primitiveRestartEnable = vk::False };
-        vk::PipelineViewportStateCreateInfo viewportState{ .viewportCount = 1, .scissorCount = 1 };
-        vk::PipelineRasterizationStateCreateInfo rasterizer{
-            .depthClampEnable = vk::False, .rasterizerDiscardEnable = vk::False, .polygonMode = vk::PolygonMode::eFill,
-            .cullMode = vk::CullModeFlagBits::eNone, .frontFace = vk::FrontFace::eCounterClockwise, .depthBiasEnable = vk::False, .lineWidth = 1.0f };
-        vk::PipelineMultisampleStateCreateInfo multisampling{ .rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False };
-        vk::PipelineDepthStencilStateCreateInfo depthStencil{ .depthTestEnable = vk::False, .depthWriteEnable = vk::False };
-        vk::PipelineColorBlendAttachmentState blend{ .blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA };
-        vk::PipelineColorBlendStateCreateInfo colorBlending{ .logicOpEnable = vk::False, .attachmentCount = 1, .pAttachments = &blend };
-        std::vector dynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
-        vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
-
-        ssaoBlurPipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
-            .setLayoutCount = 1, .pSetLayouts = &*ssaoBlurDescriptorSetLayout, .pushConstantRangeCount = 0 });
-
-        vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> chain = { {
-            .stageCount = 2, .pStages = stages, .pVertexInputState = &vertexInput, .pInputAssemblyState = &inputAssembly,
-            .pViewportState = &viewportState, .pRasterizationState = &rasterizer, .pMultisampleState = &multisampling,
-            .pDepthStencilState = &depthStencil, .pColorBlendState = &colorBlending, .pDynamicState = &dynamicState,
-            .layout = ssaoBlurPipelineLayout, .renderPass = nullptr,
-        }, {
-            .colorAttachmentCount = 1, .pColorAttachmentFormats = &ssaoBlurColor.format, .depthAttachmentFormat = vk::Format::eUndefined,
-        } };
-        ssaoBlurPipeline = vk::raii::Pipeline(device, nullptr, chain.get<vk::GraphicsPipelineCreateInfo>());
-        return true;
-    }
-    catch (const std::exception& e) { std::cerr << "SSAO Blur pipeline error: " << e.what() << std::endl; return false; }
-}
-
-void VkrRenderer::updateSsaoBuffers(uint32_t frameIndex)
-{
-    SSAOSettingsUBO ssao{};
-    glm::mat4 proj = glm::perspective(glm::radians(camera.Zoom),
-        static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height),
-        CAMERA_NEAR, CAMERA_FAR);
-    proj[1][1] *= -1.0f;  // Vulkan Y flip
-    ssao.projection = proj;
-    ssao.invProjection = glm::inverse(proj);
-    ssao.invView = glm::inverse(camera.GetViewMatrix());
-    ssao.params0 = glm::vec4(uiSsaoRadius, uiSsaoBias, uiSsaoIntensity, uiSsaoEnabled ? 1.0f : 0.0f);
-    ssao.flags = glm::ivec4(uiSsaoDebugView, 0, 0, 0);
-    for (uint32_t i = 0; i < SSAO_KERNEL_SIZE && i < ssaoKernel.size(); ++i)
-        ssao.kernel[i] = ssaoKernel[i];
-    memcpy(ssaoSettingsUboResources.BuffersMapped[frameIndex], &ssao, sizeof(SSAOSettingsUBO));
-}
-
-void VkrRenderer::updateSsaoBlurBuffers(uint32_t frameIndex)
-{
-    BlurUBO blur{};
-    blur.texelSize = glm::vec2(1.0f / swapChainExtent.width, 1.0f / swapChainExtent.height);
-    std::memcpy(ssaoBlurUboResources.BuffersMapped[frameIndex], &blur, sizeof(BlurUBO));
-}
-
-// ====================================================================
 // Phase 4: SSR Methods
 // ====================================================================
 
@@ -3288,7 +2847,7 @@ void VkrRenderer::updateSsrBuffers(uint32_t frameIndex)
 
 bool VkrRenderer::createDeferredLightingDescriptorSetLayout()
 {
-    // Set 1: GBuffer + SSAO + SSR + DeferredSettings (Set 0 = scene-level, reused)
+    // Set 1: GBuffer + SSR + DeferredSettings (Set 0 = scene-level, reused)
     try
     {
         std::vector<vk::DescriptorSetLayoutBinding> bindings = {
@@ -3297,8 +2856,7 @@ bool VkrRenderer::createDeferredLightingDescriptorSetLayout()
             {.binding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
             {.binding = 3, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
             {.binding = 4, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
-            {.binding = 5, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
-            {.binding = 6, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
+            {.binding = 5, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
         };
         deferredDescriptorSetLayout = vk::raii::DescriptorSetLayout(device, vk::DescriptorSetLayoutCreateInfo{
             .bindingCount = static_cast<uint32_t>(bindings.size()), .pBindings = bindings.data() });
@@ -3312,7 +2870,7 @@ bool VkrRenderer::createDeferredLightingDescriptorPool()
     try
     {
         std::vector<vk::DescriptorPoolSize> poolSizes = {
-            {.type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 6u},
+            {.type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 5u},
             {.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT},
         };
         deferredDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
@@ -3335,18 +2893,16 @@ void VkrRenderer::createDeferredLightingDescriptorSets()
         vk::DescriptorImageInfo normalInfo{ .sampler = gbufferSampler, .imageView = gbufferNormalRoughness.texture.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
         vk::DescriptorImageInfo pbrInfo{ .sampler = gbufferSampler, .imageView = gbufferPbr.texture.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
         vk::DescriptorImageInfo depthInfo{ .sampler = gbufferSampler, .imageView = gbufferDepth.texture.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
-        vk::DescriptorImageInfo ssaoInfo{ .sampler = gbufferSampler, .imageView = ssaoBlurColor.texture.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
         vk::DescriptorImageInfo ssrInfo{ .sampler = gbufferSampler, .imageView = ssrColor.texture.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
         vk::DescriptorBufferInfo settingsInfo{ .buffer = *deferredSettingsUboResources.Buffers[i], .offset = 0, .range = sizeof(DeferredSettingsUBO) };
 
-        std::array<vk::WriteDescriptorSet, 7> writes = { {
+        std::array<vk::WriteDescriptorSet, 6> writes = { {
             {.dstSet = *deferredSettingsUboResources.descriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &albedoInfo},
             {.dstSet = *deferredSettingsUboResources.descriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &normalInfo},
             {.dstSet = *deferredSettingsUboResources.descriptorSets[i], .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &pbrInfo},
             {.dstSet = *deferredSettingsUboResources.descriptorSets[i], .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &depthInfo},
-            {.dstSet = *deferredSettingsUboResources.descriptorSets[i], .dstBinding = 4, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &ssaoInfo},
-            {.dstSet = *deferredSettingsUboResources.descriptorSets[i], .dstBinding = 5, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &ssrInfo},
-            {.dstSet = *deferredSettingsUboResources.descriptorSets[i], .dstBinding = 6, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &settingsInfo},
+            {.dstSet = *deferredSettingsUboResources.descriptorSets[i], .dstBinding = 4, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &ssrInfo},
+            {.dstSet = *deferredSettingsUboResources.descriptorSets[i], .dstBinding = 5, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &settingsInfo},
         } };
         device.updateDescriptorSets(writes, nullptr);
     }
@@ -3374,11 +2930,10 @@ bool VkrRenderer::createDeferredLightingPipeline()
         std::vector dynamicStates = { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
         vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
 
-        // Pipeline uses 2 sets: Set 0 (scene-level) + Set 1 (GBuffer/SSAO/SSR)
-        // Set 2 (DeferredSettingsUBO) is bound separately
-        std::array<vk::DescriptorSetLayout, 2> setLayouts = { *sceneDescriptorSetLayout, *deferredDescriptorSetLayout };
+        // Pipeline uses 3 sets: Set 0 (scene-level) + Set 1 (GBuffer/SSR) + Set 2 (cluster lights)
+        std::array<vk::DescriptorSetLayout, 3> setLayouts = { *sceneDescriptorSetLayout, *deferredDescriptorSetLayout, *deferredClusterDescriptorSetLayout };
         deferredPipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
-            .setLayoutCount = 2, .pSetLayouts = setLayouts.data(), .pushConstantRangeCount = 0 });
+            .setLayoutCount = 3, .pSetLayouts = setLayouts.data(), .pushConstantRangeCount = 0 });
 
         vk::Format swapchainFormat = swapChainImageFormat;
         vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> chain = { {
@@ -3398,45 +2953,53 @@ bool VkrRenderer::createDeferredLightingPipeline()
 void VkrRenderer::updateDeferredSettingsBuffer(uint32_t frameIndex)
 {
     DeferredSettingsUBO settings{};
-    settings.ssaoEnabled = uiSsaoEnabled ? 1.0f : 0.0f;
     settings.ssrEnabled = uiSsrEnabled ? 1.0f : 0.0f;
-    settings.debugView = static_cast<float>(uiDeferredDebugView);
     std::memcpy(deferredSettingsUboResources.BuffersMapped[frameIndex], &settings, sizeof(DeferredSettingsUBO));
 }
 
 bool VkrRenderer::recreateDeferredSizedResources()
 {
-    // 1. Clear descriptor set handles (they don't auto-free; pools own the lifecycle)
-    ssaoSettingsUboResources.descriptorSets.clear();
-    ssaoBlurUboResources.descriptorSets.clear();
+    // 1. Clear descriptor set handles
     ssrParamsUboResources.descriptorSets.clear();
     deferredSettingsUboResources.descriptorSets.clear();
 
-    // 2. Destroy pools — vkDestroyDescriptorPool frees all sets allocated from them
-    ssaoDescriptorPool = nullptr;
-    ssaoBlurDescriptorPool = nullptr;
+    // 2. Destroy pools
     ssrDescriptorPool = nullptr;
     deferredDescriptorPool = nullptr;
 
     // 3. Destroy old textures
     destroyGBufferResources();
-    destroySSAOResources();
     destroySSRResources();
+
+    // 3b. Destroy Hi-Z resources (size-dependent)
+    hizBuildDescriptorSets = nullptr;
+    hizBuildDescriptorPool = nullptr;
+    cullingParamsUboResources.descriptorSets.clear();
+    cullingVisibleBufferResources.descriptorSets.clear();
+    cullingInstanceUboResources.descriptorSets.clear();
+    cullingCompDescriptorSets = nullptr;
+    cullingCompDescriptorPool = nullptr;
+    hizMipViews.clear();
+    hizTexture.textureImageView = nullptr;
+    hizTexture.textureImage = nullptr;
+    hizTexture.textureImageMemory = nullptr;
+    hizSampler = nullptr;
+    hizLayout = vk::ImageLayout::eUndefined;
 
     // 4. Recreate textures at new swapchain size
     if (!createGBufferResources()) return false;
-    if (!createSSAOResources()) return false;
     if (!createSSRResources()) return false;
+    if (!createHiZResources()) return false;
 
     // 5. Recreate pools and allocate new descriptor sets
-    if (!createSsaoDescriptorPool()) return false;
-    createSsaoDescriptorSets();
-    if (!createSsaoBlurDescriptorPool()) return false;
-    createSsaoBlurDescriptorSets();
     if (!createSsrDescriptorPool()) return false;
     createSsrDescriptorSets();
     if (!createDeferredLightingDescriptorPool()) return false;
     createDeferredLightingDescriptorSets();
+    if (!createHiZBuildDescriptorPool()) return false;
+    createHiZBuildDescriptorSets();
+    if (!createCullingComputeDescriptorPool()) return false;
+    createCullingComputeDescriptorSets();
 
     return true;
 }
@@ -3471,6 +3034,9 @@ void VkrRenderer::updateUIPanel()
         ImGui::Text("  Draw Calls: %u", statDrawCalls);
         ImGui::Text("  Sub-meshes: %zu", sponzaModel.subMeshes.size());
         ImGui::Text("  Materials: %zu", sponzaModel.materials.size());
+        // Phase 5: culling stats
+        if (uiCullingEnabled)
+            ImGui::Text("  Culled: %u / %u", statCulledSubmeshes, cullingTotalInstances);
         ImGui::Separator();
 
         ImGui::Text("CPU Frame: %.2f ms", statCpuMs);
@@ -3518,18 +3084,6 @@ void VkrRenderer::updateUIPanel()
         }
         ImGui::Separator();
 
-        // Phase 4: SSAO Controls
-        if (ImGui::CollapsingHeader("SSAO", ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            ImGui::Checkbox("SSAO Enabled", &uiSsaoEnabled);
-            ImGui::SliderFloat("SSAO Radius", &uiSsaoRadius, 0.1f, 3.0f, "%.2f");
-            ImGui::SliderFloat("SSAO Bias", &uiSsaoBias, 0.001f, 0.2f, "%.3f");
-            ImGui::SliderFloat("SSAO Intensity", &uiSsaoIntensity, 0.5f, 5.0f, "%.1f");
-            ImGui::Separator();
-            const char* ssaoDebugModes[] = { "Final AO", "Linear Depth", "Normal", "Noise", "Hit Count", "Range Check", "ViewPos Z" };
-            ImGui::Combo("SSAO Debug", &uiSsaoDebugView, ssaoDebugModes, 7);
-        }
-
         // Phase 4: SSR Controls
         if (ImGui::CollapsingHeader("SSR"))
         {
@@ -3541,11 +3095,23 @@ void VkrRenderer::updateUIPanel()
             ImGui::SliderFloat("SSR Intensity", &uiSsrIntensity, 0.0f, 3.0f, "%.2f");
         }
 
-        // Phase 4: Debug Views
-        if (ImGui::CollapsingHeader("Debug Views"))
+        // Phase 5: GPU Culling
+        if (ImGui::CollapsingHeader("GPU Culling (Phase 5)"))
         {
-            const char* debugViews[] = { "Final", "Albedo", "Normal", "PBR", "Depth" };
-            ImGui::Combo("View", &uiDeferredDebugView, debugViews, 5);
+            ImGui::Checkbox("Frustum Culling", &uiCullingEnabled);
+            if (ImGui::Button("Reset Visibility"))
+                std::fill(submeshVisibility.begin(), submeshVisibility.end(), 1u);
+            ImGui::Text("Culled: %u / %u sub-meshes", statCulledSubmeshes, cullingTotalInstances);
+        }
+
+        // Phase 5: Clustered Shading
+        if (ImGui::CollapsingHeader("Clustered Shading (Phase 5)"))
+        {
+            ImGui::Checkbox("Clustered Enabled", &uiClusteredShadingEnabled);
+            ImGui::Checkbox("Visualize Clusters", &uiVisualizeClusters);
+            ImGui::Text("Grid: %u x %u x %u = %u clusters", CLUSTER_X, CLUSTER_Y, CLUSTER_Z, getTotalClusters());
+            ImGui::Text("Avg Lights/Cluster: %u", clusterAvgLightsPerCluster);
+            ImGui::Text("Max Lights/Cluster: %u", MAX_LIGHTS_PER_CLUSTER);
         }
         ImGui::Separator();
 
@@ -3563,4 +3129,826 @@ void VkrRenderer::updateUIPanel()
         }
     }
     ImGui::End();
+}
+
+// ====================================================================
+// Phase 5: GPU Occlusion Culling (Hi-Z) Implementation
+// ====================================================================
+
+bool VkrRenderer::createHiZResources()
+{
+    try
+    {
+        hizMipCount = static_cast<uint32_t>(std::floor(std::log2(
+            std::max(swapChainExtent.width, swapChainExtent.height)))) + 1u;
+
+        createImage(
+            swapChainExtent.width, swapChainExtent.height, hizMipCount,
+            vk::Format::eR32Sfloat, vk::ImageTiling::eOptimal,
+            vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+            vk::MemoryPropertyFlagBits::eDeviceLocal, hizTexture);
+
+        hizTexture.textureImageView = createImageView(hizTexture.textureImage,
+            vk::Format::eR32Sfloat, vk::ImageAspectFlagBits::eColor, hizMipCount);
+
+        hizMipViews.clear();
+        hizMipViews.reserve(hizMipCount);
+        for (uint32_t mip = 0; mip < hizMipCount; ++mip)
+        {
+            vk::ImageViewCreateInfo viewInfo{
+                .image = *hizTexture.textureImage,
+                .viewType = vk::ImageViewType::e2D,
+                .format = vk::Format::eR32Sfloat,
+                .subresourceRange = {vk::ImageAspectFlagBits::eColor, mip, 1, 0, 1} };
+            hizMipViews.emplace_back(device, viewInfo);
+        }
+
+        hizSampler = vk::raii::Sampler(device, vk::SamplerCreateInfo{
+            .magFilter = vk::Filter::eNearest, .minFilter = vk::Filter::eNearest,
+            .mipmapMode = vk::SamplerMipmapMode::eNearest,
+            .addressModeU = vk::SamplerAddressMode::eClampToEdge,
+            .addressModeV = vk::SamplerAddressMode::eClampToEdge,
+            .addressModeW = vk::SamplerAddressMode::eClampToEdge,
+            .maxAnisotropy = 1.0f,
+            .minLod = 0.0f, .maxLod = static_cast<float>(hizMipCount - 1) });
+
+        hizLayout = vk::ImageLayout::eUndefined;
+
+        // Initial layout transition to ShaderReadOnlyOptimal so descriptors are valid
+        auto initCmd = beginSingleTimeCommands();
+        vk::ImageMemoryBarrier initBarrier{
+            .srcAccessMask = vk::AccessFlags{},
+            .dstAccessMask = vk::AccessFlagBits::eShaderRead,
+            .oldLayout = vk::ImageLayout::eUndefined,
+            .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = *hizTexture.textureImage,
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, hizMipCount, 0, 1} };
+        initCmd->pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+            vk::PipelineStageFlagBits::eFragmentShader | vk::PipelineStageFlagBits::eComputeShader,
+            {}, {}, {}, initBarrier);
+        endSingleTimeCommands(*initCmd);
+        hizLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "[vkrEngine] Failed to create Hi-Z resources: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool VkrRenderer::createHiZBuildDescriptorSetLayout()
+{
+    try
+    {
+        std::vector<vk::DescriptorSetLayoutBinding> bindings = {
+            {.binding = 0, .descriptorType = vk::DescriptorType::eStorageImage, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            {.binding = 1, .descriptorType = vk::DescriptorType::eStorageImage, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            {.binding = 2, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+        };
+        hizBuildDescriptorSetLayout = vk::raii::DescriptorSetLayout(device,
+            vk::DescriptorSetLayoutCreateInfo{ .bindingCount = static_cast<uint32_t>(bindings.size()), .pBindings = bindings.data() });
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Hi-Z DSL error: " << e.what() << std::endl; return false; }
+}
+
+bool VkrRenderer::createHiZBuildDescriptorPool()
+{
+    try
+    {
+        uint32_t setCount = MAX_FRAMES_IN_FLIGHT * hizMipCount;
+        std::vector<vk::DescriptorPoolSize> poolSizes = {
+            {.type = vk::DescriptorType::eStorageImage, .descriptorCount = setCount * 2u},
+            {.type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = setCount},
+        };
+        hizBuildDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
+            .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+            .maxSets = setCount, .poolSizeCount = static_cast<uint32_t>(poolSizes.size()), .pPoolSizes = poolSizes.data() });
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Hi-Z pool error: " << e.what() << std::endl; return false; }
+}
+
+void VkrRenderer::createHiZBuildDescriptorSets()
+{
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT * hizMipCount, *hizBuildDescriptorSetLayout);
+    hizBuildDescriptorSets = vk::raii::DescriptorSets(device, vk::DescriptorSetAllocateInfo{
+        .descriptorPool = *hizBuildDescriptorPool,
+        .descriptorSetCount = static_cast<uint32_t>(layouts.size()), .pSetLayouts = layouts.data() });
+
+    for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; ++frame)
+    {
+        for (uint32_t mip = 0; mip < hizMipCount; ++mip)
+        {
+            uint32_t setIdx = frame * hizMipCount + mip;
+
+            // Binding 0: hizOut — current mip level (storage write)
+            vk::DescriptorImageInfo outInfo{ .imageView = *hizMipViews[mip], .imageLayout = vk::ImageLayout::eGeneral };
+
+            // Binding 1: hizIn — previous mip level (storage read)
+            // For mip 0, bind mip 0 as placeholder (not actually accessed)
+            uint32_t srcMip = (mip == 0) ? 0 : (mip - 1);
+            vk::DescriptorImageInfo inInfo{ .imageView = *hizMipViews[srcMip], .imageLayout = vk::ImageLayout::eGeneral };
+
+            // Binding 2: depthTex — GBuffer depth (only used for mip 0, but must be valid)
+            vk::DescriptorImageInfo depthInfo{
+                .sampler = *gbufferSampler,
+                .imageView = *gbufferDepth.texture.textureImageView,
+                .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
+
+            std::vector<vk::WriteDescriptorSet> writes = {
+                {.dstSet = *hizBuildDescriptorSets[setIdx], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &outInfo},
+                {.dstSet = *hizBuildDescriptorSets[setIdx], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &inInfo},
+                {.dstSet = *hizBuildDescriptorSets[setIdx], .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &depthInfo},
+            };
+            device.updateDescriptorSets(writes, nullptr);
+        }
+    }
+}
+
+bool VkrRenderer::createHiZBuildPipeline()
+{
+    try
+    {
+        vk::PushConstantRange pushRange{ vk::ShaderStageFlagBits::eCompute, 0, 16 };
+        hizBuildPipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
+            .setLayoutCount = 1, .pSetLayouts = &*hizBuildDescriptorSetLayout,
+            .pushConstantRangeCount = 1, .pPushConstantRanges = &pushRange });
+
+        vk::raii::ShaderModule module = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "hiz_build.spv"));
+        vk::PipelineShaderStageCreateInfo stage{ .stage = vk::ShaderStageFlagBits::eCompute, .module = *module, .pName = "compMain" };
+        hizBuildPipeline = vk::raii::Pipeline(device, nullptr, vk::ComputePipelineCreateInfo{ .stage = stage, .layout = *hizBuildPipelineLayout });
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Hi-Z pipeline error: " << e.what() << std::endl; return false; }
+}
+
+bool VkrRenderer::createCullingComputeDescriptorSetLayout()
+{
+    try
+    {
+        std::vector<vk::DescriptorSetLayoutBinding> bindings = {
+            {.binding = 0, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            {.binding = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            {.binding = 2, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            {.binding = 3, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+        };
+        cullingCompDescriptorSetLayout = vk::raii::DescriptorSetLayout(device,
+            vk::DescriptorSetLayoutCreateInfo{ .bindingCount = static_cast<uint32_t>(bindings.size()), .pBindings = bindings.data() });
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Culling DSL error: " << e.what() << std::endl; return false; }
+}
+
+bool VkrRenderer::createCullingComputeDescriptorPool()
+{
+    try
+    {
+        std::vector<vk::DescriptorPoolSize> poolSizes = {
+            {.type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 3u},
+            {.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u},
+            {.type = vk::DescriptorType::eCombinedImageSampler, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u},
+        };
+        cullingCompDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
+            .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+            .maxSets = MAX_FRAMES_IN_FLIGHT, .poolSizeCount = static_cast<uint32_t>(poolSizes.size()), .pPoolSizes = poolSizes.data() });
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Culling pool error: " << e.what() << std::endl; return false; }
+}
+
+void VkrRenderer::createCullingComputeDescriptorSets()
+{
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *cullingCompDescriptorSetLayout);
+    cullingCompDescriptorSets = vk::raii::DescriptorSets(device, vk::DescriptorSetAllocateInfo{
+        .descriptorPool = *cullingCompDescriptorPool, .descriptorSetCount = MAX_FRAMES_IN_FLIGHT, .pSetLayouts = layouts.data() });
+
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    {
+        vk::DescriptorBufferInfo instanceInfo{ .buffer = *cullingInstanceUboResources.Buffers[i], .offset = 0, .range = sizeof(CullingInstanceUBO) * cullingTotalInstances };
+        vk::DescriptorBufferInfo visInfo{ .buffer = *cullingVisibleBufferResources.Buffers[i], .offset = 0, .range = sizeof(uint32_t) * cullingTotalInstances };
+        vk::DescriptorBufferInfo paramsInfo{ .buffer = *cullingParamsUboResources.Buffers[i], .offset = 0, .range = sizeof(CullingParamsUBO) };
+        vk::DescriptorImageInfo hizInfo{ .sampler = *hizSampler, .imageView = *hizTexture.textureImageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal };
+
+        std::vector<vk::WriteDescriptorSet> writes = {
+            {.dstSet = *cullingCompDescriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &instanceInfo},
+            {.dstSet = *cullingCompDescriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &visInfo},
+            {.dstSet = *cullingCompDescriptorSets[i], .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &paramsInfo},
+            {.dstSet = *cullingCompDescriptorSets[i], .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eCombinedImageSampler, .pImageInfo = &hizInfo},
+        };
+        device.updateDescriptorSets(writes, nullptr);
+    }
+}
+
+bool VkrRenderer::createCullingComputePipeline()
+{
+    try
+    {
+        cullingCompPipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
+            .setLayoutCount = 1, .pSetLayouts = &*cullingCompDescriptorSetLayout });
+
+        vk::raii::ShaderModule module = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "occlusion_cull_comp.spv"));
+        vk::PipelineShaderStageCreateInfo stage{ .stage = vk::ShaderStageFlagBits::eCompute, .module = *module, .pName = "compMain" };
+        cullingCompPipeline = vk::raii::Pipeline(device, nullptr, vk::ComputePipelineCreateInfo{ .stage = stage, .layout = *cullingCompPipelineLayout });
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Culling pipeline error: " << e.what() << std::endl; return false; }
+}
+
+bool VkrRenderer::createCullingBuffers()
+{
+    try
+    {
+        cullingTotalInstances = static_cast<uint32_t>(sponzaModel.subMeshes.size());
+        createStorageBuffers(cullingInstanceUboResources, sizeof(CullingInstanceUBO) * cullingTotalInstances);
+        createStorageBuffers(cullingVisibleBufferResources, sizeof(uint32_t) * cullingTotalInstances,
+            vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc);
+        createUniformBuffers(cullingParamsUboResources, sizeof(CullingParamsUBO));
+
+        // Readback buffer
+        createBuffer(sizeof(uint32_t) * cullingTotalInstances,
+            vk::BufferUsageFlagBits::eTransferDst,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+            cullingVisibleReadback, cullingVisibleReadbackMemory);
+        cullingVisibleReadbackMapped = cullingVisibleReadbackMemory.mapMemory(0, sizeof(uint32_t) * cullingTotalInstances);
+
+        // Initialize visibility (all visible)
+        submeshVisibility.resize(cullingTotalInstances, 1u);
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Culling buffers error: " << e.what() << std::endl; return false; }
+}
+
+void VkrRenderer::buildCullingInstanceData()
+{
+    cullingTotalInstances = static_cast<uint32_t>(sponzaModel.subMeshes.size());
+    std::vector<CullingInstanceUBO> instances(cullingTotalInstances);
+
+    for (uint32_t i = 0; i < cullingTotalInstances; ++i)
+    {
+        const auto& sub = sponzaModel.subMeshes[i];
+        // Use model's overall AABB as a conservative estimate per sub-mesh
+        // (we don't have per-sub-mesh AABBs, so use model AABB)
+        instances[i].aabbMin = glm::vec4(sponzaModel.aabbMin, 0.0f);
+        instances[i].aabbMax = glm::vec4(sponzaModel.aabbMax, 0.0f);
+        instances[i].drawInfo = glm::ivec4(
+            static_cast<int>(sub.indexCount),
+            static_cast<int>(sub.firstIndex),
+            sub.materialIndex, 0);
+    }
+
+    // Upload instance data to GPU
+    for (uint32_t f = 0; f < MAX_FRAMES_IN_FLIGHT; ++f)
+    {
+        void* mapped = cullingInstanceUboResources.BuffersMapped[f];
+        memcpy(mapped, instances.data(), sizeof(CullingInstanceUBO) * cullingTotalInstances);
+    }
+}
+
+bool VkrRenderer::createCullingCommandPool()
+{
+    try
+    {
+        cullingCommandPool = vk::raii::CommandPool(device, vk::CommandPoolCreateInfo{
+            .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+            .queueFamilyIndex = queueFamilyIndices.graphicsFamily.value() });
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Culling cmd pool error: " << e.what() << std::endl; return false; }
+}
+
+bool VkrRenderer::createCullingCommandBuffers()
+{
+    try
+    {
+        cullingCommandBuffers = vk::raii::CommandBuffers(device, vk::CommandBufferAllocateInfo{
+            .commandPool = *cullingCommandPool, .level = vk::CommandBufferLevel::ePrimary,
+            .commandBufferCount = MAX_FRAMES_IN_FLIGHT });
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Culling cmd buffers error: " << e.what() << std::endl; return false; }
+}
+
+bool VkrRenderer::createCullingSyncObjects()
+{
+    try
+    {
+        cullingFences.clear();
+        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+        {
+            vk::FenceCreateInfo fenceInfo{};
+            fenceInfo.flags = vk::FenceCreateFlagBits::eSignaled;
+            cullingFences.emplace_back(device, fenceInfo);
+        }
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Culling fences error: " << e.what() << std::endl; return false; }
+}
+
+void VkrRenderer::updateCullingBuffers(uint32_t frameIndex)
+{
+    CullingParamsUBO params{};
+    params.totalInstances = cullingTotalInstances;
+    params.enabled = uiCullingEnabled ? 1u : 0u;
+    params.hiZInfo = glm::vec4(
+        static_cast<float>(swapChainExtent.width),
+        static_cast<float>(swapChainExtent.height),
+        static_cast<float>(hizMipCount), 0.0f);
+
+    // Extract frustum planes from view-projection matrix
+    float aspect = static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height);
+    glm::mat4 proj = glm::perspective(glm::radians(camera.Zoom), aspect, CAMERA_NEAR, CAMERA_FAR);
+    glm::mat4 vp = proj * camera.GetViewMatrix();
+    extractFrustumPlanes(vp, params.frustumPlanes);
+
+    void* mapped = cullingParamsUboResources.BuffersMapped[frameIndex];
+    memcpy(mapped, &params, sizeof(CullingParamsUBO));
+}
+
+void VkrRenderer::extractFrustumPlanes(const glm::mat4& m, glm::vec4* out)
+{
+    // Left, Right, Bottom, Top, Near, Far
+    out[0] = glm::vec4(m[0][3] + m[0][0], m[1][3] + m[1][0], m[2][3] + m[2][0], m[3][3] + m[3][0]);
+    out[1] = glm::vec4(m[0][3] - m[0][0], m[1][3] - m[1][0], m[2][3] - m[2][0], m[3][3] - m[3][0]);
+    out[2] = glm::vec4(m[0][3] + m[0][1], m[1][3] + m[1][1], m[2][3] + m[2][1], m[3][3] + m[3][1]);
+    out[3] = glm::vec4(m[0][3] - m[0][1], m[1][3] - m[1][1], m[2][3] - m[2][1], m[3][3] - m[3][1]);
+    out[4] = glm::vec4(m[0][3] + m[0][2], m[1][3] + m[1][2], m[2][3] + m[2][2], m[3][3] + m[3][2]);
+    out[5] = glm::vec4(m[0][3] - m[0][2], m[1][3] - m[1][2], m[2][3] - m[2][2], m[3][3] - m[3][2]);
+
+    // Normalize planes
+    for (int i = 0; i < 6; ++i)
+    {
+        float len = glm::length(glm::vec3(out[i]));
+        out[i] /= len;
+    }
+}
+
+void VkrRenderer::recordHiZBuildCommand(vk::CommandBuffer cmd)
+{
+    if (!uiCullingEnabled) return;
+
+    // Transition Hi-Z mip 0 to general layout
+    vk::ImageMemoryBarrier2 barrier{
+        .srcStageMask = (hizLayout == vk::ImageLayout::eUndefined)
+            ? vk::PipelineStageFlagBits2::eTopOfPipe : vk::PipelineStageFlagBits2::eComputeShader,
+        .srcAccessMask = (hizLayout == vk::ImageLayout::eUndefined)
+            ? vk::AccessFlagBits2::eNone : vk::AccessFlagBits2::eShaderRead,
+        .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+        .dstAccessMask = vk::AccessFlagBits2::eShaderWrite,
+        .oldLayout = hizLayout, .newLayout = vk::ImageLayout::eGeneral,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = *hizTexture.textureImage,
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, hizMipCount, 0, 1} };
+    vk::DependencyInfo depInfo{ .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier };
+    cmd.pipelineBarrier2(depInfo);
+    hizLayout = vk::ImageLayout::eGeneral;
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *hizBuildPipeline);
+
+    for (uint32_t mip = 0; mip < hizMipCount; ++mip)
+    {
+        uint32_t setIdx = currentFrame * hizMipCount + mip;
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *hizBuildPipelineLayout, 0,
+            *hizBuildDescriptorSets[setIdx], nullptr);
+
+        uint32_t w = std::max(1u, swapChainExtent.width >> mip);
+        uint32_t h = std::max(1u, swapChainExtent.height >> mip);
+        struct { uint32_t w, h, mip, pad; } pc = { w, h, mip, 0 };
+        cmd.pushConstants<uint32_t>(*hizBuildPipelineLayout, vk::ShaderStageFlagBits::eCompute, 0,
+            { pc.w, pc.h, pc.mip, pc.pad });
+
+        cmd.dispatch((w + 15) / 16, (h + 15) / 16, 1);
+
+        // Barrier between mips
+        if (mip < hizMipCount - 1)
+        {
+            vk::ImageMemoryBarrier2 mipBarrier{
+                .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+                .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
+                .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+                .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+                .oldLayout = vk::ImageLayout::eGeneral, .newLayout = vk::ImageLayout::eGeneral,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = *hizTexture.textureImage,
+                .subresourceRange = {vk::ImageAspectFlagBits::eColor, mip, 1, 0, 1} };
+            vk::DependencyInfo mipDep{ .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &mipBarrier };
+            cmd.pipelineBarrier2(mipDep);
+        }
+    }
+
+    // Transition to shader read for occlusion culling
+    vk::ImageMemoryBarrier2 readBarrier{
+        .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+        .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
+        .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eFragmentShader,
+        .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+        .oldLayout = vk::ImageLayout::eGeneral, .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = *hizTexture.textureImage,
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, hizMipCount, 0, 1} };
+    vk::DependencyInfo readDep{ .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &readBarrier };
+    cmd.pipelineBarrier2(readDep);
+    hizLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+}
+
+void VkrRenderer::recordOcclusionCullCommand(uint32_t frameIndex)
+{
+    if (!uiCullingEnabled || cullingTotalInstances == 0) return;
+
+    auto& cmd = cullingCommandBuffers[frameIndex];
+    cmd.reset();
+    cmd.begin(vk::CommandBufferBeginInfo{});
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *cullingCompPipeline);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *cullingCompPipelineLayout, 0,
+        *cullingCompDescriptorSets[frameIndex], nullptr);
+
+    cmd.dispatch((cullingTotalInstances + 63) / 64, 1, 1);
+
+    // Copy visibility buffer to readback
+    vk::BufferCopy copyRegion{ 0, 0, sizeof(uint32_t) * cullingTotalInstances };
+    cmd.copyBuffer(*cullingVisibleBufferResources.Buffers[frameIndex], *cullingVisibleReadback, copyRegion);
+
+    cmd.end();
+}
+
+void VkrRenderer::readbackCullingResults(uint32_t frameIndex)
+{
+    if (!uiCullingEnabled || cullingTotalInstances == 0) return;
+
+    // Wait for previous frame's fence
+    auto result = device.waitForFences(*cullingFences[frameIndex], vk::True, 0);
+    if (result == vk::Result::eSuccess)
+    {
+        device.resetFences(*cullingFences[frameIndex]);
+        // One-frame latency: read back and update visibility
+        if (cullingVisibleReadbackMapped)
+        {
+            memcpy(submeshVisibility.data(), cullingVisibleReadbackMapped,
+                sizeof(uint32_t) * cullingTotalInstances);
+
+            statCulledSubmeshes = 0;
+            for (uint32_t i = 0; i < cullingTotalInstances; ++i)
+                if (submeshVisibility[i] == 0) ++statCulledSubmeshes;
+        }
+    }
+
+    // Record and submit new culling command
+    recordOcclusionCullCommand(frameIndex);
+    vk::SubmitInfo submitInfo{ .commandBufferCount = 1, .pCommandBuffers = &*cullingCommandBuffers[frameIndex] };
+    graphicsQueue.submit(submitInfo, *cullingFences[frameIndex]);
+}
+
+// ====================================================================
+// Phase 5: Clustered Shading Implementation
+// ====================================================================
+
+void VkrRenderer::generateClusterSceneLights()
+{
+    clusterSceneLights.clear();
+    clusterSceneLights.reserve(MAX_CLUSTER_LIGHTS);
+
+    // Use Sponza AABB for light placement
+    glm::vec3 sceneMin = sponzaModel.aabbMin;
+    glm::vec3 sceneMax = sponzaModel.aabbMax;
+    glm::vec3 sceneCenter = (sceneMin + sceneMax) * 0.5f;
+    glm::vec3 sceneExtent = (sceneMax - sceneMin) * 0.5f;
+
+    std::mt19937 rng(42u);
+    std::uniform_real_distribution<float> posJitter(-1.0f, 1.0f);
+    std::uniform_real_distribution<float> intensity(10.0f, 80.0f);
+    std::uniform_real_distribution<float> hue(0.0f, 1.0f);
+
+    for (uint32_t i = 0; i < MAX_CLUSTER_LIGHTS; ++i)
+    {
+        float h = hue(rng);
+        float s = 0.8f;
+        float v = 1.0f;
+        float c = v * s;
+        float x = c * std::abs(std::fmod(6.0f * h, 2.0f) - 1.0f);
+        float m = v - c;
+        float r = 0, g = 0, b = 0;
+        if (h < 1.0f / 6.0f) { r = c; g = x; b = 0; }
+        else if (h < 2.0f / 6.0f) { r = x; g = c; b = 0; }
+        else if (h < 3.0f / 6.0f) { r = 0; g = c; b = x; }
+        else if (h < 4.0f / 6.0f) { r = 0; g = x; b = c; }
+        else if (h < 5.0f / 6.0f) { r = x; g = 0; b = c; }
+        else { r = c; g = 0; b = x; }
+
+        GpuPointLight light;
+        light.position = glm::vec4(
+            sceneCenter.x + posJitter(rng) * sceneExtent.x * 0.9f,
+            sceneCenter.y + posJitter(rng) * sceneExtent.y * 0.5f + sceneExtent.y * 0.2f,
+            sceneCenter.z + posJitter(rng) * sceneExtent.z * 0.9f,
+            1.0f);
+        light.color = glm::vec4(r + m, g + m, b + m, intensity(rng));
+        clusterSceneLights.push_back(light);
+    }
+}
+
+bool VkrRenderer::createClusterBuffers()
+{
+    try
+    {
+        createStorageBuffers(clusterLightBufferResources, sizeof(GpuPointLight) * MAX_CLUSTER_LIGHTS,
+            vk::BufferUsageFlagBits::eStorageBuffer);
+        createUniformBuffers(clusterParamsUboResources2, sizeof(ClusterParamsUBO));
+
+        uint32_t totalClusters = getTotalClusters();
+        uint32_t gridSize = totalClusters * sizeof(LightGridCell);
+        uint32_t indexSize = getLightIndexBufferSize() * sizeof(uint32_t);
+
+        createBuffer(gridSize,
+            vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+            clusterLightGridBuffer, clusterLightGridMemory);
+        clusterLightGridMapped = clusterLightGridMemory.mapMemory(0, gridSize);
+        memset(clusterLightGridMapped, 0, gridSize);
+
+        createBuffer(indexSize,
+            vk::BufferUsageFlagBits::eStorageBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+            clusterLightIndexBuffer, clusterLightIndexMemory);
+        clusterLightIndexMapped = clusterLightIndexMemory.mapMemory(0, indexSize);
+        memset(clusterLightIndexMapped, 0, indexSize);
+
+        createBuffer(gridSize,
+            vk::BufferUsageFlagBits::eTransferDst,
+            vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+            clusterLightGridReadback, clusterLightGridReadbackMemory);
+        clusterLightGridReadbackMapped = clusterLightGridReadbackMemory.mapMemory(0, gridSize);
+
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Cluster buffers error: " << e.what() << std::endl; return false; }
+}
+
+bool VkrRenderer::createClusterComputeDescriptorSetLayout()
+{
+    try
+    {
+        std::vector<vk::DescriptorSetLayoutBinding> bindings = {
+            {.binding = 0, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            {.binding = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            {.binding = 2, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            {.binding = 3, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
+        };
+        clusterComputeDescriptorSetLayout = vk::raii::DescriptorSetLayout(device,
+            vk::DescriptorSetLayoutCreateInfo{ .bindingCount = static_cast<uint32_t>(bindings.size()), .pBindings = bindings.data() });
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Cluster comp DSL error: " << e.what() << std::endl; return false; }
+}
+
+bool VkrRenderer::createClusterComputeDescriptorPool()
+{
+    try
+    {
+        std::vector<vk::DescriptorPoolSize> poolSizes = {
+            {.type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 4u},
+            {.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u},
+        };
+        clusterComputeDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
+            .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+            .maxSets = MAX_FRAMES_IN_FLIGHT, .poolSizeCount = static_cast<uint32_t>(poolSizes.size()), .pPoolSizes = poolSizes.data() });
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Cluster comp pool error: " << e.what() << std::endl; return false; }
+}
+
+void VkrRenderer::createClusterComputeDescriptorSets()
+{
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *clusterComputeDescriptorSetLayout);
+    clusterComputeDescriptorSets = vk::raii::DescriptorSets(device, vk::DescriptorSetAllocateInfo{
+        .descriptorPool = *clusterComputeDescriptorPool, .descriptorSetCount = MAX_FRAMES_IN_FLIGHT, .pSetLayouts = layouts.data() });
+
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    {
+        vk::DescriptorBufferInfo lightInfo{ .buffer = *clusterLightBufferResources.Buffers[i], .offset = 0, .range = sizeof(GpuPointLight) * MAX_CLUSTER_LIGHTS };
+        vk::DescriptorBufferInfo gridInfo{ .buffer = *clusterLightGridBuffer, .offset = 0, .range = getTotalClusters() * sizeof(LightGridCell) };
+        vk::DescriptorBufferInfo indexInfo{ .buffer = *clusterLightIndexBuffer, .offset = 0, .range = getLightIndexBufferSize() * sizeof(uint32_t) };
+        vk::DescriptorBufferInfo paramsInfo{ .buffer = *clusterParamsUboResources2.Buffers[i], .offset = 0, .range = sizeof(ClusterParamsUBO) };
+
+        std::vector<vk::WriteDescriptorSet> writes = {
+            {.dstSet = *clusterComputeDescriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &lightInfo},
+            {.dstSet = *clusterComputeDescriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &gridInfo},
+            {.dstSet = *clusterComputeDescriptorSets[i], .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &indexInfo},
+            {.dstSet = *clusterComputeDescriptorSets[i], .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &paramsInfo},
+        };
+        device.updateDescriptorSets(writes, nullptr);
+    }
+}
+
+bool VkrRenderer::createClusterComputePipeline()
+{
+    try
+    {
+        clusterComputePipelineLayout = vk::raii::PipelineLayout(device, vk::PipelineLayoutCreateInfo{
+            .setLayoutCount = 1, .pSetLayouts = &*clusterComputeDescriptorSetLayout });
+
+        vk::raii::ShaderModule module = createShaderModule(readFile(std::string(VK_SHADERS_DIR) + "vkr_cluster_comp.spv"));
+        vk::PipelineShaderStageCreateInfo stage{ .stage = vk::ShaderStageFlagBits::eCompute, .module = *module, .pName = "compMain" };
+        clusterComputePipeline = vk::raii::Pipeline(device, nullptr, vk::ComputePipelineCreateInfo{ .stage = stage, .layout = *clusterComputePipelineLayout });
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Cluster pipeline error: " << e.what() << std::endl; return false; }
+}
+
+bool VkrRenderer::createDeferredClusterDescriptorSetLayout()
+{
+    try
+    {
+        std::vector<vk::DescriptorSetLayoutBinding> bindings = {
+            {.binding = 0, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
+            {.binding = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
+            {.binding = 2, .descriptorType = vk::DescriptorType::eStorageBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
+            {.binding = 3, .descriptorType = vk::DescriptorType::eUniformBuffer, .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eFragment},
+        };
+        deferredClusterDescriptorSetLayout = vk::raii::DescriptorSetLayout(device,
+            vk::DescriptorSetLayoutCreateInfo{ .bindingCount = static_cast<uint32_t>(bindings.size()), .pBindings = bindings.data() });
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Deferred cluster DSL error: " << e.what() << std::endl; return false; }
+}
+
+bool VkrRenderer::createDeferredClusterDescriptorPool()
+{
+    try
+    {
+        std::vector<vk::DescriptorPoolSize> poolSizes = {
+            {.type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 4u},
+            {.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u},
+        };
+        deferredClusterDescriptorPool = vk::raii::DescriptorPool(device, vk::DescriptorPoolCreateInfo{
+            .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+            .maxSets = MAX_FRAMES_IN_FLIGHT, .poolSizeCount = static_cast<uint32_t>(poolSizes.size()), .pPoolSizes = poolSizes.data() });
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Deferred cluster pool error: " << e.what() << std::endl; return false; }
+}
+
+void VkrRenderer::createDeferredClusterDescriptorSets()
+{
+    std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, *deferredClusterDescriptorSetLayout);
+    deferredClusterDescriptorSets = vk::raii::DescriptorSets(device, vk::DescriptorSetAllocateInfo{
+        .descriptorPool = *deferredClusterDescriptorPool, .descriptorSetCount = MAX_FRAMES_IN_FLIGHT, .pSetLayouts = layouts.data() });
+
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    {
+        vk::DescriptorBufferInfo lightInfo{ .buffer = *clusterLightBufferResources.Buffers[i], .offset = 0, .range = sizeof(GpuPointLight) * MAX_CLUSTER_LIGHTS };
+        vk::DescriptorBufferInfo gridInfo{ .buffer = *clusterLightGridBuffer, .offset = 0, .range = getTotalClusters() * sizeof(LightGridCell) };
+        vk::DescriptorBufferInfo indexInfo{ .buffer = *clusterLightIndexBuffer, .offset = 0, .range = getLightIndexBufferSize() * sizeof(uint32_t) };
+        vk::DescriptorBufferInfo paramsInfo{ .buffer = *clusterParamsUboResources2.Buffers[i], .offset = 0, .range = sizeof(ClusterParamsUBO) };
+
+        std::vector<vk::WriteDescriptorSet> writes = {
+            {.dstSet = *deferredClusterDescriptorSets[i], .dstBinding = 0, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &lightInfo},
+            {.dstSet = *deferredClusterDescriptorSets[i], .dstBinding = 1, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &gridInfo},
+            {.dstSet = *deferredClusterDescriptorSets[i], .dstBinding = 2, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eStorageBuffer, .pBufferInfo = &indexInfo},
+            {.dstSet = *deferredClusterDescriptorSets[i], .dstBinding = 3, .descriptorCount = 1, .descriptorType = vk::DescriptorType::eUniformBuffer, .pBufferInfo = &paramsInfo},
+        };
+        device.updateDescriptorSets(writes, nullptr);
+    }
+}
+
+bool VkrRenderer::createClusterCommandPool()
+{
+    try
+    {
+        clusterCommandPool = vk::raii::CommandPool(device, vk::CommandPoolCreateInfo{
+            .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+            .queueFamilyIndex = queueFamilyIndices.graphicsFamily.value() });
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Cluster cmd pool error: " << e.what() << std::endl; return false; }
+}
+
+bool VkrRenderer::createClusterCommandBuffers()
+{
+    try
+    {
+        clusterCommandBuffers = vk::raii::CommandBuffers(device, vk::CommandBufferAllocateInfo{
+            .commandPool = *clusterCommandPool, .level = vk::CommandBufferLevel::ePrimary,
+            .commandBufferCount = MAX_FRAMES_IN_FLIGHT });
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Cluster cmd buffers error: " << e.what() << std::endl; return false; }
+}
+
+bool VkrRenderer::createClusterSyncObjects()
+{
+    try
+    {
+        clusterFences.clear();
+        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+        {
+            vk::FenceCreateInfo fenceInfo{};
+            fenceInfo.flags = vk::FenceCreateFlagBits::eSignaled;
+            clusterFences.emplace_back(device, fenceInfo);
+        }
+        return true;
+    }
+    catch (const std::exception& e) { std::cerr << "Cluster fences error: " << e.what() << std::endl; return false; }
+}
+
+void VkrRenderer::updateClusterBuffers(uint32_t frameIndex)
+{
+    // Upload light data
+    {
+        void* mapped = clusterLightBufferResources.BuffersMapped[frameIndex];
+        memcpy(mapped, clusterSceneLights.data(), sizeof(GpuPointLight) * std::min(
+            static_cast<size_t>(MAX_CLUSTER_LIGHTS), clusterSceneLights.size()));
+    }
+
+    // Upload cluster params
+    {
+        ClusterParamsUBO params{};
+        params.clusterX = CLUSTER_X;
+        params.clusterY = CLUSTER_Y;
+        params.clusterZ = CLUSTER_Z;
+        params.totalClusters = getTotalClusters();
+        params.cameraPos = camera.Position;
+        params.nearZ = CAMERA_NEAR;
+        params.farZ = CAMERA_FAR;
+        params.zMin = CAMERA_NEAR;
+        params.zMax = CAMERA_FAR;
+        params.clusteredEnabled = uiClusteredShadingEnabled ? 1.0f : 0.0f;
+        params.visualizeClusters = uiVisualizeClusters ? 1.0f : 0.0f;
+
+        void* mapped = clusterParamsUboResources2.BuffersMapped[frameIndex];
+        memcpy(mapped, &params, sizeof(ClusterParamsUBO));
+    }
+}
+
+void VkrRenderer::recordClusterComputeCommand(uint32_t frameIndex)
+{
+    if (!uiClusteredShadingEnabled) return;
+
+    auto& cmd = clusterCommandBuffers[frameIndex];
+    cmd.reset();
+    cmd.begin(vk::CommandBufferBeginInfo{});
+
+    // Clear light grid
+    cmd.fillBuffer(*clusterLightGridBuffer, 0, getTotalClusters() * sizeof(LightGridCell), 0);
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *clusterComputePipeline);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *clusterComputePipelineLayout, 0,
+        *clusterComputeDescriptorSets[frameIndex], nullptr);
+
+    cmd.dispatch((CLUSTER_X + 7) / 8, (CLUSTER_Y + 7) / 8, (CLUSTER_Z + 7) / 8);
+
+    // Barrier: make storage buffers readable in fragment shader
+    vk::BufferMemoryBarrier2 barrier{
+        .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+        .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
+        .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
+        .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .buffer = *clusterLightGridBuffer, .offset = 0, .size = getTotalClusters() * sizeof(LightGridCell) };
+
+    vk::BufferMemoryBarrier2 barrier2{
+        .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+        .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
+        .dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader,
+        .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .buffer = *clusterLightIndexBuffer, .offset = 0, .size = getLightIndexBufferSize() * sizeof(uint32_t) };
+
+    vk::BufferMemoryBarrier2 barriers[] = { barrier, barrier2 };
+    vk::DependencyInfo depInfo{ .bufferMemoryBarrierCount = 2, .pBufferMemoryBarriers = barriers };
+    cmd.pipelineBarrier2(depInfo);
+
+    // Copy light grid for stats readback
+    vk::BufferCopy copyRegion{ 0, 0, getTotalClusters() * sizeof(LightGridCell) };
+    cmd.copyBuffer(*clusterLightGridBuffer, *clusterLightGridReadback, copyRegion);
+
+    cmd.end();
+}
+
+void VkrRenderer::readbackClusterStats(uint32_t frameIndex)
+{
+    if (!uiClusteredShadingEnabled) return;
+
+    auto result = device.waitForFences(*clusterFences[frameIndex], vk::True, 0);
+    if (result == vk::Result::eSuccess)
+    {
+        device.resetFences(*clusterFences[frameIndex]);
+        if (clusterLightGridReadbackMapped)
+        {
+            auto* grid = static_cast<LightGridCell*>(clusterLightGridReadbackMapped);
+            uint32_t totalClusters = getTotalClusters();
+            uint64_t totalLights = 0;
+            for (uint32_t i = 0; i < totalClusters; ++i)
+                totalLights += grid[i].count;
+            clusterAvgLightsPerCluster = totalClusters > 0
+                ? static_cast<uint32_t>(totalLights / totalClusters) : 0;
+        }
+    }
+
+    recordClusterComputeCommand(frameIndex);
+    vk::SubmitInfo submitInfo{ .commandBufferCount = 1, .pCommandBuffers = &*clusterCommandBuffers[frameIndex] };
+    graphicsQueue.submit(submitInfo, *clusterFences[frameIndex]);
 }

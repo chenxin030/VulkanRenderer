@@ -33,7 +33,7 @@ struct SceneUBO {
     glm::mat4 view;          // 相机视图矩阵
     glm::vec3 camPos;        // 相机世界位置
     float     pad0;
-    glm::vec3 lightDir;     // ★ 方向光方向（归一化，CSM 与 PBR 共用）
+    glm::vec3 lightDir;     // 方向光方向（归一化，CSM 与 PBR 共用）
     float     pad1;
     glm::vec3 lightColor;   // 方向光颜色 (来自 Scene.dirLight())
     float     pad2;
@@ -55,7 +55,7 @@ struct CsmUBO {
 
 ```cpp
 struct ShadowParamsUBO {
-    int   shadowFilterMode;    // 0=Hard, 1=PCF, 2=PCSS, 3=Visualize（内部覆写）
+    int   shadowFilterMode;    // 0=Hard, 1=PCF, 2=PCSS
     float pcfRadiusTexels;     // PCF 采样半径（纹素）
     float pcssLightSizeTexels; // PCSS 光源大小（纹素）
     float shadowBiasMin;       // 基础偏移 (0.0006)

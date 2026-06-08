@@ -1,5 +1,5 @@
 // deferred_lighting.slang — Phase 4: Deferred lighting pass for vkrEngine
-// Full-screen triangle, reads GBuffer + SSAO + SSR + IBL + CSM
+// Full-screen triangle, reads GBuffer + SSR + IBL + CSM
 // Outputs final lit color to swapchain
 
 struct VSOutput
@@ -76,24 +76,67 @@ Sampler2D<float4> gPbr;
 [[vk::binding(3, 1)]]
 Sampler2D<float> gDepth;
 
-// SSAO
-[[vk::binding(4, 1)]]
-Sampler2D<float> gSSAO;
-
 // SSR
-[[vk::binding(5, 1)]]
+[[vk::binding(4, 1)]]
 Sampler2D<float4> gSSR;
 
-// Deferred settings (Set 1, Binding 6)
+// Deferred settings (Set 1, Binding 5)
 struct DeferredSettingsUBO
 {
-    float ssaoEnabled;
     float ssrEnabled;
-    float debugView;
     float pad0;
+    float pad1;
+    float pad2;
 };
-[[vk::binding(6, 1)]]
+[[vk::binding(5, 1)]]
 ConstantBuffer<DeferredSettingsUBO> deferredSettings;
+
+// ====================================================================
+// Phase 5: Clustered Shading (Set 2)
+// ====================================================================
+
+struct GpuPointLight
+{
+    float4 position; // xyz = world pos, w = unused
+    float4 color;    // rgb = color, w = intensity
+};
+
+[[vk::binding(0, 2)]]
+StructuredBuffer<GpuPointLight> clusterLightBuffer;
+
+struct LightGridCell
+{
+    uint offset;
+    uint count;
+};
+
+[[vk::binding(1, 2)]]
+StructuredBuffer<LightGridCell> clusterLightGrid;
+
+[[vk::binding(2, 2)]]
+StructuredBuffer<uint> clusterLightIndexBuffer;
+
+struct ClusterParamsUBO
+{
+    uint clusterX;
+    uint clusterY;
+    uint clusterZ;
+    uint totalClusters;
+    float3 tileSize;
+    float pad0;
+    float3 cameraPos;
+    float nearZ;
+    float farZ;
+    float zMin;
+    float zMax;
+    float clusteredEnabled;
+    float visualizeClusters;
+    float pad2;
+    float pad3;
+};
+
+[[vk::binding(3, 2)]]
+ConstantBuffer<ClusterParamsUBO> clusterParams;
 
 static const float PI = 3.14159265358979323846;
 
@@ -284,6 +327,78 @@ float3 Uncharted2Tonemap(float3 x)
 }
 
 // ====================================================================
+// Phase 5: Clustered Shading helpers
+// ====================================================================
+
+uint getClusterIndex(float3 viewPos)
+{
+    // viewPos.z is negative (camera looks down -Z in view space)
+    float viewZ = -viewPos.z; // positive depth
+
+    // Screen UV from NDC
+    float2 ndcXY = viewPos.xy / viewZ; // approximate NDC
+    float2 screenUV = ndcXY * 0.5 + 0.5;
+
+    uint tileX = clamp(uint(screenUV.x * float(clusterParams.clusterX)), 0u, clusterParams.clusterX - 1u);
+    uint tileY = clamp(uint(screenUV.y * float(clusterParams.clusterY)), 0u, clusterParams.clusterY - 1u);
+
+    // Logarithmic Z slicing
+    float logMin = log(clusterParams.zMin);
+    float logMax = log(clusterParams.zMax);
+    float logZ = log(max(viewZ, clusterParams.zMin));
+    float zNorm = clamp((logZ - logMin) / (logMax - logMin), 0.0, 1.0);
+    uint tileZ = clamp(uint(zNorm * float(clusterParams.clusterZ)), 0u, clusterParams.clusterZ - 1u);
+
+    return tileX + tileY * clusterParams.clusterX + tileZ * clusterParams.clusterX * clusterParams.clusterY;
+}
+
+float3 evaluateClusteredLights(float3 worldPos, float3 N, float3 V, float3 albedo, float roughness, float metallic)
+{
+    // Compute view-space position for cluster index
+    float4 viewPos4 = mul(sceneUbo.view, float4(worldPos, 1.0));
+    float3 viewPos = viewPos4.xyz;
+
+    uint clusterIdx = getClusterIndex(viewPos);
+    LightGridCell cell = clusterLightGrid[clusterIdx];
+
+    float3 F0 = lerp(float3(0.04, 0.04, 0.04), albedo, metallic);
+    float NdotV = max(dot(N, V), 0.0);
+    float3 totalLight = float3(0.0, 0.0, 0.0);
+
+    for (uint i = 0; i < min(cell.count, 64u); ++i)
+    {
+        uint lightIdx = clusterLightIndexBuffer[cell.offset + i];
+        GpuPointLight light = clusterLightBuffer[lightIdx];
+
+        float3 lightWorldPos = light.position.xyz;
+        float3 L = lightWorldPos - worldPos;
+        float dist = length(L);
+        L = normalize(L);
+
+        float3 lightRadiance = light.color.rgb * light.color.w;
+        float attenuation = 1.0 / (1.0 + 0.09 * dist + 0.032 * dist * dist);
+
+        float3 H = normalize(V + L);
+        float dotNL = max(dot(N, L), 0.0);
+        float dotNH = max(dot(N, H), 0.0);
+        float dotVH = max(dot(V, H), 0.0);
+
+        float3 F = F_Schlick(dotVH, F0);
+        float D = D_GGX(dotNH, roughness);
+        float G = G_SchlicksmithGGX(dotNL, NdotV, roughness);
+
+        float3 spec = (D * G * F) / (4.0 * dotNL * NdotV + 0.001);
+        float3 kS = F;
+        float3 kD = (1.0 - kS) * (1.0 - metallic);
+        float3 diffuse = kD * albedo / PI;
+
+        totalLight += (diffuse + spec) * lightRadiance * dotNL * attenuation;
+    }
+
+    return totalLight;
+}
+
+// ====================================================================
 // Entry
 // ====================================================================
 
@@ -315,23 +430,6 @@ float4 fragMain(VSOutput input) : SV_Target0
     float4 normalRoughness = gNormalRoughness.Sample(uv);
     float4 pbrData = gPbr.Sample(uv);
     float depth = gDepth.Sample(uv);
-
-    // --- Debug views ---
-    int debugView = int(deferredSettings.debugView);
-    if (debugView == 1)
-        return float4(albedoData.rgb, 1.0);
-    if (debugView == 2)
-        return float4(normalRoughness.rgb, 1.0);
-    if (debugView == 3)
-        return float4(pbrData.rgb, 1.0);
-    if (debugView == 4)
-    {
-        // Linearize depth for better visualization
-        float3 worldPos = reconstructWorldPos(uv, depth);
-        float viewDist = distance(sceneUbo.camPos.xyz, worldPos);
-        float linearDepth = saturate(viewDist / 100.0); // 0=near, 1=100+ units
-        return float4(linearDepth.xxx, 1.0);
-    }
 
     // --- Unpack ---
     float3 albedo = albedoData.rgb;
@@ -381,10 +479,8 @@ float4 fragMain(VSOutput input) : SV_Target0
     float shadowFactor = csmShadowFactorDeferred(worldPos, N, L);
     float3 directLight = (diffuse + spec) * lightColor * dotNL * shadowFactor;
 
-    // --- SSAO ---
-    float ssaoFactor = 1.0;
-    if (deferredSettings.ssaoEnabled > 0.5)
-        ssaoFactor = gSSAO.Sample(uv).r;
+    // Use AO directly from GBuffer
+    float ambientOcclusion = ao;
 
     // --- SSR ---
     float3 ssrColor = float3(0.0, 0.0, 0.0);
@@ -392,13 +488,32 @@ float4 fragMain(VSOutput input) : SV_Target0
         ssrColor = gSSR.Sample(uv).rgb;
 
     // --- Combine ---
-    float3 color = ambient * 0.35; // IBL ambient fill
+    float3 color = ambient * 0.35 * ambientOcclusion;
     if (paramsUbo.enableDirLight != 0u)
-        color += directLight * lerp(0.5, 1.0, ssaoFactor); // Apply SSAO to direct light
+        color += directLight;
     color += ssrColor * F_ibl;                             // Modulate SSR by Fresnel
 
-    // Apply AO to ambient too
-    color *= lerp(0.3, 1.0, ssaoFactor * ao);
+    // Phase 5: Clustered point light contribution
+    if (clusterParams.clusteredEnabled > 0.5)
+    {
+        float3 clusterLight = evaluateClusteredLights(worldPos, N, V, albedo, roughness, metallic);
+        color += clusterLight;
+
+        // Visualize clusters
+        if (clusterParams.visualizeClusters > 0.5)
+        {
+            float4 viewPos4 = mul(sceneUbo.view, float4(worldPos, 1.0));
+            uint cid = getClusterIndex(viewPos4.xyz);
+            uint cx = cid % clusterParams.clusterX;
+            uint cy = (cid / clusterParams.clusterX) % clusterParams.clusterY;
+            uint cz = cid / (clusterParams.clusterX * clusterParams.clusterY);
+            float3 heatColor = float3(
+                float(cx) / float(clusterParams.clusterX),
+                float(cy) / float(clusterParams.clusterY),
+                float(cz) / float(clusterParams.clusterZ));
+            color = lerp(color, heatColor, 0.35);
+        }
+    }
 
     // --- Tone map ---
     float exposure = paramsUbo.exposure;
