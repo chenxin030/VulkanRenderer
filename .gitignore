@@ -4,3 +4,11 @@
 /build_examples/
 /.cursor/
 /doc/15_vkrEngine/Q&A/
+
+# AI coding tools
+.agents/
+.claude/
+CLAUDE.md
+CONTEXT.md
+skills-lock.json
+docs/agents/

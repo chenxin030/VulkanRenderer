@@ -8,7 +8,6 @@
 #include <vector>
 
 // Renderable: associates a model with a world transform 
-
 struct VkrRenderable
 {
     VkrModel* model = nullptr;
@@ -32,7 +31,6 @@ struct VkrRenderable
 };
 
 // Point light 
-
 struct VkrPointLight
 {
     glm::vec3 position{ 0.0f };
@@ -42,7 +40,6 @@ struct VkrPointLight
 };
 
 // Directional light 
-
 struct VkrDirectionalLight
 {
     glm::vec3 direction{ 0.5f, -0.8f, 0.3f };
@@ -51,12 +48,10 @@ struct VkrDirectionalLight
 };
 
 // Scene 
-
 class VkrScene
 {
 public:
     // Models 
-
     void addModel(VkrModel* model, const glm::mat4& transform, const std::string& debugName = "")
     {
         VkrRenderable r;
@@ -76,7 +71,6 @@ public:
     }
 
     // Lights 
-
     void addPointLight(const glm::vec3& pos, const glm::vec3& color, float intensity, float radius = 10.0f)
     {
         m_pointLights.push_back({ pos, color, intensity, radius });
@@ -90,13 +84,11 @@ public:
     }
 
     // Accessors 
-
     [[nodiscard]] const std::vector<VkrRenderable>& renderables()   const { return m_renderables; }
     [[nodiscard]] const std::vector<VkrPointLight>& pointLights()   const { return m_pointLights; }
     [[nodiscard]] const VkrDirectionalLight& dirLight()      const { return m_dirLight; }
 
     // Statistics 
-
     [[nodiscard]] uint32_t totalDrawCalls() const
     {
         uint32_t count = 0;

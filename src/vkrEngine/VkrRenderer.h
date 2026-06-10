@@ -92,9 +92,7 @@ private:
         vk::ImageLayout layout = vk::ImageLayout::eUndefined;
     };
 
-    // ===================================================================
     // Phase 4: Deferred Settings UBO (Set 2, Binding 0)
-    // ===================================================================
     struct DeferredSettingsUBO
     {
         float     ssrEnabled = 1.0f;
@@ -103,9 +101,7 @@ private:
         float     pad2 = 0.0f;
     };
 
-    // ===================================================================
     // Phase 5: GPU Occlusion Culling — Per-submesh instance data
-    // ===================================================================
     struct CullingInstanceUBO
     {
         glm::vec4 aabbMin;     // xyz=min, w=unused
@@ -123,9 +119,7 @@ private:
         float     pad1;
     };
 
-    // ===================================================================
     // Phase 5: Clustered Shading
-    // ===================================================================
     static constexpr uint32_t CLUSTER_X = 16;
     static constexpr uint32_t CLUSTER_Y = 9;
     static constexpr uint32_t CLUSTER_Z = 24;
@@ -163,9 +157,7 @@ private:
         uint32_t count;
     };
 
-    // ===================================================================
     // Phase 4: SSR Params UBO
-    // ===================================================================
     struct SSRParams
     {
         float     maxRayDistance = 16.0f;
@@ -178,9 +170,8 @@ private:
         float     padding0 = 0.0f;
     };
 
-    // ===================================================================
+    
     // Forward pipeline resources (Set 0: scene-level descriptors)
-    // ===================================================================
     vk::raii::DescriptorPool descriptorPool = nullptr;
     vk::raii::DescriptorSetLayout sceneDescriptorSetLayout = nullptr; // Set 0: scene-level
     vk::raii::DescriptorSetLayout materialDescriptorSetLayout = nullptr; // Set 1: per-material
@@ -213,9 +204,8 @@ private:
     vk::raii::PipelineLayout      csmDepthPipelineLayout = nullptr;
     vk::raii::Pipeline            csmDepthPipeline = nullptr;
 
-    // ===================================================================
+    
     // Phase 4: GBuffer resources
-    // ===================================================================
     GBufferAttachment gbufferAlbedo;
     GBufferAttachment gbufferNormalRoughness;
     GBufferAttachment gbufferPbr;
@@ -227,9 +217,8 @@ private:
     vk::raii::PipelineLayout          gbufferPipelineLayout = nullptr;
     vk::raii::Pipeline                gbufferPipeline = nullptr;
 
-    // ===================================================================
+    
     // Phase 4: SSR resources
-    // ===================================================================
     GBufferAttachment                 ssrColor;
     MeshBuffer                        ssrParamsUboResources;
 
@@ -238,18 +227,16 @@ private:
     vk::raii::PipelineLayout          ssrPipelineLayout = nullptr;
     vk::raii::Pipeline                ssrPipeline = nullptr;
 
-    // ===================================================================
+    
     // Phase 4: Deferred Lighting resources
-    // ===================================================================
     vk::raii::DescriptorSetLayout     deferredDescriptorSetLayout = nullptr;
     vk::raii::DescriptorPool          deferredDescriptorPool = nullptr;
     vk::raii::PipelineLayout          deferredPipelineLayout = nullptr;
     vk::raii::Pipeline                deferredPipeline = nullptr;
     MeshBuffer                        deferredSettingsUboResources;
 
-    // ===================================================================
+    
     // Phase 5: GPU Occlusion Culling (Hi-Z) resources
-    // ===================================================================
     TextureData                       hizTexture;
     std::vector<vk::raii::ImageView>  hizMipViews;
     uint32_t                          hizMipCount = 1;
@@ -287,9 +274,8 @@ private:
     std::vector<uint32_t>             submeshVisibility;
     uint32_t                          statCulledSubmeshes = 0;
 
-    // ===================================================================
+    
     // Phase 5: Clustered Shading resources
-    // ===================================================================
     std::vector<GpuPointLight>        clusterSceneLights;
 
     MeshBuffer                        clusterLightBufferResources;     // light SSBO (per frame)

@@ -9,7 +9,7 @@
 
 #include <vulkan/vulkan_raii.hpp>
 
-// ---- Vertex ----
+// Vertex
 
 struct VkrVertex
 {
@@ -34,8 +34,7 @@ struct VkrVertex
     }
 };
 
-// ---- Sub-mesh ----
-
+// Sub-mesh
 struct VkrSubMesh
 {
     uint32_t firstIndex = 0;
@@ -44,8 +43,7 @@ struct VkrSubMesh
     int32_t  materialIndex = -1; // -1 = no material
 };
 
-// ---- Material (CPU-side data, GPU resources created by renderer) ----
-
+// Material (CPU-side data, GPU resources created by renderer)
 struct VkrMaterialTexture
 {
     std::string path; // texture file path, relative
@@ -82,8 +80,7 @@ struct VkrMaterial
     bool gpuResourcesCreated = false;
 };
 
-// ---- Model ----
-
+// Model
 struct VkrModel
 {
     std::string name;
@@ -102,12 +99,12 @@ struct VkrModel
     vk::raii::Buffer       indexBuffer = nullptr;
     vk::raii::DeviceMemory indexBufferMemory = nullptr;
 
-    // ---- Statistics ----
+    // Statistics
     uint32_t totalTriangles = 0;
     uint32_t totalVertices = 0;
     uint32_t totalIndices = 0;
 
-    // ---- Bounding Box (world space, computed from vertex positions) ----
+    // Bounding Box (world space, computed from vertex positions)
     glm::vec3 aabbMin{ 0.0f };
     glm::vec3 aabbMax{ 0.0f };
 
