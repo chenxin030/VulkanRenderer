@@ -1,5 +1,9 @@
 # 大型第三方资源（需单独克隆）
 /assets/glTF-Sample-Assets-main/
+/assets/Bistro_v5_2/
+
+# 非项目文件
+/.github/
 
 # 仅忽略根目录下的 build 文件夹
 /build/
