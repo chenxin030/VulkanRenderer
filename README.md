@@ -44,6 +44,18 @@
 - CMake >= 3.28
 - Visual Studio 2022（MSVC）
 
+#### 克隆 glTF 示例资源
+
+本项目依赖 [Khronos glTF-Sample-Assets](https://github.com/KhronosGroup/glTF-Sample-Assets) 作为模型和纹理数据源。由于资源库较大（~1.4GB），未包含在仓库中，需单独克隆：
+
+```powershell
+cd assets
+git clone https://github.com/KhronosGroup/glTF-Sample-Assets.git glTF-Sample-Assets-main
+cd ..
+```
+
+渲染所需的具体模型和纹理存放在 `assets/models/` 和 `assets/textures/` 中，需从 glTF-Sample-Assets 按需复制。
+
 ### 配置与构建
 
 在仓库根目录执行：
