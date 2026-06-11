@@ -23,6 +23,8 @@
 | 11 | **Clustered** | `src/clustered/` | `shaders/11_clustered/` | Clustered Shading：2048 动态点光源，Compute Shader 预构建 Cluster Grid |
 | 12 | **Particles** | `src/particles/` | `shaders/12_particles/` | GPU 粒子系统：Compute Shader 更新粒子状态，Vertex Shader 渲染 |
 | 13 | **Multithreaded** | `src/multithreaded/` | — | 多线程渲染框架：Frame Graph + Render Batcher + 线程池 |
+| 14 | **CSM** | `src/csm/` | `shaders/14_csm/` | 级联阴影映射：Practical Split Scheme + 纹理数组 + PCF/PCSS |
+| 15 | **vkrEngine** | `src/vkrEngine/` | `shaders/15_vkrEngine/` | 统一渲染器：PBR+IBL+CSM+延迟渲染+SSR+GPU Culling+Clustered |
 
 ---
 
@@ -128,3 +130,5 @@ build/Debug/
 | Level 11：Clustered | [doc/11_clustered/README.md](doc/11_clustered/README.md) |
 | Level 12：Particles | [doc/12_particles/README.md](doc/12_particles/README.md) |
 | Level 13：Multithreaded | [doc/13_multithreaded/README.md](doc/13_multithreaded/README.md) |
+| Level 14：CSM | [doc/14_csm/README.md](doc/14_csm/README.md) |
+| Level 15：vkrEngine | [doc/15_vkrEngine/README.md](doc/15_vkrEngine/README.md) |
